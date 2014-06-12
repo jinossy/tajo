@@ -20,7 +20,6 @@ package org.apache.tajo.master.rm;
 
 import com.google.protobuf.RpcCallback;
 import org.apache.hadoop.service.Service;
-import org.apache.hadoop.yarn.proto.YarnProtos.ContainerIdProto;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.master.querymaster.QueryInProgress;
@@ -29,7 +28,6 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.Map;
 
-import static org.apache.tajo.ipc.TajoMasterProtocol.WorkerAllocatedResource;
 import static org.apache.tajo.ipc.TajoMasterProtocol.WorkerResourceAllocationResponse;
 
 /**
@@ -45,7 +43,7 @@ public interface WorkerResourceManager extends Service {
    * @return A allocated container resource
    */
   @Deprecated
-  public WorkerAllocatedResource allocateQueryMaster(QueryInProgress queryInProgress);
+  public TajoMasterProtocol.AllocatedWorkerResourceProto allocateQueryMaster(QueryInProgress queryInProgress);
 
   /**
    * Request one or more resource containers. You can set the number of containers and resource capabilities, such as
@@ -55,15 +53,15 @@ public interface WorkerResourceManager extends Service {
    * @param request Request description
    * @param rpcCallBack Callback function
    */
-  public void allocateWorkerResources(TajoMasterProtocol.WorkerResourceAllocationRequest request,
+  public void allocateWorkerResources(TajoMasterProtocol.WorkerResourcesRequestProto request,
       RpcCallback<WorkerResourceAllocationResponse> rpcCallBack);
 
   /**
    * Release a container
    *
-   * @param containerId ContainerIdProto to be released
+   * @param resource AllocatedWorkerResourceProto to be released
    */
-  public void releaseWorkerResource(ContainerIdProto containerId);
+  public void releaseWorkerResource(TajoMasterProtocol.AllocatedWorkerResourceProto resource);
 
   public String getSeedQueryId() throws IOException;
 
@@ -86,13 +84,13 @@ public interface WorkerResourceManager extends Service {
    *
    * @return a Map instance containing active workers
    */
-  public Map<String, Worker> getWorkers();
+  public Map<Integer, Worker> getWorkers();
 
   /**
    *
    * @return a Map instance containing inactive workers
    */
-  public Map<String, Worker> getInactiveWorkers();
+  public Map<Integer, Worker> getInactiveWorkers();
 
   public void stop();
 
@@ -106,5 +104,5 @@ public interface WorkerResourceManager extends Service {
    *
    * @return WorkerIds on which QueryMasters are running
    */
-  Collection<String> getQueryMasters();
+  Collection<Integer> getQueryMasterWorkerIds();
 }

@@ -300,6 +300,7 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
 
     @Override
     public void transition(QueryUnitAttempt taskAttempt, TaskAttemptEvent taskAttemptEvent) {
+
       taskAttempt.eventHandler.handle(new QueryUnitAttemptScheduleEvent(
           EventType.T_SCHEDULE, taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
           taskAttempt.scheduleContext, taskAttempt));
@@ -392,7 +393,15 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
 
       try {
         taskAttempt.fillTaskStatistics(report);
+
         taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_SUCCEEDED));
+
+        ContainerRequestEvent cEvent =
+            new ContainerRequestEvent(ContainerRequestEvent.EventType.CONTAINER_RELEASE,
+                taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+                taskAttempt.containerId,
+                taskAttempt.isLeafTask());
+        taskAttempt.eventHandler.handle(cEvent);
       } catch (Throwable t) {
         taskAttempt.eventHandler.handle(new TaskFatalErrorEvent(taskAttempt.getId(), t.getMessage()));
         taskAttempt.addDiagnosticInfo(ExceptionUtils.getStackTrace(t));
@@ -406,6 +415,13 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
     public void transition(QueryUnitAttempt taskAttempt, TaskAttemptEvent event) {
       taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.containerId,
           LocalTaskEventType.KILL));
+
+      ContainerRequestEvent cEvent =
+          new ContainerRequestEvent(ContainerRequestEvent.EventType.CONTAINER_RELEASE,
+              taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+              taskAttempt.containerId,
+              taskAttempt.isLeafTask());
+      taskAttempt.eventHandler.handle(cEvent);
     }
   }
 
@@ -416,6 +432,13 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
       taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_FAILED));
       taskAttempt.addDiagnosticInfo(errorEvent.errorMessage());
       LOG.error(taskAttempt.getId() + " FROM " + taskAttempt.getHost() + " >> " + errorEvent.errorMessage());
+
+      ContainerRequestEvent cEvent =
+          new ContainerRequestEvent(ContainerRequestEvent.EventType.CONTAINER_RELEASE,
+              taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+              taskAttempt.containerId,
+              taskAttempt.isLeafTask());
+      taskAttempt.eventHandler.handle(cEvent);
     }
   }
 

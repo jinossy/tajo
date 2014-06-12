@@ -100,7 +100,7 @@ public class LazyTaskScheduler extends AbstractTaskScheduler {
   public void start() {
     containerNum = subQuery.getContext().getResourceAllocator().calculateNumRequestContainers(
         subQuery.getContext().getQueryMasterContext().getWorkerContext(),
-        context.getEstimatedTaskNum(), 512);
+        context.getEstimatedTaskNum(), 512, false);
 
     LOG.info("Start TaskScheduler");
     this.schedulingThread = new Thread() {
@@ -354,7 +354,7 @@ public class LazyTaskScheduler extends AbstractTaskScheduler {
       }
 
       String host = container.getTaskHostName();
-      QueryUnitAttemptScheduleContext queryUnitContext = new QueryUnitAttemptScheduleContext(container.containerID,
+      QueryUnitAttemptScheduleContext queryUnitContext = new QueryUnitAttemptScheduleContext(container.getContainerId(),
           host, taskRequest.getCallback());
       QueryUnit task = SubQuery.newEmptyQueryUnit(context, queryUnitContext, subQuery, nextTaskId++);
 
@@ -367,7 +367,7 @@ public class LazyTaskScheduler extends AbstractTaskScheduler {
 
       // host local, disk local
       String normalized = NetUtils.normalizeHost(host);
-      Integer diskId = hostDiskBalancerMap.get(normalized).getDiskId(container.containerID);
+      Integer diskId = hostDiskBalancerMap.get(normalized).getDiskId(container.getContainerId());
       if (diskId != null && diskId != -1) {
         do {
           fragmentPair = scheduledFragments.getHostLocalFragment(host, diskId);
@@ -458,7 +458,7 @@ public class LazyTaskScheduler extends AbstractTaskScheduler {
         LOG.debug("Assigned based on * match");
         ContainerProxy container = context.getMasterContext().getResourceAllocator().getContainer(
             taskRequest.getContainerId());
-        QueryUnitAttemptScheduleContext queryUnitContext = new QueryUnitAttemptScheduleContext(container.containerID,
+        QueryUnitAttemptScheduleContext queryUnitContext = new QueryUnitAttemptScheduleContext(container.getContainerId(),
             container.getTaskHostName(), taskRequest.getCallback());
         QueryUnit task = SubQuery.newEmptyQueryUnit(context, queryUnitContext, subQuery, nextTaskId++);
         task.setFragment(scheduledFragments.getAllFragments());

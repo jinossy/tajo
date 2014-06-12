@@ -87,7 +87,6 @@ public class QueryMasterManagerService extends CompositeService
 
       queryMaster = new QueryMaster(workerContext);
       addService(queryMaster);
-
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }
@@ -108,6 +107,7 @@ public class QueryMasterManagerService extends CompositeService
     if(rpcServer != null) {
       rpcServer.shutdown();
     }
+
     LOG.info("QueryMasterManagerService stopped");
     super.stop();
   }
@@ -121,8 +121,8 @@ public class QueryMasterManagerService extends CompositeService
   }
 
   @Override
-  public void getTask(RpcController controller, TajoWorkerProtocol.GetTaskRequestProto request,
-                      RpcCallback<TajoWorkerProtocol.QueryUnitRequestProto> done) {
+  public void getTask(final RpcController controller, TajoWorkerProtocol.GetTaskRequestProto request,
+                      final RpcCallback<TajoWorkerProtocol.QueryUnitRequestProto> done) {
     try {
       ExecutionBlockId ebId = new ExecutionBlockId(request.getExecutionBlockId());
       QueryMasterTask queryMasterTask = workerContext.getQueryMaster().getQueryMasterTask(ebId.getQueryId());
@@ -204,6 +204,7 @@ public class QueryMasterManagerService extends CompositeService
     try {
       QueryMasterTask queryMasterTask = queryMaster.getQueryMasterTask(
           new QueryId(report.getId().getQueryUnitId().getExecutionBlockId().getQueryId()));
+
       queryMasterTask.getEventHandler().handle(new TaskCompletionEvent(report));
       done.run(TajoWorker.TRUE_PROTO);
     } catch (Exception e) {
@@ -241,6 +242,48 @@ public class QueryMasterManagerService extends CompositeService
       done.run(TajoWorker.TRUE_PROTO);
     } catch (Exception e) {
       workerContext.getWorkerSystemMetrics().counter("querymaster", "errorQuery").inc();
+      LOG.error(e.getMessage(), e);
+      done.run(TajoWorker.FALSE_PROTO);
+    }
+  }
+
+  //sync call. taskrunner manager will be retry
+  /* return reserved containers */
+  @Override
+  public void getContainers(RpcController controller, QueryMasterProtocol.ContainerResources request,
+                      RpcCallback<QueryMasterProtocol.ContainerResources> done) {
+    try {
+//      ExecutionBlockId ebId = new ExecutionBlockId(request.getExecutionBlockId());
+//      QueryMasterTask queryMasterTask = workerContext.getQueryMaster().getQueryMasterTask(ebId.getQueryId());
+//      ContainerId cid =
+//          queryMasterTask.getQueryTaskContext().getResourceAllocator().makeContainerId(request.getContainerId());
+//
+//      SubQuery subQuery =queryMasterTask.getQuery().getSubQuery(ebId);
+//      subQuery.releaseContainer(cid);
+      done.run(null);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+      done.run(null);
+    }
+  }
+
+  //sync call. taskrunner manager will be retry
+  @Override
+  public void reserveContainerResource(RpcController controller, QueryMasterProtocol.ContainerResource request,
+                                        RpcCallback<PrimitiveProtos.BoolProto> done) {
+    try {
+      ExecutionBlockId ebId = new ExecutionBlockId(request.getExecutionBlockId());
+      QueryMasterTask queryMasterTask = workerContext.getQueryMaster().getQueryMasterTask(ebId.getQueryId());
+      ContainerId cid =
+          queryMasterTask.getQueryTaskContext().getResourceAllocator().makeContainerId(request.getContainerId());
+
+      boolean succeed = queryMasterTask.getQueryTaskContext().getResourceAllocator().reserveContainer(ebId, cid);
+      if(succeed){
+        done.run(TajoWorker.TRUE_PROTO);
+      } else {
+        done.run(TajoWorker.FALSE_PROTO);
+      }
+    } catch (Exception e) {
       LOG.error(e.getMessage(), e);
       done.run(TajoWorker.FALSE_PROTO);
     }

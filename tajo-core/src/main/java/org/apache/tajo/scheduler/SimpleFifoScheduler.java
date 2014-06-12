@@ -60,7 +60,7 @@ public class SimpleFifoScheduler implements Scheduler {
 
     QuerySchedulingInfo querySchedulingInfo = new QuerySchedulingInfo(queryInProgress.getQueryId(), 1, queryInProgress.getStartTime());
     boolean result = pool.add(querySchedulingInfo);
-    if (getRunningQueries().size() == 0) wakeupProcessor();
+    if (getRunningQueries().size() < 2) wakeupProcessor();
     return result;
   }
 
@@ -118,7 +118,7 @@ public class SimpleFifoScheduler implements Scheduler {
 
       while (!stopped.get() && !Thread.currentThread().isInterrupted()) {
         query = null;
-        if (getRunningQueries().size() == 0) {
+        if (getRunningQueries().size() < 2) {
           query = pollScheduledQuery();
         }
 

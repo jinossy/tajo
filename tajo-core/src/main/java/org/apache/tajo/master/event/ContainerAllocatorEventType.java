@@ -21,6 +21,7 @@ package org.apache.tajo.master.event;
 public enum ContainerAllocatorEventType {
   // producer: QueryUnitAttempt, consumer: ContainerAllocator
   CONTAINER_REQ,
+  CONTAINER_LAUNCH,
   CONTAINER_DEALLOCATE,
   CONTAINER_FAILED
 }

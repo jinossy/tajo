@@ -20,11 +20,22 @@ package org.apache.tajo.master.rm;
 
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.api.records.impl.pb.ApplicationAttemptIdPBImpl;
 import org.apache.hadoop.yarn.proto.YarnProtos;
 
 public class TajoWorkerContainerId extends ContainerId {
   ApplicationAttemptId applicationAttemptId;
   int id;
+
+  public TajoWorkerContainerId(ApplicationAttemptId applicationAttemptId, int id) {
+    this.applicationAttemptId = applicationAttemptId;
+    this.id = id;
+  }
+
+  public TajoWorkerContainerId(YarnProtos.ContainerIdProto proto) {
+    this.applicationAttemptId = new ApplicationAttemptIdPBImpl(proto.getAppAttemptId());
+    this.id = proto.getId();
+  }
 
   @Override
   public ApplicationAttemptId getApplicationAttemptId() {

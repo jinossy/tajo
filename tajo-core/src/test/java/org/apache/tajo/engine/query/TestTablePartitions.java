@@ -40,6 +40,7 @@ import java.util.Map;
 import static org.apache.tajo.TajoConstants.DEFAULT_DATABASE_NAME;
 import static org.junit.Assert.*;
 
+
 public class TestTablePartitions extends QueryTestCaseBase {
 
 

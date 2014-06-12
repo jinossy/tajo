@@ -28,6 +28,14 @@ import "CatalogProtos.proto";
 import "PrimitiveProtos.proto";
 import "TajoWorkerProtocol.proto";
 
+message ContainerResources {
+    required ExecutionBlockIdProto executionBlockId = 1;
+    repeated hadoop.yarn.ContainerIdProto containerIds = 2;
+}
+message ContainerResource {
+    required ExecutionBlockIdProto executionBlockId = 1;
+    required hadoop.yarn.ContainerIdProto containerId = 2;
+}
 service QueryMasterProtocolService {
   //from Worker
   rpc getTask(GetTaskRequestProto) returns (QueryUnitRequestProto);
@@ -39,4 +47,7 @@ service QueryMasterProtocolService {
   //from TajoMaster's QueryJobManager
   rpc killQuery(QueryIdProto) returns (BoolProto);
   rpc executeQuery(QueryExecutionRequestProto) returns (BoolProto);
+
+  rpc getContainers (ContainerResources) returns (ContainerResources);
+  rpc reserveContainerResource (ContainerResource) returns (BoolProto);
 }

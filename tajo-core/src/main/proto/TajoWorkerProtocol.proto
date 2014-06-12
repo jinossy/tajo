@@ -53,6 +53,7 @@ message TaskCompletionReport {
   optional TableStatsProto inputStats = 3;
   optional TableStatsProto resultStats = 4;
   repeated ShuffleFileOutput shuffleFileOutputs = 5;
+  required hadoop.yarn.ContainerIdProto containerId = 6;
 }
 
 message TaskFatalErrorReport {

@@ -18,10 +18,12 @@
 
 package org.apache.tajo.master.rm;
 
+import com.google.common.base.Objects;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.state.*;
+import org.apache.tajo.ipc.TajoMasterProtocol;
 
 import java.util.EnumSet;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -47,8 +49,8 @@ public class Worker implements EventHandler<WorkerEvent>, Comparable<Worker> {
   private int peerRpcPort;
   /** http info port */
   private int httpInfoPort;
-  /** the port of QueryMaster client rpc which provides an client API */
-  private int qmClientPort;
+  /** the port of client rpc which provides an client API */
+  private int clientPort;
   /** pull server port */
   private int pullServerPort;
   /** last heartbeat time */
@@ -110,8 +112,12 @@ public class Worker implements EventHandler<WorkerEvent>, Comparable<Worker> {
     this.writeLock = lock.writeLock();
   }
 
-  public String getWorkerId() {
-    return hostName + ":" + qmRpcPort + ":" + peerRpcPort;
+  public int getWorkerId() {
+    return getWorkerId(hostName, peerRpcPort);
+  }
+
+  public static int getWorkerId(String hostName, int peerRpcPort) {
+    return Objects.hashCode(hostName, peerRpcPort);
   }
 
   public String getHostName() {
@@ -139,11 +145,11 @@ public class Worker implements EventHandler<WorkerEvent>, Comparable<Worker> {
   }
 
   public int getClientPort() {
-    return qmClientPort;
+    return clientPort;
   }
 
   public void setClientPort(int clientPort) {
-    this.qmClientPort = clientPort;
+    this.clientPort = clientPort;
   }
 
   public int getPullServerPort() {
@@ -204,12 +210,29 @@ public class Worker implements EventHandler<WorkerEvent>, Comparable<Worker> {
     return this.resource;
   }
 
+  /**
+   *
+   * @return the WorkerResource proto
+   */
+  public TajoMasterProtocol.WorkerResourceProto createWorkerResourceProto() {
+    TajoMasterProtocol.WorkerResourceProto.Builder workerResourceBuilder =
+        TajoMasterProtocol.WorkerResourceProto.newBuilder();
+    return workerResourceBuilder.setHost(getHostName())
+        .setPeerRpcPort(getPeerRpcPort())
+        .setInfoPort(getHttpPort())
+        .setClientPort(getClientPort())
+        .setPullServerPort(getPullServerPort())
+        .setQueryMasterPort(getQueryMasterPort())
+        .setDiskSlots(getResource().getDiskSlots())
+        .setMemoryMB(getResource().getMemoryMB()).build();
+  }
+
   @Override
   public int compareTo(Worker o) {
     if(o == null) {
       return 1;
     }
-    return getWorkerId().compareTo(o.getWorkerId());
+    return Integer.valueOf(getWorkerId()).compareTo(o.getWorkerId());
   }
 
   public static class AddNodeTransition implements SingleArcTransition<Worker, WorkerEvent> {
