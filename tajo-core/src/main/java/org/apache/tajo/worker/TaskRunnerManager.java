@@ -18,18 +18,22 @@
 
 package org.apache.tajo.worker;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
+import org.apache.hadoop.yarn.event.Dispatcher;
+import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.worker.event.TaskRunnerEvent;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class TaskRunnerManager extends CompositeService {
+public class TaskRunnerManager extends CompositeService implements EventHandler<TaskRunnerEvent> {
   private static final Log LOG = LogFactory.getLog(TaskRunnerManager.class);
 
   private final Map<String, TaskRunner> taskRunnerMap = new HashMap<String, TaskRunner>();
@@ -38,11 +42,13 @@ public class TaskRunnerManager extends CompositeService {
   private TajoConf tajoConf;
   private AtomicBoolean stop = new AtomicBoolean(false);
   private FinishedTaskCleanThread finishedTaskCleanThread;
+  private Dispatcher dispatcher;
 
-  public TaskRunnerManager(TajoWorker.WorkerContext workerContext) {
+  public TaskRunnerManager(TajoWorker.WorkerContext workerContext, Dispatcher dispatcher) {
     super(TaskRunnerManager.class.getName());
 
     this.workerContext = workerContext;
+    this.dispatcher = dispatcher;
   }
 
   public TajoWorker.WorkerContext getWorkerContext() {
@@ -51,9 +57,11 @@ public class TaskRunnerManager extends CompositeService {
 
   @Override
   public void init(Configuration conf) {
+    Preconditions.checkArgument(conf instanceof TajoConf);
     tajoConf = (TajoConf)conf;
     super.init(tajoConf);
   }
+
 
   @Override
   public void start() {
@@ -144,6 +152,12 @@ public class TaskRunnerManager extends CompositeService {
     synchronized(taskRunnerMap) {
       return taskRunnerMap.size();
     }
+  }
+
+  @Override
+  public void handle(TaskRunnerEvent event) {
+    LOG.info("Processing " + event.getExecutionBlockId() + " of type " + event.getType());
+    //TODO launch reserved container to TaskRunner
   }
 
   public void startTask(final String[] params) {

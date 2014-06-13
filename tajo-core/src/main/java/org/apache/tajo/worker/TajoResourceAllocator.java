@@ -364,7 +364,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         continue;
       }
     }
-    if(response == null) LOG.error("###############################################");
     return response;
   }
 
@@ -382,7 +381,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     public synchronized void startContainerAllocation(ContainerAllocationEvent event) {
       try {
         LOG.info("Start to allocate containers(" + event.getRequiredNum() + ") executionBlockId : " + event.getExecutionBlockId());
-        LOG.error("prev event : " + eventQueue.size());
+//        LOG.error("prev event : " + eventQueue.size());
         eventQueue.put(event);
       } catch (InterruptedException e) {
         if (!stop.get()) {
