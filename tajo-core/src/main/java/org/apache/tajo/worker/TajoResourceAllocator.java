@@ -437,7 +437,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
 
         //TODO remove hardcoded line
-        if (Math.min(event.getRequiredNum(), 40) <= allocator.reservedContainer.get()) {
+        if (event.getRequiredNum() <= allocator.reservedContainer.get()) {
           LOG.info("All containers(" + allocator.reservedContainer.get() + ") Allocated. executionBlockId : "
               + event.getExecutionBlockId());
           continue;
@@ -472,7 +472,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
       LOG.info("Try to allocate containers executionBlockId : " + event.getExecutionBlockId() + "," + event.getRequiredNum());
       //TODO remove hardcoded line
       WorkerResourceAllocationResponse response =
-          reserveWokerResources(Math.min(event.getRequiredNum(), 40) - reservedContainer.get(), event.isLeafQuery(), new ArrayList<Integer>());
+          reserveWokerResources(event.getRequiredNum() - reservedContainer.get(), event.isLeafQuery(), new ArrayList<Integer>());
 
       if (response != null) {
         List<TajoMasterProtocol.AllocatedWorkerResourceProto> allocatedResources = response.getAllocatedWorkerResourceList();
