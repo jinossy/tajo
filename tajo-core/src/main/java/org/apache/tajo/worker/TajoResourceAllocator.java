@@ -431,6 +431,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
         ExecutionBlockId executionBlockId = event.getExecutionBlockId();
         SubQueryState state = queryTaskContext.getSubQuery(executionBlockId).getState();
+
         if (SubQuery.isRunningState(state)) {
           allocateContainers(event);
         }

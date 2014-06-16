@@ -25,6 +25,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
+import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.TajoIdProtos;
@@ -33,6 +34,8 @@ import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.rpc.AsyncRpcServer;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.util.NetUtils;
+import org.apache.tajo.util.TajoIdUtils;
+import org.apache.tajo.worker.event.TaskRunnerEvent;
 
 import java.net.InetSocketAddress;
 
@@ -42,7 +45,7 @@ public class TajoWorkerManagerService extends CompositeService
 
   private AsyncRpcServer rpcServer;
   private InetSocketAddress bindAddr;
-  private String addr;
+  private NodeId nodeId;
   private int port;
 
   private TajoWorker.WorkerContext workerContext;
@@ -70,14 +73,14 @@ public class TajoWorkerManagerService extends CompositeService
       this.rpcServer.start();
 
       this.bindAddr = NetUtils.getConnectAddress(rpcServer.getListenAddress());
-      this.addr = bindAddr.getHostName() + ":" + bindAddr.getPort();
-
       this.port = bindAddr.getPort();
+
+      this.nodeId = NodeId.newInstance(getBindAddr().getHostName(), getBindAddr().getPort());
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }
     // Get the master address
-    LOG.info("TajoWorkerManagerService is bind to " + addr);
+    LOG.info("TajoWorkerManagerService is bind to " + nodeId);
     tajoConf.setVar(TajoConf.ConfVars.WORKER_PEER_RPC_ADDRESS, NetUtils.normalizeInetSocketAddress(bindAddr));
     super.init(tajoConf);
   }
@@ -101,7 +104,7 @@ public class TajoWorkerManagerService extends CompositeService
   }
 
   public String getHostAndPort() {
-    return bindAddr.getHostName() + ":" + bindAddr.getPort();
+    return nodeId.toString();//bindAddr.getHostName() + ":" + bindAddr.getPort();
   }
 
   @Override
@@ -129,6 +132,11 @@ public class TajoWorkerManagerService extends CompositeService
       params[5] = String.valueOf(request.getQueryMasterPort());
       params[6] = request.getQueryOutputPath();
       workerContext.getTaskRunnerManager().startTask(params);
+
+      workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerEvent(TaskRunnerEvent.EventType.TASK_START
+          , TajoIdUtils.createExecutionBlockId(params[1]),
+          containerIds
+      ));
       done.run(TajoWorker.TRUE_PROTO);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);

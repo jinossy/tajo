@@ -18,7 +18,8 @@
 
 package org.apache.tajo.worker.event;
 
-import org.apache.hadoop.yarn.api.records.Container;
+import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.event.AbstractEvent;
 import org.apache.tajo.ExecutionBlockId;
 
@@ -26,21 +27,25 @@ import java.util.Collection;
 
 public class TaskRunnerEvent extends AbstractEvent<TaskRunnerEvent.EventType> {
   public enum EventType {
-    CONTAINER_REMOTE_LAUNCH,
-    CONTAINER_REMOTE_CLEANUP
+    TASK_START,
+    TASK_STOP
   }
 
   protected final ExecutionBlockId executionBlockId;
-  protected final Collection<Container> containers;
+  protected final NodeId queryMaster;
+  protected final Collection<ContainerId> containers;
+
   public TaskRunnerEvent(EventType eventType,
-                              ExecutionBlockId executionBlockId,
-                              Collection<Container> containers) {
+                         NodeId queryMaster,
+                         ExecutionBlockId executionBlockId,
+                         Collection<ContainerId> containers) {
     super(eventType);
+    this.queryMaster = queryMaster;
     this.executionBlockId = executionBlockId;
     this.containers = containers;
   }
 
-  public Collection<Container> getContainers() {
+  public Collection<ContainerId> getContainers() {
     return containers;
   }
 
