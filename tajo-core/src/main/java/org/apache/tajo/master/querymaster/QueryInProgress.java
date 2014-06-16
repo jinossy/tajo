@@ -158,7 +158,9 @@ public class QueryInProgress extends CompositeService {
     return dispatcher.getEventHandler();
   }
 
-
+  public Session getSession() {
+    return session;
+  }
 
   public boolean startQueryMaster() {
     try {

@@ -67,6 +67,9 @@
     <script type="text/javascript">
 
     function killQuery(queryId) {
+        if (!confirm("Are you sure killing a query: " + queryId + " ?")) {
+            return;
+        }
         $.ajax({
             type: "POST",
             url: "query_exec",
