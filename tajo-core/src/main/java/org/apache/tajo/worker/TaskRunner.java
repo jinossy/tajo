@@ -413,7 +413,7 @@ public class TaskRunner extends AbstractService {
                 }
                 // if there has been no assigning task for a given period,
                 // TaskRunner will retry to request an assigning task.
-                LOG.info("Retry assigning task:" + getId() + " state:" + getServiceState() + "," + callFuture.isCancelled());
+                LOG.info("Retry assigning task:" + getId() + " state:" + getServiceState());
                 continue;
               }
 

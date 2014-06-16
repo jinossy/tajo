@@ -263,7 +263,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       }
 
       if(stopEventHandling.get()) {
-        LOG.info("request will be stop request container: " + event.getContainerId());
         event.getCallback().run(stopTaskRunnerReq);
         context.getMasterContext().getResourceAllocator().releaseContainer(event.getContainerId());
         return;
@@ -731,7 +730,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         ContainerProxy container = context.getMasterContext().getResourceAllocator()
             .getContainer(taskRequest.getContainerId());
         if(container == null) {
-          LOG.info("container is null. stop request container: " + taskRequest.getContainerId());
           taskRequest.getCallback().run(stopTaskRunnerReq);
           context.getMasterContext().getResourceAllocator().releaseContainer(taskRequest.getContainerId());
           continue;

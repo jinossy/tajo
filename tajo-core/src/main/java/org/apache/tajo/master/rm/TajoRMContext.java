@@ -47,8 +47,6 @@ public class TajoRMContext {
   private final Set<Integer> liveQueryMasterWorkerResources =
       Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
 
-  private final Set<QueryId> stoppedQueryIds =
-      Collections.newSetFromMap(new ConcurrentHashMap<QueryId, Boolean>());
 
   public TajoRMContext(Dispatcher dispatcher) {
     this.rmDispatcher = dispatcher;
@@ -76,15 +74,11 @@ public class TajoRMContext {
    *
    * @return The Map for query master containers
    */
-  public ConcurrentMap<QueryId, TajoMasterProtocol.AllocatedWorkerResourceProto> getQueryMasterContainer() {
+  public ConcurrentMap<QueryId, TajoMasterProtocol.AllocatedWorkerResourceProto> getQueryMasterResource() {
     return qmContainerMap;
   }
 
   public Set<Integer> getQueryMasterWorker() {
     return liveQueryMasterWorkerResources;
-  }
-
-  public Set<QueryId> getStoppedQueryIds() {
-    return stoppedQueryIds;
   }
 }

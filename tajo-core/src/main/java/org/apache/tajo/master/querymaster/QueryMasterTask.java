@@ -224,7 +224,6 @@ public class QueryMasterTask extends CompositeService {
   }
 
   public void handleTaskRequestEvent(TaskRequestEvent event) {
-    //TODO assign container
     ExecutionBlockId id = event.getExecutionBlockId();
     query.getSubQuery(id).handleTaskRequestEvent(event);
   }
