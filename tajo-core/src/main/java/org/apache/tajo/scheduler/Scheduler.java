@@ -36,7 +36,7 @@ public interface Scheduler {
 
   public String getName();
 
-  public boolean addQuery(QueryInProgress resource);
+  public void addQuery(QueryInProgress resource) throws Exception;
 
   public void notifyQueryStop(QueryId queryId);
 

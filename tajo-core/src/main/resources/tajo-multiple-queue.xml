@@ -22,10 +22,14 @@
 <configuration>
     <property>
         <name>tajo.multiple.queue.names</name>
-        <value>default</value>
+        <value>q1,q2</value>
     </property>
     <property>
-        <name>tajo.multiple.queue.default.capacity</name>
+        <name>tajo.multiple.queue.q1.capacity</name>
+        <value>2</value>
+    </property>
+    <property>
+        <name>tajo.multiple.queue.q2.capacity</name>
         <value>2</value>
     </property>
 </configuration>

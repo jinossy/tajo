@@ -46,7 +46,7 @@ public class SetCommand extends TajoShellCommand {
       client.updateSessionVariables(variables);
       context.setVariable(cmd[1], cmd[2]);
     } else {
-      context.getOutput().println("usage: \\set [[NAME] VALUE]");
+      context.getOutput().println("usage: \\set [NAME VALUE]");
     }
   }
 
