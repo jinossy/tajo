@@ -338,7 +338,11 @@ public class TajoConf extends Configuration {
     CSVFILE_NULL("tajo.csvfile.null", "\\\\N"),
 
     // DEBUG OPTION
-    TAJO_DEBUG("tajo.debug", false)
+    TAJO_DEBUG("tajo.debug", false),
+
+    //JOB_SCHEDULER
+    JOB_SCHEDULER_CLASS("tajo.job.scheduler.class", "org.apache.tajo.scheduler.SimpleFifoScheduler"),
+    JOB_QUEUE_NAMES("tajo.job.queue.names", "default")
     ;
 
     public final String varname;
