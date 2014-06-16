@@ -65,7 +65,7 @@ public class HelpCommand extends TajoShellCommand {
     sout.println();
 
     sout.println("Variables");
-    sout.println("  \\set [[NAME] [VALUE]  set session variable or list session variables");
+    sout.println("  \\set [NAME VALUE]  set session variable or list session variables");
     sout.println("  \\unset NAME           unset session variable");
     sout.println();
     sout.println();

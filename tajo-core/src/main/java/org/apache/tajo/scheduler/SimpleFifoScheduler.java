@@ -63,14 +63,17 @@ public class SimpleFifoScheduler extends AbstractScheduler {
     return null;
   }
 
-  protected boolean addQueryToQueue(QuerySchedulingInfo querySchedulingInfo) {
+  protected void addQueryToQueue(QuerySchedulingInfo querySchedulingInfo) throws Exception {
     synchronized (pool) {
       int qSize = pool.size();
       if (qSize != 0 && qSize % 100 == 0) {
         LOG.info("Size of Fifo queue is " + qSize);
       }
 
-      return pool.add(querySchedulingInfo);
+      boolean result = pool.add(querySchedulingInfo);
+      if (!result) {
+        throw new Exception("Can't add to queue");
+      }
     }
   }
 

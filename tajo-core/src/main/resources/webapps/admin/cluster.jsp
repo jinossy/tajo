@@ -29,8 +29,8 @@
 
 <%
   TajoMaster master = (TajoMaster) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
-  Map<String, Worker> workers = master.getContext().getResourceManager().getWorkers();
-  List<String> wokerKeys = new ArrayList<String>(workers.keySet());
+  Map<Integer, Worker> workers = master.getContext().getResourceManager().getWorkers();
+  List<Integer> wokerKeys = new ArrayList<Integer>(workers.keySet());
   Collections.sort(wokerKeys);
 
   int runningQueryMasterTasks = 0;

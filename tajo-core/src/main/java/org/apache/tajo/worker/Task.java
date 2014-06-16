@@ -27,6 +27,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hadoop.yarn.api.records.impl.pb.ContainerIdPBImpl;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.TajoConstants;
 import org.apache.tajo.TajoProtos;
@@ -333,7 +334,7 @@ public class Task {
   private TaskCompletionReport getTaskCompletionReport() {
     TaskCompletionReport.Builder builder = TaskCompletionReport.newBuilder();
     builder.setId(context.getTaskId().getProto());
-
+    builder.setContainerId(((ContainerIdPBImpl)taskRunnerContext.getContainerId()).getProto());
     builder.setInputStats(reloadInputStats());
 
     if (context.hasResultStats()) {
@@ -451,7 +452,7 @@ public class Task {
       finishTime = System.currentTimeMillis();
       LOG.info("Worker's task counter - total:" + taskRunnerContext.completedTasksNum.intValue() +
           ", succeeded: " + taskRunnerContext.succeededTasksNum.intValue()
-          + ", killed: " + taskRunnerContext.killedTasksNum.incrementAndGet()
+          + ", killed: " + taskRunnerContext.killedTasksNum.intValue()
           + ", failed: " + taskRunnerContext.failedTasksNum.intValue());
       cleanupTask();
     }

@@ -28,7 +28,6 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
-import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.tajo.QueryId;
@@ -37,7 +36,6 @@ import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.master.TajoMaster;
 import org.apache.tajo.master.querymaster.QueryInProgress;
 import org.apache.tajo.rpc.CallFuture;
-import org.apache.tajo.util.ApplicationIdUtils;
 
 import java.io.IOException;
 import java.util.*;
@@ -46,7 +44,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.hadoop.yarn.proto.YarnProtos.ContainerIdProto;
 import static org.apache.tajo.ipc.TajoMasterProtocol.*;
@@ -58,8 +55,6 @@ import static org.apache.tajo.ipc.TajoMasterProtocol.*;
 public class TajoWorkerResourceManager extends CompositeService implements WorkerResourceManager {
   /** class logger */
   private static final Log LOG = LogFactory.getLog(TajoWorkerResourceManager.class);
-
-  static AtomicInteger containerIdSeq = new AtomicInteger(0);
 
   private TajoMaster.MasterContext masterContext;
 
@@ -134,7 +129,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
     @Override
     public void handle(WorkerEvent event) {
-      String workerId = event.getWorkerId();
+      int workerId = event.getWorkerId();
       Worker node = this.rmContext.getWorkers().get(workerId);
       if (node != null) {
         try {
@@ -147,16 +142,16 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
   }
 
   @Override
-  public Map<String, Worker> getWorkers() {
+  public Map<Integer, Worker> getWorkers() {
     return ImmutableMap.copyOf(rmContext.getWorkers());
   }
 
   @Override
-  public Map<String, Worker> getInactiveWorkers() {
+  public Map<Integer, Worker> getInactiveWorkers() {
     return ImmutableMap.copyOf(rmContext.getInactiveWorkers());
   }
 
-  public Collection<String> getQueryMasters() {
+  public Collection<Integer> getQueryMasterWorkerIds() {
     return Collections.unmodifiableSet(rmContext.getQueryMasterWorker());
   }
 
@@ -192,13 +187,12 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
     return resourceTracker;
   }
 
-  private WorkerResourceAllocationRequest createQMResourceRequest(QueryId queryId) {
+  private WorkerResourcesRequestProto createQMResourceRequest() {
     float queryMasterDefaultDiskSlot = masterContext.getConf().getFloatVar(
         TajoConf.ConfVars.TAJO_QUERYMASTER_DISK_SLOT);
     int queryMasterDefaultMemoryMB = masterContext.getConf().getIntVar(TajoConf.ConfVars.TAJO_QUERYMASTER_MEMORY_MB);
 
-    WorkerResourceAllocationRequest.Builder builder = WorkerResourceAllocationRequest.newBuilder();
-    builder.setQueryId(queryId.getProto());
+    WorkerResourcesRequestProto.Builder builder = WorkerResourcesRequestProto.newBuilder();
     builder.setMaxMemoryMBPerContainer(queryMasterDefaultMemoryMB);
     builder.setMinMemoryMBPerContainer(queryMasterDefaultMemoryMB);
     builder.setMaxDiskSlotPerContainer(queryMasterDefaultDiskSlot);
@@ -209,9 +203,9 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
   }
 
   @Override
-  public WorkerAllocatedResource allocateQueryMaster(QueryInProgress queryInProgress) {
+  public AllocatedWorkerResourceProto allocateQueryMaster(QueryInProgress queryInProgress) {
     // Create a resource request for a query master
-    WorkerResourceAllocationRequest qmResourceRequest = createQMResourceRequest(queryInProgress.getQueryId());
+    WorkerResourcesRequestProto qmResourceRequest = createQMResourceRequest();
 
     // call future for async call
     CallFuture<WorkerResourceAllocationResponse> callFuture = new CallFuture<WorkerResourceAllocationResponse>();
@@ -226,25 +220,25 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
       return null;
     }
 
-    if (response.getWorkerAllocatedResourceList().size() == 0) {
+    if (response.getAllocatedWorkerResourceCount() == 0) {
       return null;
     }
 
-    WorkerAllocatedResource resource = response.getWorkerAllocatedResource(0);
-    registerQueryMaster(queryInProgress.getQueryId(), resource.getContainerId());
+    AllocatedWorkerResourceProto resource = response.getAllocatedWorkerResource(0);
+    registerQueryMaster(queryInProgress.getQueryId(), resource);
     return resource;
   }
 
-  private void registerQueryMaster(QueryId queryId, ContainerIdProto containerId) {
-    rmContext.getQueryMasterContainer().putIfAbsent(queryId, containerId);
+  private void registerQueryMaster(QueryId queryId, AllocatedWorkerResourceProto resource) {
+    rmContext.getQueryMasterContainer().putIfAbsent(queryId, resource);
   }
 
   @Override
-  public void allocateWorkerResources(WorkerResourceAllocationRequest request,
+  public void allocateWorkerResources(WorkerResourcesRequestProto request,
                                       RpcCallback<WorkerResourceAllocationResponse> callBack) {
     try {
       //TODO checking queue size
-      requestQueue.put(new WorkerResourceRequest(new QueryId(request.getQueryId()), false, request, callBack));
+      requestQueue.put(new WorkerResourceRequest(false, request, callBack));
     } catch (InterruptedException e) {
       LOG.error(e.getMessage(), e);
     }
@@ -252,14 +246,11 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
   static class WorkerResourceRequest {
     boolean queryMasterRequest;
-    QueryId queryId;
-    WorkerResourceAllocationRequest request;
+    WorkerResourcesRequestProto request;
     RpcCallback<WorkerResourceAllocationResponse> callBack;
     WorkerResourceRequest(
-        QueryId queryId,
-        boolean queryMasterRequest, WorkerResourceAllocationRequest request,
+        boolean queryMasterRequest, WorkerResourcesRequestProto request,
         RpcCallback<WorkerResourceAllocationResponse> callBack) {
-      this.queryId = queryId;
       this.queryMasterRequest = queryMasterRequest;
       this.request = request;
       this.callBack = callBack;
@@ -282,8 +273,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
           if (LOG.isDebugEnabled()) {
             LOG.debug("allocateWorkerResources:" +
-                (new QueryId(resourceRequest.request.getQueryId())) +
-                ", requiredMemory:" + resourceRequest.request.getMinMemoryMBPerContainer() +
+                " requiredMemory:" + resourceRequest.request.getMinMemoryMBPerContainer() +
                 "~" + resourceRequest.request.getMaxMemoryMBPerContainer() +
                 ", requiredContainers:" + resourceRequest.request.getNumContainers() +
                 ", requiredDiskSlots:" + resourceRequest.request.getMinDiskSlotPerContainer() +
@@ -292,83 +282,74 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
                 ", liveWorkers=" + rmContext.getWorkers().size());
           }
 
-          // TajoWorkerResourceManager can't return allocated disk slots occasionally.
-          // Because the rest resource request can remains after QueryMaster stops.
-          // Thus we need to find whether QueryId stopped or not.
-          if (!rmContext.getStoppedQueryIds().contains(resourceRequest.queryId)) {
-            List<AllocatedWorkerResource> allocatedWorkerResources = chooseWorkers(resourceRequest);
+          List<AllocatedWorkerResourceProto> allocatedWorkerResources = chooseWorkers(resourceRequest);
 
-            if(allocatedWorkerResources.size() > 0) {
-              List<WorkerAllocatedResource> allocatedResources =
-                  new ArrayList<WorkerAllocatedResource>();
+          if (allocatedWorkerResources.size() > 0) {
+            resourceRequest.callBack.run(WorkerResourceAllocationResponse.newBuilder()
+                    .addAllAllocatedWorkerResource(allocatedWorkerResources)
+                    .build()
+            );
 
-              for(AllocatedWorkerResource allocatedResource: allocatedWorkerResources) {
-                NodeId nodeId = NodeId.newInstance(allocatedResource.worker.getHostName(),
-                    allocatedResource.worker.getPeerRpcPort());
-
-                TajoWorkerContainerId containerId = new TajoWorkerContainerId();
-
-                containerId.setApplicationAttemptId(
-                    ApplicationIdUtils.createApplicationAttemptId(resourceRequest.queryId));
-                containerId.setId(containerIdSeq.incrementAndGet());
-
-                ContainerIdProto containerIdProto = containerId.getProto();
-                allocatedResources.add(WorkerAllocatedResource.newBuilder()
-                    .setContainerId(containerIdProto)
-                    .setNodeId(nodeId.toString())
-                    .setWorkerHost(allocatedResource.worker.getHostName())
-                    .setQueryMasterPort(allocatedResource.worker.getQueryMasterPort())
-                    .setClientPort(allocatedResource.worker.getClientPort())
-                    .setPeerRpcPort(allocatedResource.worker.getPeerRpcPort())
-                    .setWorkerPullServerPort(allocatedResource.worker.getPullServerPort())
-                    .setAllocatedMemoryMB(allocatedResource.allocatedMemoryMB)
-                    .setAllocatedDiskSlots(allocatedResource.allocatedDiskSlots)
-                    .build());
-
-
-                allocatedResourceMap.putIfAbsent(containerIdProto, allocatedResource);
+          } else {
+            if (LOG.isDebugEnabled()) {
+              LOG.debug("=========================================");
+              LOG.debug("Available Workers");
+              for (Integer liveWorker : rmContext.getWorkers().keySet()) {
+                LOG.debug(rmContext.getWorkers().get(liveWorker).toString());
               }
-
-              resourceRequest.callBack.run(WorkerResourceAllocationResponse.newBuilder()
-                  .setQueryId(resourceRequest.request.getQueryId())
-                  .addAllWorkerAllocatedResource(allocatedResources)
-                  .build()
-              );
-
-            } else {
-              if(LOG.isDebugEnabled()) {
-                LOG.debug("=========================================");
-                LOG.debug("Available Workers");
-                for(String liveWorker: rmContext.getWorkers().keySet()) {
-                  LOG.debug(rmContext.getWorkers().get(liveWorker).toString());
-                }
-                LOG.debug("=========================================");
-              }
-              requestQueue.put(resourceRequest);
-              Thread.sleep(100);
+              LOG.debug("=========================================");
             }
+            requestQueue.put(resourceRequest);
+            Thread.sleep(50);
           }
 
-        } catch(InterruptedException ie) {
+        } catch (InterruptedException ie) {
           LOG.error(ie);
         }
       }
     }
   }
 
-  private List<AllocatedWorkerResource> chooseWorkers(WorkerResourceRequest resourceRequest) {
-    List<AllocatedWorkerResource> selectedWorkers = new ArrayList<AllocatedWorkerResource>();
+  private List<AllocatedWorkerResourceProto> chooseWorkers(WorkerResourceRequest resourceRequest) {
+    List<AllocatedWorkerResourceProto> selectedWorkers = new ArrayList<AllocatedWorkerResourceProto>();
 
     int allocatedResources = 0;
-
+    WorkerResourcesRequestProto request = resourceRequest.request;
+    AllocatedWorkerResourceProto.Builder allocatedResourceBuilder = AllocatedWorkerResourceProto.newBuilder();
     TajoMasterProtocol.ResourceRequestPriority resourceRequestPriority
-        = resourceRequest.request.getResourceRequestPriority();
+        = request.getResourceRequestPriority();
+
+    List<Integer> randomWorkers = new ArrayList<Integer>();
+
+    if(request.getWorkerIdCount() > 0) {
+      for (int workerId : request.getWorkerIdList()){
+        if(rmContext.getWorkers().containsKey(workerId)){
+          randomWorkers.add(workerId);
+        } else {
+          LOG.warn("Can't found worker : " + workerId);
+        }
+      }
+
+      if(request.getNumContainers() > randomWorkers.size()){
+        ArrayList<Integer> workerIds = new ArrayList<Integer>(rmContext.getWorkers().keySet());
+        Collections.shuffle(workerIds);
+        for (int workerId : workerIds){
+          if (!randomWorkers.contains(workerId)) {
+            randomWorkers.add(workerId);
+          }
+
+          if (randomWorkers.size() == request.getNumContainers()) {
+            break;
+          }
+        }
+      }
+    } else {
+      randomWorkers.addAll(rmContext.getWorkers().keySet());
+      Collections.shuffle(randomWorkers);
+    }
 
     if(resourceRequestPriority == TajoMasterProtocol.ResourceRequestPriority.MEMORY) {
       synchronized(rmContext) {
-        List<String> randomWorkers = new ArrayList<String>(rmContext.getWorkers().keySet());
-        Collections.shuffle(randomWorkers);
-
         int numContainers = resourceRequest.request.getNumContainers();
         int minMemoryMB = resourceRequest.request.getMinMemoryMBPerContainer();
         int maxMemoryMB = resourceRequest.request.getMaxMemoryMBPerContainer();
@@ -376,7 +357,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
             resourceRequest.request.getMinDiskSlotPerContainer());
 
         int liveWorkerSize = randomWorkers.size();
-        Set<String> insufficientWorkers = new HashSet<String>();
+        Set<Integer> insufficientWorkers = new HashSet<Integer>();
         boolean stop = false;
         boolean checkMax = true;
         while(!stop) {
@@ -393,7 +374,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
           }
           int compareAvailableMemory = checkMax ? maxMemoryMB : minMemoryMB;
 
-          for(String eachWorker: randomWorkers) {
+          for(Integer eachWorker: randomWorkers) {
             if(allocatedResources >= numContainers) {
               stop = true;
               break;
@@ -406,27 +387,28 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
             Worker worker = rmContext.getWorkers().get(eachWorker);
             WorkerResource workerResource = worker.getResource();
             if(workerResource.getAvailableMemoryMB() >= compareAvailableMemory) {
+              allocatedResourceBuilder.setWorker(worker.createWorkerResourceProto());
+
               int workerMemory;
               if(workerResource.getAvailableMemoryMB() >= maxMemoryMB) {
                 workerMemory = maxMemoryMB;
               } else {
                 workerMemory = workerResource.getAvailableMemoryMB();
               }
-              AllocatedWorkerResource allocatedWorkerResource = new AllocatedWorkerResource();
-              allocatedWorkerResource.worker = worker;
-              allocatedWorkerResource.allocatedMemoryMB = workerMemory;
+              allocatedResourceBuilder.setAllocatedMemoryMB(workerMemory);
+
+              float workerDiskSlots;
               if(workerResource.getAvailableDiskSlots() >= diskSlot) {
-                allocatedWorkerResource.allocatedDiskSlots = diskSlot;
+                workerDiskSlots = diskSlot;
               } else {
-                allocatedWorkerResource.allocatedDiskSlots = workerResource.getAvailableDiskSlots();
+                workerDiskSlots = workerResource.getAvailableDiskSlots();
               }
+              allocatedResourceBuilder.setAllocatedDiskSlots(workerDiskSlots);
 
-              workerResource.allocateResource(allocatedWorkerResource.allocatedDiskSlots,
-                  allocatedWorkerResource.allocatedMemoryMB);
-
-              selectedWorkers.add(allocatedWorkerResource);
-
+              workerResource.allocateResource(workerDiskSlots, workerMemory);
+              selectedWorkers.add(allocatedResourceBuilder.build());
               allocatedResources++;
+
             } else {
               insufficientWorkers.add(eachWorker);
             }
@@ -435,9 +417,6 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
       }
     } else {
       synchronized(rmContext) {
-        List<String> randomWorkers = new ArrayList<String>(rmContext.getWorkers().keySet());
-        Collections.shuffle(randomWorkers);
-
         int numContainers = resourceRequest.request.getNumContainers();
         float minDiskSlots = resourceRequest.request.getMinDiskSlotPerContainer();
         float maxDiskSlots = resourceRequest.request.getMaxDiskSlotPerContainer();
@@ -445,7 +424,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
             resourceRequest.request.getMinMemoryMBPerContainer());
 
         int liveWorkerSize = randomWorkers.size();
-        Set<String> insufficientWorkers = new HashSet<String>();
+        Set<Integer> insufficientWorkers = new HashSet<Integer>();
         boolean stop = false;
         boolean checkMax = true;
         while(!stop) {
@@ -462,7 +441,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
           }
           float compareAvailableDisk = checkMax ? maxDiskSlots : minDiskSlots;
 
-          for(String eachWorker: randomWorkers) {
+          for(Integer eachWorker: randomWorkers) {
             if(allocatedResources >= numContainers) {
               stop = true;
               break;
@@ -474,28 +453,36 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
             Worker worker = rmContext.getWorkers().get(eachWorker);
             WorkerResource workerResource = worker.getResource();
+
             if(workerResource.getAvailableDiskSlots() >= compareAvailableDisk) {
+              allocatedResourceBuilder.setWorker(worker.createWorkerResourceProto());
+
               float workerDiskSlots;
               if(workerResource.getAvailableDiskSlots() >= maxDiskSlots) {
                 workerDiskSlots = maxDiskSlots;
               } else {
                 workerDiskSlots = workerResource.getAvailableDiskSlots();
               }
-              AllocatedWorkerResource allocatedWorkerResource = new AllocatedWorkerResource();
-              allocatedWorkerResource.worker = worker;
-              allocatedWorkerResource.allocatedDiskSlots = workerDiskSlots;
+              allocatedResourceBuilder.setAllocatedDiskSlots(workerDiskSlots);
 
+              int workerMemory;
               if(workerResource.getAvailableMemoryMB() >= memoryMB) {
-                allocatedWorkerResource.allocatedMemoryMB = memoryMB;
+                workerMemory = memoryMB;
               } else {
-                allocatedWorkerResource.allocatedMemoryMB = workerResource.getAvailableMemoryMB();
+                workerMemory = workerResource.getAvailableMemoryMB();
               }
-              workerResource.allocateResource(allocatedWorkerResource.allocatedDiskSlots,
-                  allocatedWorkerResource.allocatedMemoryMB);
 
-              selectedWorkers.add(allocatedWorkerResource);
+              if(workerMemory == 0) {
+                insufficientWorkers.add(eachWorker);
+                continue;
+              }
 
+              allocatedResourceBuilder.setAllocatedMemoryMB(workerMemory);
+
+              workerResource.allocateResource(workerDiskSlots, workerMemory);
+              selectedWorkers.add(allocatedResourceBuilder.build());
               allocatedResources++;
+
             } else {
               insufficientWorkers.add(eachWorker);
             }
@@ -509,16 +496,20 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
   /**
    * Release allocated resource.
    *
-   * @param containerId ContainerIdProto to be released
+   * @param resource AllocatedWorkerResourceProto to be released
    */
   @Override
-  public void releaseWorkerResource(ContainerIdProto containerId) {
-    AllocatedWorkerResource allocated = allocatedResourceMap.get(containerId);
-    if(allocated != null) {
-      LOG.info("Release Resource: " + allocated.allocatedDiskSlots + "," + allocated.allocatedMemoryMB);
-      allocated.worker.getResource().releaseResource( allocated.allocatedDiskSlots, allocated.allocatedMemoryMB);
+  public void releaseWorkerResource(AllocatedWorkerResourceProto resource) {
+//    AllocatedWorkerResource allocated = allocatedResourceMap.get(containerId);
+    WorkerResourceProto workerResource = resource.getWorker();
+    int workerId = Worker.getWorkerId(workerResource.getHost(), workerResource.getPeerRpcPort());
+
+    Worker worker = rmContext.getWorkers().get(workerId);
+    if(worker != null) {
+      LOG.debug("Release Resource: " + resource.getAllocatedDiskSlots() + "," + resource.getAllocatedMemoryMB());
+      worker.getResource().releaseResource(resource.getAllocatedDiskSlots(), resource.getAllocatedMemoryMB());
     } else {
-      LOG.warn("No AllocatedWorkerResource data for [" + containerId + "]");
+      LOG.warn("No AllocatedWorkerResource data for [" + resource.getWorker() + "]");
       return;
     }
   }
@@ -534,10 +525,10 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
       LOG.warn("No QueryMaster resource info for " + queryId);
       return;
     } else {
-      ContainerIdProto containerId = rmContext.getQueryMasterContainer().remove(queryId);
-      releaseWorkerResource(containerId);
-      rmContext.getStoppedQueryIds().add(queryId);
-      LOG.info(String.format("Released QueryMaster (%s) resource." , queryId.toString()));
+      AllocatedWorkerResourceProto resource = rmContext.getQueryMasterContainer().remove(queryId);
+      releaseWorkerResource(resource);
+//      rmContext.getStoppedQueryIds().add(queryId);
+      LOG.info(String.format("Released QueryMaster (%s) resource:" + resource.getWorker().getHost(), queryId.toString()));
     }
   }
 

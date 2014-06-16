@@ -494,9 +494,9 @@ public class TajoMasterClientService extends AbstractService {
         context.getSessionManager().touch(request.getSessionId().getId());
         GetClusterInfoResponse.Builder builder= GetClusterInfoResponse.newBuilder();
 
-        Map<String, Worker> workers = context.getResourceManager().getWorkers();
+        Map<Integer, Worker> workers = context.getResourceManager().getWorkers();
 
-        List<String> wokerKeys = new ArrayList<String>(workers.keySet());
+        List<Integer> wokerKeys = new ArrayList<Integer>(workers.keySet());
         Collections.sort(wokerKeys);
 
         WorkerResourceInfo.Builder workerBuilder

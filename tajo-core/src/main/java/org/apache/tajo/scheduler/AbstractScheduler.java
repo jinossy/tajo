@@ -27,14 +27,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractScheduler implements Scheduler {
   private static final Log LOG = LogFactory.getLog(AbstractScheduler.class.getName());
-  public static final String DEFAULT_QUEUE_NAME = "default";
 
   protected Thread queryProcessor;
   protected AtomicBoolean stopped = new AtomicBoolean();
   protected QueryJobManager queryJobManager;
 
   protected abstract QuerySchedulingInfo[] getScheduledQueries();
-  protected abstract boolean addQueryToQueue(QuerySchedulingInfo querySchedulingInfo);
+  protected abstract void addQueryToQueue(QuerySchedulingInfo querySchedulingInfo) throws Exception;
 
   @Override
   public void init(QueryJobManager queryJobManager) {
@@ -59,16 +58,11 @@ public abstract class AbstractScheduler implements Scheduler {
   }
 
   @Override
-  public boolean addQuery(QueryInProgress queryInProgress) {
+  public void addQuery(QueryInProgress queryInProgress) throws Exception {
     QuerySchedulingInfo querySchedulingInfo =
         new QuerySchedulingInfo(queryInProgress.getQueryId(), 1, queryInProgress.getStartTime(), queryInProgress.getSession());
-
-    boolean result = addQueryToQueue(querySchedulingInfo);
-
-    if (result) {
-      wakeupProcessor();
-    }
-    return result;
+    addQueryToQueue(querySchedulingInfo);
+    wakeupProcessor();
   }
 
   protected void wakeupProcessor() {

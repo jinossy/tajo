@@ -48,10 +48,22 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
   private PropertyReloader propertyReloader;
   private Random rand;
 
-  static class QueueProperty {
-    String queueName;
-    int minCapacity;
-    int maxCapacity;
+  public static class QueueProperty {
+    private String queueName;
+    private int minCapacity;
+    private int maxCapacity;
+
+    public String getQueueName() {
+      return queueName;
+    }
+
+    public int getMinCapacity() {
+      return minCapacity;
+    }
+
+    public int getMaxCapacity() {
+      return maxCapacity;
+    }
   }
 
   @Override
@@ -204,6 +216,9 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
 
           reorganizeTargetQuery.setAssignedQueueName(assignedQueueName);
           queue.add(reorganizeTargetQuery);
+
+          LOG.info(reorganizeTargetQuery.getQueryId() + " is reAssigned from the " + reorganizeTargetQueueName +
+              " to the " + assignedQueueName + " queue");
         }
       }
     }
@@ -212,35 +227,39 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
 
   @Override
   protected QuerySchedulingInfo[] getScheduledQueries() {
-    Set<String> readyQueueNames = new HashSet<String>(queues.keySet());
+    synchronized(queues) {
+      Set<String> readyQueueNames = new HashSet<String>(queues.keySet());
 
-    for (QuerySchedulingInfo eachQuery : runningQueries.values()) {
-      readyQueueNames.remove(eachQuery.getAssignedQueueName());
-    }
-    if (readyQueueNames.isEmpty()) {
-      return null;
-    }
-
-    List<QuerySchedulingInfo> queries = new ArrayList<QuerySchedulingInfo>();
-
-    for (String eachQueueName: readyQueueNames) {
-      LinkedList<QuerySchedulingInfo> queue = queues.get(eachQueueName);
-
-      if (queue == null) {
-        LOG.warn("No queue for " + eachQueueName);
-        continue;
+      for (QuerySchedulingInfo eachQuery : runningQueries.values()) {
+        readyQueueNames.remove(eachQuery.getAssignedQueueName());
+      }
+      if (readyQueueNames.isEmpty()) {
+        return null;
       }
 
-      if (!queue.isEmpty()) {
-        queries.add(queue.poll());
-      }
-    }
+      List<QuerySchedulingInfo> queries = new ArrayList<QuerySchedulingInfo>();
 
-    return queries.toArray(new QuerySchedulingInfo[]{});
+      for (String eachQueueName : readyQueueNames) {
+        LinkedList<QuerySchedulingInfo> queue = queues.get(eachQueueName);
+
+        if (queue == null) {
+          LOG.warn("No queue for " + eachQueueName);
+          continue;
+        }
+
+        if (!queue.isEmpty()) {
+          QuerySchedulingInfo querySchedulingInfo = queue.poll();
+          queries.add(querySchedulingInfo);
+          runningQueries.put(querySchedulingInfo.getQueryId(), querySchedulingInfo);
+        }
+      }
+
+      return queries.toArray(new QuerySchedulingInfo[]{});
+    }
   }
 
   @Override
-  protected boolean addQueryToQueue(QuerySchedulingInfo querySchedulingInfo) {
+  protected void addQueryToQueue(QuerySchedulingInfo querySchedulingInfo) throws Exception {
     String submitQueueNameProperty = querySchedulingInfo.getSession().getVariable(ConfVars.JOB_QUEUE_NAMES.varname,
         ConfVars.JOB_QUEUE_NAMES.defaultVal);
 
@@ -248,14 +267,20 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
     Set<String> candidateQueueNames = TUtil.newHashSet(queueNames);
 
     String selectedQueue = null;
-    int minQueueSize = Integer.MIN_VALUE;
+    int minQueueSize = Integer.MAX_VALUE;
 
     synchronized (queues) {
+      Set<String> runningQueues = new HashSet<String>();
+      for (QuerySchedulingInfo eachQuery : runningQueries.values()) {
+        runningQueues.add(eachQuery.getAssignedQueueName());
+      }
+
       for (String eachQueue: queues.keySet()) {
         LinkedList<QuerySchedulingInfo> queue = queues.get(eachQueue);
-        if (queue != null && queue.size() < minQueueSize) {
+        int queueSize = (queue == null ? Integer.MAX_VALUE : queue.size()) + (runningQueues.contains(eachQueue) ? 1 : 0);
+        if (candidateQueueNames.contains(eachQueue) && queueSize < minQueueSize) {
           selectedQueue = eachQueue;
-          minQueueSize = queue.size();
+          minQueueSize = queueSize;
         }
       }
 
@@ -264,12 +289,15 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
         querySchedulingInfo.setAssignedQueueName(selectedQueue);
         querySchedulingInfo.setCandidateQueueNames(candidateQueueNames);
         queue.push(querySchedulingInfo);
-
         queryAssignedMap.put(querySchedulingInfo.getQueryId(), selectedQueue);
+
+        LOG.info(querySchedulingInfo.getQueryId() + " is assigned to the [" + selectedQueue + "] queue");
       }
     }
 
-    return selectedQueue != null;
+    if (selectedQueue == null) {
+      throw new Exception("Can't find proper query queue(requested queue=" + submitQueueNameProperty + ")");
+    }
   }
 
   @Override
@@ -281,16 +309,21 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
 
     String prefix = "";
 
-    sb.append("<table>");
-    sb.append("<tr><th>Queue</th><th>Min Slot</th><th>Max Slot</th><th>Running Query<th><th>Waiting Queries</th></tr>");
+    sb.append("<table border=\"1\" width=\"100%\" class=\"border_table\">");
+    sb.append("<tr><th width='200'>Queue</th><th width='100'>Min Slot</th><th width='100'>Max Slot</th><th>Running Query</th><th>Waiting Queries</th></tr>");
 
     synchronized (queues) {
-      for (String eachQueueName : queues.keySet()) {
-        QueueProperty queryProperty = queueProperties.get(eachQueueName);
-        sb.append("<tr><td>").append(eachQueueName).append("</td>");
+      SortedSet<String> queueNames = new TreeSet<String>(queues.keySet());
+      for (String eachQueueName : queueNames) {
+        waitingQueryList = "";
+        runningQueryList = "";
 
-        sb.append("<tr><td>").append(queryProperty.minCapacity).append("</td>");
-        sb.append("<tr><td>").append(queryProperty.maxCapacity).append("</td>");
+        QueueProperty queryProperty = queueProperties.get(eachQueueName);
+        sb.append("<tr>");
+        sb.append("<td>").append(eachQueueName).append("</td>");
+
+        sb.append("<td align='right'>").append(queryProperty.minCapacity).append("</td>");
+        sb.append("<td align='right'>").append(queryProperty.maxCapacity).append("</td>");
 
         QuerySchedulingInfo runningQueryInfo = null;
         for (QuerySchedulingInfo eachQuery : runningQueries.values()) {
@@ -310,8 +343,9 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
           prefix = "<br/>";
         }
 
-        sb.append("<tr><td>").append(runningQueryList).append("</td>");
-        sb.append("<tr><td>").append(waitingQueryList).append("</td>");
+        sb.append("<td>").append(runningQueryList).append("</td>");
+        sb.append("<td>").append(waitingQueryList).append("</td>");
+        sb.append("</tr>");
       }
     }
 

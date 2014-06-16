@@ -32,6 +32,7 @@ import org.apache.tajo.engine.planner.logical.LogicalRootNode;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.ipc.QueryMasterProtocol;
 import org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService;
+import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.ipc.TajoWorkerProtocol.QueryExecutionRequestProto;
 import org.apache.tajo.master.TajoAsyncDispatcher;
@@ -46,8 +47,6 @@ import org.apache.tajo.util.NetUtils;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import static org.apache.tajo.ipc.TajoMasterProtocol.WorkerAllocatedResource;
 
 public class QueryInProgress extends CompositeService {
   private static final Log LOG = LogFactory.getLog(QueryInProgress.class.getName());
@@ -166,7 +165,7 @@ public class QueryInProgress extends CompositeService {
     try {
       LOG.info("Initializing QueryInProgress for QueryID=" + queryId);
       WorkerResourceManager resourceManager = masterContext.getResourceManager();
-      WorkerAllocatedResource resource = resourceManager.allocateQueryMaster(this);
+      TajoMasterProtocol.AllocatedWorkerResourceProto resource = resourceManager.allocateQueryMaster(this);
 
       // if no resource to allocate a query master
       if(resource == null) {
@@ -174,9 +173,9 @@ public class QueryInProgress extends CompositeService {
         return false;
       }
 
-      queryInfo.setQueryMaster(resource.getWorkerHost());
-      queryInfo.setQueryMasterPort(resource.getQueryMasterPort());
-      queryInfo.setQueryMasterclientPort(resource.getClientPort());
+      queryInfo.setQueryMaster(resource.getWorker().getHost());
+      queryInfo.setQueryMasterPort(resource.getWorker().getQueryMasterPort());
+      queryInfo.setQueryMasterclientPort(resource.getWorker().getClientPort());
 
       getEventHandler().handle(new QueryJobEvent(QueryJobEvent.Type.QUERY_MASTER_START, queryInfo));
 

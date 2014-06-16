@@ -20,18 +20,13 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 
 <%@ page import="org.apache.tajo.master.TajoMaster" %>
-<%@ page import="org.apache.tajo.master.querymaster.QueryInProgress" %>
-<%@ page import="org.apache.tajo.master.rm.Worker" %>
-<%@ page import="org.apache.tajo.util.JSPUtil" %>
-<%@ page import="org.apache.tajo.util.StringUtils" %>
-<%@ page import="org.apache.tajo.util.StringUtils" %>
-<%@ page import="org.apache.tajo.scheduler.*" %>
-<%@ page import="java.text.SimpleDateFormat" %>
-<%@ page import="java.util.*" %>
+<%@ page import="org.apache.tajo.master.querymaster.QueryJobManager" %>
+<%@ page import="org.apache.tajo.scheduler.Scheduler" %>
+<%@ page import="org.apache.tajo.webapp.StaticHttpServer" %>
 
 <%
   TajoMaster master = (TajoMaster) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
-  MasterContext masterContext = master.getContext();
+  TajoMaster.MasterContext masterContext = master.getContext();
   QueryJobManager queryJobManager = masterContext.getQueryJobManager();
 
   Scheduler scheduler = queryJobManager.getScheduler();
@@ -70,7 +65,7 @@
 <div class='contents'>
   <h2>Tajo Master: <%=master.getMasterName()%></h2>
   <hr/>
-  <h3>Scheduler: <%=scheduler.class.getName()%></h3>
+  <h3>Scheduler: <%=scheduler.getClass().getName()%></h3>
   <%=scheduler.getStatusHtml()%>
 </div>
 </body>

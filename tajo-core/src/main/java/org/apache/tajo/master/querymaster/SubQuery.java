@@ -874,7 +874,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       int numRequest = subQuery.getContext().getResourceAllocator().calculateNumRequestContainers(
           subQuery.getContext().getQueryMasterContext().getWorkerContext(),
           subQuery.schedulerContext.getEstimatedTaskNum(),
-          requiredMemoryMBPerTask
+          requiredMemoryMBPerTask,
+          subQuery.masterPlan.isLeaf(execBlock)
       );
 
       final Resource resource = Records.newRecord(Resource.class);
@@ -1085,10 +1086,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
     @Override
     public void transition(SubQuery subQuery, SubQueryEvent subQueryEvent) {
-      subQuery.getTaskScheduler().stop();
       for (QueryUnit queryUnit : subQuery.getQueryUnits()) {
         subQuery.eventHandler.handle(new TaskEvent(queryUnit.getId(), TaskEventType.T_KILL));
       }
+      subQuery.getTaskScheduler().stop();
     }
   }
 

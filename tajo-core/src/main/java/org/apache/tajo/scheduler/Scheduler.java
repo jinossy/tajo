@@ -24,6 +24,7 @@ import org.apache.tajo.master.querymaster.QueryJobManager;
 
 public interface Scheduler {
   public static final String QUERY_QUEUE_KEY = "tajo.job.assigned.queue";
+  public static final String DEFAULT_QUEUE_NAME = "default";
 
   public void init(QueryJobManager queryJobManager);
 
@@ -35,7 +36,7 @@ public interface Scheduler {
 
   public String getName();
 
-  public boolean addQuery(QueryInProgress resource);
+  public void addQuery(QueryInProgress resource) throws Exception;
 
   public void notifyQueryStop(QueryId queryId);
 

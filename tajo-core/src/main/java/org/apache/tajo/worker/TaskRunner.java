@@ -45,6 +45,7 @@ import org.apache.tajo.rpc.CallFuture;
 import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.rpc.RpcConnectionPool;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.util.TajoIdUtils;
 
 import java.net.InetSocketAddress;
@@ -298,6 +299,10 @@ public class TaskRunner extends AbstractService {
       return executionBlockId;
     }
 
+    public ContainerId getContainerId() {
+      return containerId;
+    }
+    
     public void addTaskHistory(QueryUnitAttemptId quAttemptId, TaskHistory taskHistory) {
       history.addTaskHistory(quAttemptId, taskHistory);
     }
@@ -334,12 +339,56 @@ public class TaskRunner extends AbstractService {
           CallFuture<QueryUnitRequestProto> callFuture = null;
           QueryUnitRequestProto taskRequest = null;
 
+          CallFuture<PrimitiveProtos.BoolProto> containerCallFuture = null;
+
           while(!stopped) {
             NettyClientBase qmClient = null;
             QueryMasterProtocolService.Interface qmClientService = null;
             try {
               qmClient = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
               qmClientService = qmClient.getStub();
+
+
+              if (containerCallFuture == null) {
+                containerCallFuture = new CallFuture<PrimitiveProtos.BoolProto>();
+                LOG.info("Request GetTask: " + getId());
+                QueryMasterProtocol.ContainerResource request = QueryMasterProtocol.ContainerResource.newBuilder()
+                    .setExecutionBlockId(executionBlockId.getProto())
+                    .setContainerId(((ContainerIdPBImpl) containerId).getProto())
+                    .build();
+
+                qmClientService.reserveContainerResource(null, request, containerCallFuture);
+
+                try {
+                  // wait for an assigning task for 3 seconds
+                  PrimitiveProtos.BoolProto succeed = containerCallFuture.get(1, TimeUnit.SECONDS);
+                  if(!succeed.getValue()){
+                    LOG.info("Can't get resource. ShouldDie:" + getId());
+                    stop();
+                    if(taskRunnerManager != null) {
+                      //notify to TaskRunnerManager
+                      taskRunnerManager.stopTask(getId());
+                      taskRunnerManager= null;
+                    }
+                    continue;
+                  }
+                } catch (InterruptedException e) {
+                  if(stopped) {
+                    break;
+                  }
+                } catch (TimeoutException te) {
+                  if(stopped) {
+                    break;
+                  }
+                  // if there has been no assigning task for a given period,
+                  // TaskRunner will retry to request an assigning task.
+
+                  LOG.info("Retry reservation resource:" + getId() + " state:" + getServiceState());
+                  continue;
+                }
+              }
+
+              ////////////////////////////
 
               if (callFuture == null) {
                 callFuture = new CallFuture<QueryUnitRequestProto>();
@@ -364,7 +413,7 @@ public class TaskRunner extends AbstractService {
                 }
                 // if there has been no assigning task for a given period,
                 // TaskRunner will retry to request an assigning task.
-                LOG.info("Retry assigning task:" + getId());
+                LOG.info("Retry assigning task:" + getId() + " state:" + getServiceState() + "," + callFuture.isCancelled());
                 continue;
               }
 
@@ -410,6 +459,7 @@ public class TaskRunner extends AbstractService {
                   } finally {
                     callFuture = null;
                     taskRequest = null;
+                    LOG.info("complete task runner:" + getId());
                   }
                 }
               }

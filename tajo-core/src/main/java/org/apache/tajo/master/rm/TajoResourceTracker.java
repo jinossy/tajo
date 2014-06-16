@@ -111,9 +111,9 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
   /** The response builder */
   private static final Builder builder = TajoHeartbeatResponse.newBuilder().setHeartbeatResult(ProtoUtil.TRUE);
 
-  private static WorkerStatusEvent createStatusEvent(String workerKey, NodeHeartbeat heartbeat) {
+  private static WorkerStatusEvent createStatusEvent(int workerId, NodeHeartbeat heartbeat) {
     return new WorkerStatusEvent(
-        workerKey,
+        workerId,
         heartbeat.getServerStatus().getRunningTaskNum(),
         heartbeat.getServerStatus().getJvmHeap().getMaxHeap(),
         heartbeat.getServerStatus().getJvmHeap().getFreeHeap(),
@@ -128,7 +128,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
 
     try {
       // get a workerId from the heartbeat
-      String workerId = createWorkerId(heartbeat);
+      int workerId = createWorkerId(heartbeat);
 
       if(rmContext.getWorkers().containsKey(workerId)) { // if worker is running
 
@@ -145,7 +145,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
 
         // create new worker instance
         Worker newWorker = createWorkerResource(heartbeat);
-        String newWorkerId = newWorker.getWorkerId();
+        int newWorkerId = newWorker.getWorkerId();
         // add the new worker to the list of active workers
         rmContext.getWorkers().putIfAbsent(newWorkerId, newWorker);
 
@@ -178,8 +178,8 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
     }
   }
 
-  private static final String createWorkerId(NodeHeartbeat heartbeat) {
-    return heartbeat.getTajoWorkerHost() + ":" + heartbeat.getTajoQueryMasterPort() + ":" + heartbeat.getPeerRpcPort();
+  private static final int createWorkerId(NodeHeartbeat heartbeat) {
+    return Worker.getWorkerId(heartbeat.getTajoWorkerHost(), heartbeat.getPeerRpcPort());
   }
 
   private Worker createWorkerResource(NodeHeartbeat request) {
@@ -224,7 +224,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
     int totalAvailableMemoryMB = 0;
 
     synchronized(rmContext) {
-      for(String eachWorker: rmContext.getWorkers().keySet()) {
+      for(int eachWorker: rmContext.getWorkers().keySet()) {
         Worker worker = rmContext.getWorkers().get(eachWorker);
         WorkerResource resource = worker.getResource();
         if(worker != null) {
