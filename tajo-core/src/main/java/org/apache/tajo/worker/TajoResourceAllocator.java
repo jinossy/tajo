@@ -443,7 +443,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         MultiQueueFiFoScheduler.QueueProperty queueProperty =
             queuePropertyMap.get(queryTaskContext.getSession().getVariable(Scheduler.QUERY_QUEUE_KEY, Scheduler.DEFAULT_QUEUE_NAME));
         int resources = event.getRequiredNum();
-        if (queueProperty.getMaxCapacity() > 0) {
+        if (queueProperty != null && queueProperty.getMaxCapacity() > 0) {
           resources = Math.min(event.getRequiredNum(), queueProperty.getMaxCapacity());
         }
         if (SubQuery.isRunningState(state)) {
