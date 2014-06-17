@@ -21,7 +21,6 @@ package org.apache.tajo.master.rm;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Maps;
 import com.google.protobuf.RpcCallback;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -40,12 +39,10 @@ import org.apache.tajo.rpc.CallFuture;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.apache.hadoop.yarn.proto.YarnProtos.ContainerIdProto;
 import static org.apache.tajo.ipc.TajoMasterProtocol.*;
 
 
@@ -74,8 +71,6 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
   private AtomicBoolean stopped = new AtomicBoolean(false);
 
   private TajoConf systemConf;
-
-  private ConcurrentMap<ContainerIdProto, AllocatedWorkerResource> allocatedResourceMap = Maps.newConcurrentMap();
 
   /** It receives status messages from workers and their resources. */
   private TajoResourceTracker resourceTracker;
@@ -230,7 +225,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
   }
 
   private void registerQueryMaster(QueryId queryId, AllocatedWorkerResourceProto resource) {
-    rmContext.getQueryMasterContainer().putIfAbsent(queryId, resource);
+    rmContext.getQueryMasterResource().putIfAbsent(queryId, resource);
   }
 
   @Override
@@ -255,12 +250,6 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
       this.request = request;
       this.callBack = callBack;
     }
-  }
-
-  static class AllocatedWorkerResource {
-    Worker worker;
-    int allocatedMemoryMB;
-    float allocatedDiskSlots;
   }
 
   class WorkerResourceAllocationThread extends Thread {
@@ -516,16 +505,16 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
   @Override
   public boolean isQueryMasterStopped(QueryId queryId) {
-    return !rmContext.getQueryMasterContainer().containsKey(queryId);
+    return !rmContext.getQueryMasterResource().containsKey(queryId);
   }
 
   @Override
   public void stopQueryMaster(QueryId queryId) {
-    if(!rmContext.getQueryMasterContainer().containsKey(queryId)) {
+    if(!rmContext.getQueryMasterResource().containsKey(queryId)) {
       LOG.warn("No QueryMaster resource info for " + queryId);
       return;
     } else {
-      AllocatedWorkerResourceProto resource = rmContext.getQueryMasterContainer().remove(queryId);
+      AllocatedWorkerResourceProto resource = rmContext.getQueryMasterResource().remove(queryId);
       releaseWorkerResource(resource);
 //      rmContext.getStoppedQueryIds().add(queryId);
       LOG.info(String.format("Released QueryMaster (%s) resource:" + resource.getWorker().getHost(), queryId.toString()));

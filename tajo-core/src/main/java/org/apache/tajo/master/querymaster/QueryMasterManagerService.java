@@ -253,13 +253,7 @@ public class QueryMasterManagerService extends CompositeService
   public void getContainers(RpcController controller, QueryMasterProtocol.ContainerResources request,
                       RpcCallback<QueryMasterProtocol.ContainerResources> done) {
     try {
-//      ExecutionBlockId ebId = new ExecutionBlockId(request.getExecutionBlockId());
-//      QueryMasterTask queryMasterTask = workerContext.getQueryMaster().getQueryMasterTask(ebId.getQueryId());
-//      ContainerId cid =
-//          queryMasterTask.getQueryTaskContext().getResourceAllocator().makeContainerId(request.getContainerId());
-//
-//      SubQuery subQuery =queryMasterTask.getQuery().getSubQuery(ebId);
-//      subQuery.releaseContainer(cid);
+      //TODO
       done.run(null);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
