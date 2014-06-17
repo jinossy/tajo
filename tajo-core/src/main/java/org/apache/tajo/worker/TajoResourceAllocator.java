@@ -442,7 +442,10 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         SubQueryState state = queryTaskContext.getSubQuery(executionBlockId).getState();
         MultiQueueFiFoScheduler.QueueProperty queueProperty =
             queuePropertyMap.get(queryTaskContext.getSession().getVariable(Scheduler.QUERY_QUEUE_KEY, Scheduler.DEFAULT_QUEUE_NAME));
-        int resources = Math.min(event.getRequiredNum(), queueProperty.getMaxCapacity());
+        int resources = event.getRequiredNum();
+        if (queueProperty.getMaxCapacity() > 0) {
+          resources = Math.min(event.getRequiredNum(), queueProperty.getMaxCapacity());
+        }
         if (SubQuery.isRunningState(state)) {
           allocateContainers(executionBlockId, event.isLeafQuery(), resources);
         }
