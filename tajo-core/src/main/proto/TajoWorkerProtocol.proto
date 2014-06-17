@@ -170,12 +170,11 @@ message DataChannelProto {
 }
 
 message RunExecutionBlockRequestProto {
-    required string executionBlockId = 1;
+    required ExecutionBlockIdProto executionBlockId = 1;
     required string queryMasterHost = 2;
     required int32 queryMasterPort = 3;
-    required string nodeId = 4;
-    required string containerId = 5;
-    optional string queryOutputPath = 6;
+    repeated hadoop.yarn.ContainerIdProto containerId = 4;
+    optional string queryOutputPath = 5;
 }
 
 service TajoWorkerProtocolService {

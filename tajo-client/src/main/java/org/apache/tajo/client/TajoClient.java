@@ -29,7 +29,10 @@ import org.apache.tajo.TajoIdProtos;
 import org.apache.tajo.TajoProtos.QueryState;
 import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.annotation.ThreadSafe;
-import org.apache.tajo.catalog.*;
+import org.apache.tajo.catalog.CatalogUtil;
+import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.catalog.TableDesc;
+import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.cli.InvalidClientSessionException;
 import org.apache.tajo.conf.TajoConf;
@@ -54,6 +57,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -188,6 +192,13 @@ public class TajoClient implements Closeable {
         sessionId = response.getSessionId();
         if (LOG.isDebugEnabled()) {
           LOG.debug(String.format("Got session %s as a user '%s'.", sessionId.getId(), userInfo.getUserName()));
+        }
+
+        String queueNames = conf.get(ConfVars.JOB_QUEUE_NAMES.varname);
+        if (queueNames != null && !queueNames.isEmpty()) {
+          Map<String, String> sessionVariables = new HashMap<String, String>();
+          sessionVariables.put(ConfVars.JOB_QUEUE_NAMES.varname, queueNames);
+          updateSessionVariables(sessionVariables);
         }
       } else {
         throw new InvalidClientSessionException(response.getMessage());

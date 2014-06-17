@@ -26,6 +26,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
 import org.apache.hadoop.yarn.api.records.NodeId;
+import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.TajoIdProtos;
@@ -34,7 +35,6 @@ import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.rpc.AsyncRpcServer;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.util.NetUtils;
-import org.apache.tajo.util.TajoIdUtils;
 import org.apache.tajo.worker.event.TaskRunnerEvent;
 
 import java.net.InetSocketAddress;
@@ -120,22 +120,19 @@ public class TajoWorkerManagerService extends CompositeService
                                     RpcCallback<PrimitiveProtos.BoolProto> done) {
     workerContext.getWorkerSystemMetrics().counter("query", "executedExecutionBlocksNum").inc();
     try {
-      String[] params = new String[7];
-      params[0] = "standby";  //mode(never used)
-      params[1] = request.getExecutionBlockId();
-      // NodeId has a form of hostname:port.
-      params[2] = request.getNodeId();
-      params[3] = request.getContainerId();
+      //String[] params = new String[7];
+      //params[0] = "standby";  //mode(never used)
+      //params[1] = request.getExecutionBlockId();
 
       // QueryMaster's address
-      params[4] = request.getQueryMasterHost();
-      params[5] = String.valueOf(request.getQueryMasterPort());
-      params[6] = request.getQueryOutputPath();
-      workerContext.getTaskRunnerManager().startTask(params);
+      NodeId queryMasterNodeId = NodeId.newInstance(request.getQueryMasterHost(), request.getQueryMasterPort());
+      //params[6] = request.getQueryOutputPath();
+      //workerContext.getTaskRunnerManager().startTask(params);
 
       workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerEvent(TaskRunnerEvent.EventType.TASK_START
-          , TajoIdUtils.createExecutionBlockId(params[1]),
-          containerIds
+          , queryMasterNodeId
+          , new ExecutionBlockId(request.getExecutionBlockId())
+          , request.getContainerIdList()
       ));
       done.run(TajoWorker.TRUE_PROTO);
     } catch (Exception e) {
@@ -158,5 +155,9 @@ public class TajoWorkerManagerService extends CompositeService
                       RpcCallback<PrimitiveProtos.BoolProto> done) {
     workerContext.cleanup(new QueryId(request).toString());
     done.run(TajoWorker.TRUE_PROTO);
+  }
+
+  public NodeId getNodeId() {
+    return nodeId;
   }
 }

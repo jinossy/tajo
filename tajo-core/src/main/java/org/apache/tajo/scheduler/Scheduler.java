@@ -20,22 +20,29 @@ package org.apache.tajo.scheduler;
 
 import org.apache.tajo.QueryId;
 import org.apache.tajo.master.querymaster.QueryInProgress;
-
-import java.util.List;
+import org.apache.tajo.master.querymaster.QueryJobManager;
 
 public interface Scheduler {
+  public static final String QUERY_QUEUE_KEY = "tajo.job.assigned.queue";
+  public static final String DEFAULT_QUEUE_NAME = "default";
+
+  public void init(QueryJobManager queryJobManager);
+
+  public void start();
+
+  public void stop();
 
   public Mode getMode();
 
   public String getName();
 
-  public boolean addQuery(QueryInProgress resource);
+  public void addQuery(QueryInProgress resource) throws Exception;
 
-  public boolean removeQuery(QueryId queryId);
+  public void notifyQueryStop(QueryId queryId);
 
-  public List<QueryInProgress> getRunningQueries();
+  public String getStatusHtml();
 
   public enum Mode {
-    FIFO
+    FIFO, FIFO_MULTI_QUEUE
   }
 }

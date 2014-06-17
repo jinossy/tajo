@@ -27,12 +27,14 @@ import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.TajoProtos;
+import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.logical.LogicalRootNode;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.master.TajoMaster;
 import org.apache.tajo.master.session.Session;
-import org.apache.tajo.scheduler.SimpleFifoScheduler;
+import org.apache.tajo.scheduler.Scheduler;
+import org.apache.tajo.scheduler.SchedulingAlgorithms;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -47,7 +49,7 @@ public class QueryJobManager extends CompositeService {
 
   private AsyncDispatcher dispatcher;
 
-  private SimpleFifoScheduler scheduler;
+  private Scheduler scheduler;
 
   private final Map<QueryId, QueryInProgress> submittedQueries = new HashMap<QueryId, QueryInProgress>();
 
@@ -68,7 +70,8 @@ public class QueryJobManager extends CompositeService {
 
       this.dispatcher.register(QueryJobEvent.Type.class, new QueryJobManagerEventHandler());
 
-      this.scheduler = new SimpleFifoScheduler(this);
+      this.scheduler = SchedulingAlgorithms.getScheduler((TajoConf)conf);
+      this.scheduler.init(QueryJobManager.this);
     } catch (Exception e) {
       catchException(null, e);
     }
@@ -95,6 +98,10 @@ public class QueryJobManager extends CompositeService {
 
   public EventHandler getEventHandler() {
     return dispatcher.getEventHandler();
+  }
+
+  public Scheduler getScheduler() {
+    return scheduler;
   }
 
   public Collection<QueryInProgress> getSubmittedQueries() {
@@ -170,9 +177,7 @@ public class QueryJobManager extends CompositeService {
         queryInProgress.getEventHandler().handle(event);
       } else {
         if(event.getType() == QueryJobEvent.Type.QUERY_JOB_KILL){
-          scheduler.removeQuery(queryInProgress.getQueryId());
           queryInProgress.getQueryInfo().setQueryState(TajoProtos.QueryState.QUERY_KILLED);
-
           stopQuery(queryInProgress.getQueryId());
         }
       }
@@ -215,6 +220,8 @@ public class QueryJobManager extends CompositeService {
       synchronized(finishedQueries) {
         finishedQueries.put(queryId, queryInProgress);
       }
+
+      scheduler.notifyQueryStop(queryId);
     } else {
       LOG.warn("No QueryInProgress while query stopping: " + queryId);
     }

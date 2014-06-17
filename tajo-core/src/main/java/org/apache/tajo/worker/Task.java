@@ -27,7 +27,6 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.util.ReflectionUtils;
-import org.apache.hadoop.yarn.api.records.impl.pb.ContainerIdPBImpl;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.TajoConstants;
 import org.apache.tajo.TajoProtos;
@@ -46,8 +45,8 @@ import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.engine.query.QueryUnitRequest;
 import org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService;
 import org.apache.tajo.ipc.TajoWorkerProtocol.*;
+import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.rpc.NullCallback;
-import org.apache.tajo.rpc.RpcChannelFactory;
 import org.apache.tajo.storage.StorageUtil;
 import org.apache.tajo.storage.TupleComparator;
 import org.apache.tajo.storage.fragment.FileFragment;
@@ -70,10 +69,11 @@ public class Task {
   private final TajoConf systemConf;
   private final QueryContext queryContext;
   private final FileSystem localFS;
-  private TaskRunner.TaskRunnerContext taskRunnerContext;
+  private TaskRunnerContext taskRunnerContext;
   private final QueryMasterProtocolService.Interface masterProxy;
   private final LocalDirAllocator lDirAllocator;
   private final QueryUnitAttemptId taskId;
+  private final TajoWorkerContainerId containerId;
 
   private final Path taskDir;
   private final QueryUnitRequest request;
@@ -123,11 +123,13 @@ public class Task {
       };
 
   public Task(QueryUnitAttemptId taskId,
-              final TaskRunner.TaskRunnerContext worker,
+              final TajoWorkerContainerId containerId,
+              final TaskRunnerContext worker,
               final QueryMasterProtocolService.Interface masterProxy,
               final QueryUnitRequest request) throws IOException {
     this.request = request;
     this.taskId = taskId;
+    this.containerId = containerId;
 
     this.systemConf = worker.getConf();
     this.queryContext = request.getQueryContext();
@@ -276,13 +278,11 @@ public class Task {
     killed = true;
     context.stop();
     context.setState(TaskAttemptState.TA_KILLED);
-    releaseChannelFactory();
   }
 
   public void abort() {
     aborted = true;
     context.stop();
-    releaseChannelFactory();
   }
 
   public void cleanUp() {
@@ -303,7 +303,7 @@ public class Task {
 
   public TaskStatusProto getReport() {
     TaskStatusProto.Builder builder = TaskStatusProto.newBuilder();
-    builder.setWorkerName(taskRunnerContext.getNodeId());
+    builder.setWorkerName(taskRunnerContext.getNodeId().toString());
     builder.setId(context.getTaskId().getProto())
         .setProgress(context.getProgress())
         .setState(context.getState());
@@ -334,7 +334,7 @@ public class Task {
   private TaskCompletionReport getTaskCompletionReport() {
     TaskCompletionReport.Builder builder = TaskCompletionReport.newBuilder();
     builder.setId(context.getTaskId().getProto());
-    builder.setContainerId(((ContainerIdPBImpl)taskRunnerContext.getContainerId()).getProto());
+    builder.setContainerId(containerId.getProto());
     builder.setInputStats(reloadInputStats());
 
     if (context.hasResultStats()) {
@@ -365,7 +365,6 @@ public class Task {
       FileFragment[] frags = localizeFetchedData(tableDir, inputTable, descs.get(inputTable).getMeta());
       context.updateAssignedFragments(inputTable, frags);
     }
-    releaseChannelFactory();
   }
 
   public void run() {
@@ -459,7 +458,7 @@ public class Task {
   }
 
   public void cleanupTask() {
-    taskRunnerContext.addTaskHistory(getId(), createTaskHistory());
+    taskRunnerContext.addTaskHistory(containerId, getId(), createTaskHistory());
     taskRunnerContext.getTasks().remove(getId());
     taskRunnerContext = null;
 
@@ -475,7 +474,6 @@ public class Task {
     }
     plan = null;
     context = null;
-    releaseChannelFactory();
   }
 
   public TaskHistory createTaskHistory() {
@@ -627,24 +625,11 @@ public class Task {
     }
   }
 
-  private void releaseChannelFactory(){
-    if(channelFactory != null) {
-      channelFactory.shutdown();
-      channelFactory.releaseExternalResources();
-      channelFactory = null;
-    }
-  }
-
   private List<Fetcher> getFetchRunners(TaskAttemptContext ctx,
                                         List<FetchImpl> fetches) throws IOException {
 
     if (fetches.size() > 0) {
-
-      releaseChannelFactory();
-
-
-      int workerNum = ctx.getConf().getIntVar(TajoConf.ConfVars.SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM);
-      channelFactory = RpcChannelFactory.createClientChannelFactory("Fetcher", workerNum);
+      channelFactory = taskRunnerContext.getShuffleChannelFactory();
       Path inputDir = lDirAllocator.
           getLocalPathToRead(
               getTaskAttemptDir(ctx.getTaskId()).toString(), systemConf);

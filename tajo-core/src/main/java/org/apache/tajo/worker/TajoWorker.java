@@ -27,6 +27,7 @@ import org.apache.hadoop.fs.LocalDirAllocator;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.shell.PathData;
 import org.apache.hadoop.service.CompositeService;
+import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.util.RackResolver;
@@ -394,6 +395,10 @@ public class TajoWorker extends CompositeService {
 
     public int getHttpPort() {
       return httpPort;
+    }
+
+    public NodeId getNodeId(){
+      return tajoWorkerManagerService.getNodeId();
     }
 
     public String getWorkerName() {

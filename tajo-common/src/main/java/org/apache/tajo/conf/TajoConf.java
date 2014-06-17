@@ -178,7 +178,7 @@ public class TajoConf extends Configuration {
     WORKER_RESOURCE_AVAILABLE_CPU_CORES("tajo.worker.resource.cpu-cores", 1),
     WORKER_RESOURCE_AVAILABLE_MEMORY_MB("tajo.worker.resource.memory-mb", 1024),
     WORKER_RESOURCE_AVAILABLE_DISKS("tajo.worker.resource.disks", 1.0f),
-    WORKER_EXECUTION_MAX_SLOTS("tajo.worker.parallel-execution.max-num", 2),
+    WORKER_EXECUTION_MAX_SLOTS("tajo.worker.parallel-execution.max-num", Runtime.getRuntime().availableProcessors() * 2),
     WORKER_RESOURCE_DFS_DIR_AWARE("tajo.worker.resource.dfs-dir-aware", false),
 
     // Tajo Worker Dedicated Resources
@@ -216,7 +216,7 @@ public class TajoConf extends Configuration {
     PULLSERVER_PORT("tajo.pullserver.port", 0),
     SHUFFLE_SSL_ENABLED_KEY("tajo.pullserver.ssl.enabled", false),
     SHUFFLE_FILE_FORMAT("tajo.shuffle.file-format", "RAW"),
-    SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM("tajo.shuffle.fetcher.parallel-execution.max-num", 2),
+    SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM("tajo.shuffle.fetcher.parallel-execution.max-num", Runtime.getRuntime().availableProcessors() * 2),
 
     //////////////////////////////////
     // Storage Configuration
@@ -338,7 +338,11 @@ public class TajoConf extends Configuration {
     CSVFILE_NULL("tajo.csvfile.null", "\\\\N"),
 
     // DEBUG OPTION
-    TAJO_DEBUG("tajo.debug", false)
+    TAJO_DEBUG("tajo.debug", false),
+
+    //JOB_SCHEDULER
+    JOB_SCHEDULER_CLASS("tajo.job.scheduler.class", "org.apache.tajo.scheduler.SimpleFifoScheduler"),
+    JOB_QUEUE_NAMES("tajo.job.queue.names", "default")
     ;
 
     public final String varname;

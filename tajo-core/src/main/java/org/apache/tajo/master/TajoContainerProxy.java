@@ -27,6 +27,7 @@ import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.querymaster.QueryMasterTask;
 import org.apache.tajo.master.rm.TajoWorkerContainer;
+import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.rpc.RpcConnectionPool;
@@ -87,11 +88,10 @@ public class TajoContainerProxy extends ContainerProxy {
 
       TajoWorkerProtocol.RunExecutionBlockRequestProto request =
           TajoWorkerProtocol.RunExecutionBlockRequestProto.newBuilder()
-              .setExecutionBlockId(executionBlockId.toString())
+              .setExecutionBlockId(executionBlockId.getProto())
               .setQueryMasterHost(myAddr.getHostName())
               .setQueryMasterPort(myAddr.getPort())
-              .setNodeId(container.getNodeId().toString())
-              .setContainerId(container.getId().toString())
+              .addContainerId(((TajoWorkerContainerId) container.getId()).getProto())
               .setQueryOutputPath(context.getStagingDir().toString())
               .build();
 

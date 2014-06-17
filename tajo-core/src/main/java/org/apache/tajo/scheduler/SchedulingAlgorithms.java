@@ -18,6 +18,9 @@
 
 package org.apache.tajo.scheduler;
 
+import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.conf.TajoConf.ConfVars;
+
 import java.util.Comparator;
 
 /**
@@ -25,6 +28,13 @@ import java.util.Comparator;
  */
 
 public class SchedulingAlgorithms  {
+  public static Scheduler getScheduler(TajoConf tajoConf) throws Exception {
+    String schedulerClass = tajoConf.getVar(ConfVars.JOB_SCHEDULER_CLASS);
+    Scheduler scheduler = (Scheduler)Class.forName(schedulerClass).newInstance();
+
+    return scheduler;
+  }
+
   /**
    * Compare Schedulables in order of priority and then submission time, as in
    * the default FIFO scheduler in Tajo.
