@@ -122,13 +122,12 @@ public class Task {
         }
       };
 
-  public Task(QueryUnitAttemptId taskId,
-              final TajoWorkerContainerId containerId,
+  public Task(final TajoWorkerContainerId containerId,
               final TaskRunnerContext worker,
               final QueryMasterProtocolService.Interface masterProxy,
               final QueryUnitRequest request) throws IOException {
     this.request = request;
-    this.taskId = taskId;
+    this.taskId = request.getId();
     this.containerId = containerId;
 
     this.systemConf = worker.getConf();

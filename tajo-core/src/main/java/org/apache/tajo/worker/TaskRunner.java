@@ -288,7 +288,7 @@ public class TaskRunner extends AbstractService implements RunnableFuture<TaskRu
 
       CallFuture<PrimitiveProtos.BoolProto> containerCallFuture = null;
 
-      while(!stopped) {
+      while(!stopped && !Thread.interrupted()) {
         NettyClientBase qmClient = null;
         QueryMasterProtocolService.Interface qmClientService = null;
         try {
@@ -386,7 +386,7 @@ public class TaskRunner extends AbstractService implements RunnableFuture<TaskRu
               LOG.info("Initializing: " + taskAttemptId);
               Task task;
               try {
-                task = new Task(taskAttemptId, taskRunnerContext, qmClientService,
+                task = new Task(containerId, taskRunnerContext, qmClientService,
                     new QueryUnitRequestImpl(taskRequest));
                 tasks.put(taskAttemptId, task);
 
