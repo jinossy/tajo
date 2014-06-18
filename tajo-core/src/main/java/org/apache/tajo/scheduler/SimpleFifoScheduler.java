@@ -144,7 +144,7 @@ public class SimpleFifoScheduler extends AbstractScheduler {
     sb.append("<td>-</td>");
     sb.append("<td>").append(runningQueryList).append("</td>");
     sb.append("<td>").append(waitingQueryList).append("</td>");
-    sb.append("/<tr>");
+    sb.append("</tr>");
     sb.append("</table>");
     return sb.toString();
   }

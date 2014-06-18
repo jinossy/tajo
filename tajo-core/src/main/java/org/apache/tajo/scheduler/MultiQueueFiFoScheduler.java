@@ -99,7 +99,7 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
         // not existed queue
         LinkedList<QuerySchedulingInfo> queue = new LinkedList<QuerySchedulingInfo>();
         queues.put(eachQueue.queueName, queue);
-        LOG.info("Queue [" + eachQueue + " added");
+        LOG.info("Queue [" + eachQueue + "] added");
       }
     }
 
@@ -108,10 +108,10 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
       queueProperties.remove(eachRemovedQueue);
 
       LinkedList<QuerySchedulingInfo> queue = queues.remove(eachRemovedQueue);
-      LOG.info("Queue [" + eachRemovedQueue + " removed");
+      LOG.info("Queue [" + eachRemovedQueue + "] removed");
       if (queue != null) {
         for (QuerySchedulingInfo eachQuery: queue) {
-          LOG.warn("Remove waiting query: " + eachQuery);
+          LOG.warn("Remove waiting query: " + eachQuery + " from " + eachRemovedQueue + " queue");
         }
       }
 
@@ -124,17 +124,15 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
 
     synchronized (queues) {
       if (!queues.isEmpty()) {
-        if (!queues.isEmpty()) {
-          reorganizeQueue(queueList);
-          return;
-        }
+        reorganizeQueue(queueList);
+        return;
+      }
 
-        for (QueueProperty eachQueue : queueList) {
-          LinkedList<QuerySchedulingInfo> queue = new LinkedList<QuerySchedulingInfo>();
-          queues.put(eachQueue.queueName, queue);
-          queueProperties.put(eachQueue.queueName, eachQueue);
-          LOG.info("Queue [" + eachQueue + " added");
-        }
+      for (QueueProperty eachQueue : queueList) {
+        LinkedList<QuerySchedulingInfo> queue = new LinkedList<QuerySchedulingInfo>();
+        queues.put(eachQueue.queueName, queue);
+        queueProperties.put(eachQueue.queueName, eachQueue);
+        LOG.info("Queue [" + eachQueue + "] added");
       }
     }
   }
@@ -178,8 +176,8 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
   public void start() {
     super.start();
 
-    propertyReloader = new PropertyReloader();
-    propertyReloader.start();
+//    propertyReloader = new PropertyReloader();
+//    propertyReloader.start();
   }
 
   @Override
