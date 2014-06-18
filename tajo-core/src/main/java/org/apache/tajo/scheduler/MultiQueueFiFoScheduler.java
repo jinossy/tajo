@@ -46,7 +46,6 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
   private Map<QueryId, QuerySchedulingInfo> runningQueries = new HashMap<QueryId, QuerySchedulingInfo>();
 
   private PropertyReloader propertyReloader;
-  private Random rand;
 
   public static class QueueProperty {
     private String queueName;
@@ -64,33 +63,77 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
     public int getMaxCapacity() {
       return maxCapacity;
     }
+
+    @Override
+    public String toString() {
+      return queueName + "(" + minCapacity + "," + maxCapacity + ")";
+    }
+
+    @Override
+    public int hashCode() {
+      return toString().hashCode();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (!(obj instanceof QueueProperty)) {
+        return false;
+      }
+
+      return queueName.equals(((QueueProperty)obj).queueName);
+    }
   }
 
   @Override
   public void init(QueryJobManager queryJobManager) {
     super.init(queryJobManager);
-
-    rand = new Random(System.currentTimeMillis());
     initQueue();
   }
 
   private void reorganizeQueue(List<QueueProperty> newQueryList) {
-    // TODO
-    Set<String> previousQueueNames = queues.keySet();
+    Set<String> previousQueueNames = new HashSet<String>(queues.keySet());
+
+    for (QueueProperty eachQueue: newQueryList) {
+      queueProperties.put(eachQueue.queueName, eachQueue);
+      if (!previousQueueNames.remove(eachQueue.getQueueName())) {
+        // not existed queue
+        LinkedList<QuerySchedulingInfo> queue = new LinkedList<QuerySchedulingInfo>();
+        queues.put(eachQueue.queueName, queue);
+        LOG.info("Queue [" + eachQueue + "] added");
+      }
+    }
+
+    // Removed queue
+    for (String eachRemovedQueue: previousQueueNames) {
+      queueProperties.remove(eachRemovedQueue);
+
+      LinkedList<QuerySchedulingInfo> queue = queues.remove(eachRemovedQueue);
+      LOG.info("Queue [" + eachRemovedQueue + "] removed");
+      if (queue != null) {
+        for (QuerySchedulingInfo eachQuery: queue) {
+          LOG.warn("Remove waiting query: " + eachQuery + " from " + eachRemovedQueue + " queue");
+        }
+      }
+
+      queue.clear();
+    }
   }
 
   private void initQueue() {
     List<QueueProperty> queueList = loadQueueProperty(queryJobManager.getMasterContext().getConf());
 
-    if (!queues.isEmpty()) {
-      reorganizeQueue(queueList);
-      return;
-    }
+    synchronized (queues) {
+      if (!queues.isEmpty()) {
+        reorganizeQueue(queueList);
+        return;
+      }
 
-    for (QueueProperty eachQueue: queueList) {
-      LinkedList<QuerySchedulingInfo> queue = new LinkedList<QuerySchedulingInfo>();
-      queues.put(eachQueue.queueName, queue);
-      queueProperties.put(eachQueue.queueName, eachQueue);
+      for (QueueProperty eachQueue : queueList) {
+        LinkedList<QuerySchedulingInfo> queue = new LinkedList<QuerySchedulingInfo>();
+        queues.put(eachQueue.queueName, queue);
+        queueProperties.put(eachQueue.queueName, eachQueue);
+        LOG.info("Queue [" + eachQueue + "] added");
+      }
     }
   }
 
@@ -158,7 +201,9 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
   @Override
   public void notifyQueryStop(QueryId queryId) {
     synchronized (queues) {
+      QuerySchedulingInfo runningQuery = runningQueries.remove(queryId);
       String assignedQueueName = queryAssignedMap.remove(queryId);
+
       if (assignedQueueName == null) {
         LOG.error("Can't get queue name from queryAssignedMap: " + queryId.toString());
         return;
@@ -170,7 +215,6 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
         return;
       }
 
-      QuerySchedulingInfo runningQuery = runningQueries.remove(queryId);
       if (runningQuery == null) {
         // If the query is a waiting query, remove from a queue.
         LOG.info(queryId.toString() + " is not a running query. Removing from queue.");
@@ -367,6 +411,7 @@ public class MultiQueueFiFoScheduler extends AbstractScheduler {
         } catch (InterruptedException e) {
           break;
         }
+        initQueue();
       }
     }
   }

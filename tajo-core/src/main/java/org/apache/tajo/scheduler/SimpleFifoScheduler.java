@@ -136,13 +136,15 @@ public class SimpleFifoScheduler extends AbstractScheduler {
       }
     }
 
-    sb.append("<table>");
-    sb.append("<tr><th>Queue</th><th>Min Slot</th><th>Max Slot</th><th>Running Query<th><th>Waiting Queries</th></tr>");
-    sb.append("<tr><td>").append(DEFAULT_QUEUE_NAME).append("</td>");
-    sb.append("<tr><td>-</td>");
-    sb.append("<tr><td>-</td>");
-    sb.append("<tr><td>").append(runningQueryList).append("</td>");
-    sb.append("<tr><td>").append(waitingQueryList).append("</td>");
+    sb.append("<table border=\"1\" width=\"100%\" class=\"border_table\">");
+    sb.append("<tr><th width='200'>Queue</th><th width='100'>Min Slot</th><th width='100'>Max Slot</th><th>Running Query</th><th>Waiting Queries</th></tr>");
+    sb.append("<tr>");
+    sb.append("<td>").append(DEFAULT_QUEUE_NAME).append("</td>");
+    sb.append("<td>-</td>");
+    sb.append("<td>-</td>");
+    sb.append("<td>").append(runningQueryList).append("</td>");
+    sb.append("<td>").append(waitingQueryList).append("</td>");
+    sb.append("</tr>");
     sb.append("</table>");
     return sb.toString();
   }
