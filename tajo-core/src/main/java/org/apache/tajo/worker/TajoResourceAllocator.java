@@ -55,10 +55,7 @@ import org.apache.tajo.scheduler.MultiQueueFiFoScheduler;
 import org.apache.tajo.scheduler.Scheduler;
 import org.apache.tajo.util.ApplicationIdUtils;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,13 +68,13 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   private TajoConf tajoConf;
   private QueryMasterTask.QueryMasterTaskContext queryTaskContext;
   private final ExecutorService executorService;
-  private ConcurrentHashMap<ContainerId, TajoMasterProtocol.AllocatedWorkerResourceProto>
-      resourceMap = new ConcurrentHashMap<ContainerId, TajoMasterProtocol.AllocatedWorkerResourceProto>();
+  private ConcurrentMap<ContainerId, TajoMasterProtocol.AllocatedWorkerResourceProto> resourceMap = Maps.newConcurrentMap();
 
   /**
    * A key is containerId, and a value is a worker id.
    */
-  private Map<ContainerId, Integer> workerMap = Maps.newConcurrentMap();
+  private ConcurrentMap<ContainerId, Integer> workerMap = Maps.newConcurrentMap();
+  private ConcurrentMap<Integer, LinkedList<ContainerId>> releasedContainerMap = Maps.newConcurrentMap();
   private AtomicInteger reservedContainer = new AtomicInteger(0); //TODO handle from scheduler
   private ContainerAllocator allocatorThread;
 
@@ -261,6 +258,13 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
       List<TajoMasterProtocol.AllocatedWorkerResourceProto> resources = new ArrayList<TajoMasterProtocol.AllocatedWorkerResourceProto>();
       resources.add(allocatedWorkerResource);
       releaseWorkerResources(resources);
+
+      LinkedList<ContainerId> containerIds = releasedContainerMap
+          .putIfAbsent(workerMap.get(containerId), new LinkedList<ContainerId>());
+      if (containerIds == null) {
+        containerIds = releasedContainerMap.get(workerMap.get(containerId));
+      }
+      containerIds.add(containerId);
     }
   }
 
@@ -406,11 +410,13 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         ContainerAllocationEvent event = eventQueue.removeFirst();   //TODO check the ebid
         LOG.warn("Container allocator force stopped. executionBlockId : " + event.getExecutionBlockId());
       }
+
       if (allocatorThread != null) {
         synchronized (allocatorThread) {
           allocatorThread.notifyAll();
         }
       }
+      releasedContainerMap.clear();
     }
 
     public synchronized void shutdown() {
@@ -442,6 +448,8 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
         ExecutionBlockId executionBlockId = event.getExecutionBlockId();
         SubQueryState state = queryTaskContext.getSubQuery(executionBlockId).getState();
+
+        /* for scheduler */
         MultiQueueFiFoScheduler.QueueProperty queueProperty =
             queuePropertyMap.get(queryTaskContext.getSession().getVariable(Scheduler.QUERY_QUEUE_KEY, Scheduler.DEFAULT_QUEUE_NAME));
         int resources = event.getRequiredNum();

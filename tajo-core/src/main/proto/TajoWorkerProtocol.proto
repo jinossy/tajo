@@ -182,6 +182,7 @@ service TajoWorkerProtocolService {
 
   // from QueryMaster(Worker)
   rpc executeExecutionBlock(RunExecutionBlockRequestProto) returns (BoolProto);
+  rpc stopExecutionBlock(ExecutionBlockIdProto) returns (BoolProto);
   rpc killTaskAttempt(QueryUnitAttemptIdProto) returns (BoolProto);
   rpc cleanup(QueryIdProto) returns (BoolProto);
 }

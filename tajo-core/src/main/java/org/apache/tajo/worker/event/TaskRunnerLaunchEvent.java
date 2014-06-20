@@ -18,25 +18,29 @@
 
 package org.apache.tajo.worker.event;
 
-import org.apache.hadoop.yarn.event.AbstractEvent;
+import org.apache.hadoop.yarn.api.records.NodeId;
+import org.apache.hadoop.yarn.proto.YarnProtos;
 import org.apache.tajo.ExecutionBlockId;
 
-public class TaskRunnerEvent extends AbstractEvent<TaskRunnerEvent.EventType> {
-  public enum EventType {
-    TASK_LAUNCH,
-    TASK_START,
-    TASK_STOP
+import java.util.Collection;
+
+public class TaskRunnerLaunchEvent extends TaskRunnerEvent {
+
+  protected final Collection<YarnProtos.ContainerIdProto> containers;
+  protected final NodeId queryMaster;
+
+  public TaskRunnerLaunchEvent(NodeId queryMaster,
+                               ExecutionBlockId executionBlockId,
+                               Collection<YarnProtos.ContainerIdProto> containers) {
+    super(EventType.TASK_START, executionBlockId);
+    this.queryMaster = queryMaster;
+    this.containers = containers;
   }
 
-  protected final ExecutionBlockId executionBlockId;
-
-  public TaskRunnerEvent(EventType eventType,
-                         ExecutionBlockId executionBlockId) {
-    super(eventType);
-    this.executionBlockId = executionBlockId;
+  public NodeId getQueryMasterNode(){
+    return queryMaster;
   }
-
-  public ExecutionBlockId getExecutionBlockId() {
-    return executionBlockId;
+  public Collection<YarnProtos.ContainerIdProto> getContainers() {
+    return containers;
   }
 }

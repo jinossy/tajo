@@ -20,7 +20,6 @@ package org.apache.tajo.worker;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.Maps;
-import org.apache.hadoop.service.Service;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.tajo.ExecutionBlockId;
@@ -38,7 +37,7 @@ import static org.apache.tajo.ipc.TajoWorkerProtocol.TaskRunnerHistoryProto;
  */
 public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
 
-  private Service.STATE state;
+  private TaskRunner.STATE state;
   private ContainerId containerId;
   private long startTime;
   private long finishTime;
@@ -52,7 +51,7 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
   }
 
   public TaskRunnerHistory(TaskRunnerHistoryProto proto) {
-    this.state = Service.STATE.valueOf(proto.getState());
+    this.state = TaskRunner.STATE.valueOf(proto.getState());
     this.containerId = ConverterUtils.toContainerId(proto.getContainerId());
     this.startTime = proto.getStartTime();
     this.finishTime = proto.getFinishTime();
@@ -120,11 +119,11 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
     return executionBlockId;
   }
 
-  public Service.STATE getState() {
+  public TaskRunner.STATE getState() {
     return state;
   }
 
-  public void setState(Service.STATE state) {
+  public void setState(TaskRunner.STATE state) {
     this.state = state;
   }
 

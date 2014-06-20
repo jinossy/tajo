@@ -224,7 +224,7 @@ public class TaskAttemptContext {
     progressChanged.set(previousProgress != progress);
   }
 
-  public boolean isPorgressChanged() {
+  public boolean isProgressChanged() {
     return progressChanged.get();
   }
   public void setExecutorProgress(float executorProgress) {

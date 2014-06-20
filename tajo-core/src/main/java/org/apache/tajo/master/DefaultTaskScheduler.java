@@ -25,15 +25,12 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.util.RackResolver;
-import org.apache.tajo.ExecutionBlockId;
-import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.engine.planner.global.ExecutionBlock;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.planner.logical.ScanNode;
 import org.apache.tajo.engine.query.QueryUnitRequest;
 import org.apache.tajo.engine.query.QueryUnitRequestImpl;
-import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.QueryUnitAttemptScheduleEvent.QueryUnitAttemptScheduleContext;
 import org.apache.tajo.master.event.TaskSchedulerEvent.EventType;
@@ -106,22 +103,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
 
     this.schedulingThread.start();
     super.start();
-  }
-
-  private static final QueryUnitAttemptId NULL_ATTEMPT_ID;
-  public static final TajoWorkerProtocol.QueryUnitRequestProto stopTaskRunnerReq;
-  static {
-    ExecutionBlockId nullSubQuery = QueryIdFactory.newExecutionBlockId(QueryIdFactory.NULL_QUERY_ID, 0);
-    NULL_ATTEMPT_ID = QueryIdFactory.newQueryUnitAttemptId(QueryIdFactory.newQueryUnitId(nullSubQuery, 0), 0);
-
-    TajoWorkerProtocol.QueryUnitRequestProto.Builder builder =
-        TajoWorkerProtocol.QueryUnitRequestProto.newBuilder();
-    builder.setId(NULL_ATTEMPT_ID.getProto());
-    builder.setShouldDie(true);
-    builder.setOutputTable("");
-    builder.setSerializedData("");
-    builder.setClusteredOutput(false);
-    stopTaskRunnerReq = builder.build();
   }
 
   @Override
@@ -828,6 +809,12 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           throw new RuntimeException("Illegal State!!!!!!!!!!!!!!!!!!!!!");
         }
       }
+
+      // Return additional requests instantly.
+      for (TaskRequestEvent req : taskRequests) {
+        req.getCallback().run(stopTaskRunnerReq);
+        context.getMasterContext().getResourceAllocator().releaseContainer(req.getContainerId());
+      }
     }
 
     private boolean checkIfInterQuery(MasterPlan masterPlan, ExecutionBlock block) {
@@ -890,6 +877,13 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           taskRequest.getCallback().run(taskAssign.getProto());
           totalAssigned++;
           scheduledObjectNum--;
+        } else {
+
+          // Return additional requests instantly.
+          for (TaskRequestEvent req : taskRequests) {
+            req.getCallback().run(stopTaskRunnerReq);
+            context.getMasterContext().getResourceAllocator().releaseContainer(req.getContainerId());
+          }
         }
       }
     }

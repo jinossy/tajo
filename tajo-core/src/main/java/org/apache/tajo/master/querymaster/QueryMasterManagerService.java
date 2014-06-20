@@ -175,7 +175,7 @@ public class QueryMasterManagerService extends CompositeService
 
   @Override
   public void ping(RpcController controller,
-                   TajoIdProtos.QueryUnitAttemptIdProto attemptId,
+                   TajoIdProtos.ExecutionBlockIdProto executionBlockIdProto,
                    RpcCallback<PrimitiveProtos.BoolProto> done) {
     done.run(TajoWorker.TRUE_PROTO);
   }

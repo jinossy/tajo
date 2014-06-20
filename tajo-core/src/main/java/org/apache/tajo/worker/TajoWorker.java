@@ -36,6 +36,7 @@ import org.apache.tajo.TajoConstants;
 import org.apache.tajo.TajoProtos;
 import org.apache.tajo.catalog.CatalogClient;
 import org.apache.tajo.catalog.CatalogService;
+import org.apache.tajo.common.exception.NotImplementedException;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.master.querymaster.QueryMaster;
@@ -130,7 +131,7 @@ public class TajoWorker extends CompositeService {
     super(TajoWorker.class.getName());
   }
 
-  public void startWorker(TajoConf systemConf, String[] args) {
+  public void startWorker(final TajoConf systemConf, final String[] args) {
     this.systemConf = systemConf;
     this.cmdArgs = args;
     setWorkerMode(args);
@@ -177,7 +178,8 @@ public class TajoWorker extends CompositeService {
       queryMasterManagerService.getQueryMaster().reportQueryStatusToQueryMaster(
           queryId, TajoProtos.QueryState.QUERY_MASTER_LAUNCHED);
     } else if(yarnContainerMode && taskRunnerMode) { //TaskRunner mode
-      taskRunnerManager.startTask(cmdArgs);
+      //taskRunnerManager.startTask(cmdArgs);
+      throw new NotImplementedException();
     } else {
       tajoMasterAddress = NetUtils.createSocketAddr(systemConf.getVar(ConfVars.TAJO_MASTER_UMBILICAL_RPC_ADDRESS));
       workerResourceTrackerAddr = NetUtils.createSocketAddr(systemConf.getVar(ConfVars.RESOURCE_TRACKER_RPC_ADDRESS));

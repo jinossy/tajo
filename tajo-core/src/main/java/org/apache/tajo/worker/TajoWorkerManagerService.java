@@ -36,6 +36,7 @@ import org.apache.tajo.rpc.AsyncRpcServer;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.util.NetUtils;
 import org.apache.tajo.worker.event.TaskRunnerEvent;
+import org.apache.tajo.worker.event.TaskRunnerStartEvent;
 
 import java.net.InetSocketAddress;
 
@@ -129,10 +130,25 @@ public class TajoWorkerManagerService extends CompositeService
       //params[6] = request.getQueryOutputPath();
       //workerContext.getTaskRunnerManager().startTask(params);
 
-      workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerEvent(TaskRunnerEvent.EventType.TASK_START
-          , queryMasterNodeId
+      workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerStartEvent(
+          queryMasterNodeId
           , new ExecutionBlockId(request.getExecutionBlockId())
           , request.getContainerIdList()
+      ));
+      done.run(TajoWorker.TRUE_PROTO);
+    } catch (Exception e) {
+      LOG.error(e.getMessage(), e);
+      done.run(TajoWorker.FALSE_PROTO);
+    }
+  }
+
+  @Override
+  public void stopExecutionBlock(RpcController controller,
+                                 TajoIdProtos.ExecutionBlockIdProto ebIdProto,
+                                 RpcCallback<PrimitiveProtos.BoolProto> done) {
+    try {
+      workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerEvent(TaskRunnerEvent.EventType.EXECUTION_BLOCK_STOP
+          , new ExecutionBlockId(ebIdProto)
       ));
       done.run(TajoWorker.TRUE_PROTO);
     } catch (Exception e) {
