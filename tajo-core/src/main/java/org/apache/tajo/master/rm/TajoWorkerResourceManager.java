@@ -208,7 +208,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
     // call future for async call
     CallFuture<WorkerResourceAllocationResponse> callFuture = new CallFuture<WorkerResourceAllocationResponse>();
-    allocateWorkerResources(qmResourceRequest, callFuture);
+    addAllocationRequest(new WorkerResourceRequest(true, qmResourceRequest, callFuture));
 
     // Wait for 3 seconds
     WorkerResourceAllocationResponse response;
@@ -235,9 +235,13 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
   @Override
   public void allocateWorkerResources(WorkerResourcesRequestProto request,
                                       RpcCallback<WorkerResourceAllocationResponse> callBack) {
+    addAllocationRequest(new WorkerResourceRequest(false, request, callBack));
+  }
+
+  private void addAllocationRequest(WorkerResourceRequest request) {
     try {
       //TODO checking queue size
-      requestQueue.put(new WorkerResourceRequest(false, request, callBack));
+      requestQueue.put(request);
     } catch (InterruptedException e) {
       LOG.error(e.getMessage(), e);
     }
@@ -400,7 +404,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
               }
               allocatedResourceBuilder.setAllocatedDiskSlots(workerDiskSlots);
 
-              workerResource.allocateResource(workerDiskSlots, workerMemory);
+              workerResource.allocateResource(workerDiskSlots, workerMemory, resourceRequest.queryMasterRequest);
               selectedWorkers.add(allocatedResourceBuilder.build());
               allocatedResources++;
 
@@ -469,7 +473,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
               allocatedResourceBuilder.setAllocatedMemoryMB(workerMemory);
 
-              workerResource.allocateResource(workerDiskSlots, workerMemory);
+              workerResource.allocateResource(workerDiskSlots, workerMemory, resourceRequest.queryMasterRequest);
               selectedWorkers.add(allocatedResourceBuilder.build());
               allocatedResources++;
 
@@ -490,14 +494,17 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
    */
   @Override
   public void releaseWorkerResource(AllocatedWorkerResourceProto resource) {
-//    AllocatedWorkerResource allocated = allocatedResourceMap.get(containerId);
+    releaseResource(resource, false);
+  }
+
+  private void releaseResource(AllocatedWorkerResourceProto resource, boolean queryMaster) {
     WorkerResourceProto workerResource = resource.getWorker();
     WorkerConnectionInfo connectionInfo = new WorkerConnectionInfo(workerResource.getConnectionInfo());
 
     Worker worker = rmContext.getWorkers().get(connectionInfo.getId());
     if (worker != null) {
       LOG.debug("Release Resource: " + resource.getAllocatedDiskSlots() + "," + resource.getAllocatedMemoryMB());
-      worker.getResource().releaseResource(resource.getAllocatedDiskSlots(), resource.getAllocatedMemoryMB());
+      worker.getResource().releaseResource(resource.getAllocatedDiskSlots(), resource.getAllocatedMemoryMB(), queryMaster);
     } else {
       LOG.warn("No AllocatedWorkerResource data for [" + resource.getWorker() + "]");
       return;
@@ -516,7 +523,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
       return;
     } else {
       AllocatedWorkerResourceProto resource = rmContext.getQueryMasterResource().remove(queryId);
-      releaseWorkerResource(resource);
+      releaseResource(resource, true);
       LOG.info(String.format("Released QueryMaster (%s) resource:" + resource.getWorker().getConnectionInfo().getHost()
           , queryId.toString()));
     }

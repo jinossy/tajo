@@ -161,7 +161,7 @@ public class WorkerResource {
     this.taskRunnerMode = taskRunnerMode;
   }
 
-  public void releaseResource(float diskSlots, int memoryMB) {
+  public void releaseResource(float diskSlots, int memoryMB, boolean queryMaster) {
     try {
       wlock.lock();
       usedMemoryMB = usedMemoryMB - memoryMB;
@@ -174,12 +174,16 @@ public class WorkerResource {
         LOG.warn("Used disk slot can't be a minus: " + usedDiskSlots);
         usedDiskSlots = 0;
       }
+
+      if(queryMaster){
+        numQueryMasterTasks.decrementAndGet();
+      }
     } finally {
       wlock.unlock();
     }
   }
 
-  public void allocateResource(float diskSlots, int memoryMB) {
+  public void allocateResource(float diskSlots, int memoryMB, boolean queryMaster) {
     try {
       wlock.lock();
       usedMemoryMB += memoryMB;
@@ -191,6 +195,10 @@ public class WorkerResource {
 
       if(usedDiskSlots > this.diskSlots) {
         usedDiskSlots = this.diskSlots;
+      }
+
+      if(queryMaster){
+        numQueryMasterTasks.incrementAndGet();
       }
     } finally {
       wlock.unlock();
