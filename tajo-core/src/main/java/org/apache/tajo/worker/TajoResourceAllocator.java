@@ -64,19 +64,16 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   private TajoConf tajoConf;
   private QueryMasterTask.QueryMasterTaskContext queryTaskContext;
   private final ExecutorService executorService;
-//  private ConcurrentMap<Integer, TajoMasterProtocol.AllocatedWorkerResourceProto> resourceMap = Maps.newConcurrentMap();
 
-
+  /**
+   * A key is a worker unique id, and a value is allocated worker resources.
+   */
   private ConcurrentMap<Integer, LinkedList<TajoMasterProtocol.AllocatedWorkerResourceProto>> allocatedResourceMap =
       Maps.newConcurrentMap();
-  /**
-   * A key is containerId, and a value is a worker id.
-   */
-//  private ConcurrentMap<ContainerId, Integer> workerMap = Maps.newConcurrentMap();
-//  private ConcurrentMap<Integer, LinkedList<ContainerId>> releasedContainerMap = Maps.newConcurrentMap();
-  /* A values is worker Id */
 
-  private AtomicInteger allocatedTasks = new AtomicInteger(0); //TODO handle from scheduler
+  /** allocated resources and not released  */
+  private AtomicInteger allocatedSize = new AtomicInteger(0); //TODO handle from scheduler
+
   private WorkerResourceAllocator allocatorThread;
 
   public TajoResourceAllocator(QueryMasterTask.QueryMasterTaskContext queryTaskContext) {
@@ -109,7 +106,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
       }
     }
     allocatedResourceMap.clear();
-    allocatedTasks.set(0);
+    allocatedSize.set(0);
     executorService.shutdownNow();
     super.serviceStop();
     LOG.info("Tajo Resource Allocator stopped");
@@ -167,10 +164,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   private void launchTaskRunners(final ExecutionBlockId executionBlockId, Map<Integer, Integer> allocatedResources) {
     // Query in standby mode doesn't need launch Worker.
     // But, Assign ExecutionBlock to assigned tajo worker
-    //TODO launch the containers per worker
     for (final Map.Entry<Integer, Integer> workerResource : allocatedResources.entrySet()) {
-
-//      executorService.submit(new ContainerExecutor(this, containerProxy, ContainerAllocatorEventType.CONTAINER_LAUNCH));
       executorService.submit(new Runnable() {
         @Override
         public void run() {
@@ -208,7 +202,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
    *
    * @param workerId a worker id.
    * @param executionBlockId
-   * @param resources # of resource
+   * @param resources resource size
    */
   @Override
   public void releaseWorkerResource(ExecutionBlockId executionBlockId, int workerId, int resources) {
@@ -303,7 +297,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
                                                    List<TajoMasterProtocol.AllocatedWorkerResourceProto> resources) {
     if (resources.size() == 0) return;
 
-    allocatedTasks.addAndGet(-resources.size());
+    allocatedSize.addAndGet(-resources.size());
     RpcConnectionPool connPool = RpcConnectionPool.getPool(queryTaskContext.getConf());
     NettyClientBase tmClient = null;
     try {
@@ -399,7 +393,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
       } catch (TimeoutException e) {
         LOG.info("No available worker resource for " + queryTaskContext.getQueryId() +
-            ", allocated resources : " + allocatedTasks.get());
+            ", allocated resources : " + allocatedSize.get());
 
         continue;
       }
@@ -428,8 +422,8 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     public synchronized void startWorkerResourceAllocator(ContainerAllocationEvent event) {
       try {
         LOG.info("Start allocation. required containers(" + event.getRequiredNum() + ") executionBlockId : " + event.getExecutionBlockId());
-        if(allocatedResourceMap.size() > 0 || allocatedTasks.get() > 0){
-          throw new RuntimeException(allocatedResourceMap.size() + "," + allocatedTasks.get());
+        if(allocatedResourceMap.size() > 0 || allocatedSize.get() > 0){
+          throw new RuntimeException(allocatedResourceMap.size() + "," + allocatedSize.get());
         }
 
         eventQueue.put(event);
@@ -529,14 +523,14 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     }
 
     private void allocateContainers(ExecutionBlockId executionBlockId, boolean isLeaf, int resources) {
-      int determinedResources  = resources - allocatedTasks.get();
+      int determinedResources  = resources - allocatedSize.get();
       if(LOG.isDebugEnabled()){
         LOG.debug("Try to allocate containers executionBlockId : " + executionBlockId + "," + determinedResources);
       }
       if(determinedResources <= 0) return;
 
       WorkerResourceAllocationResponse response =
-          reserveWokerResources(executionBlockId, determinedResources, isLeaf, new ArrayList<Integer>()); //TODO should test co-located worker
+          reserveWokerResources(executionBlockId, determinedResources, isLeaf, new ArrayList<Integer>());
 
       if (response != null) {
         List<TajoMasterProtocol.AllocatedWorkerResourceProto> allocatedResources = response.getAllocatedWorkerResourceList();
@@ -557,8 +551,8 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
 
         if (allocatedResources.size() > 0) {
-          allocatedTasks.addAndGet(allocatedResources.size());
-          LOG.info("Reserved worker resources : " + allocatedTasks.get()
+          allocatedSize.addAndGet(allocatedResources.size());
+          LOG.info("Reserved worker resources : " + allocatedSize.get()
               + ", EBId : " + executionBlockId);
           LOG.debug("SubQueryContainerAllocationEvent fire:" + executionBlockId);
 

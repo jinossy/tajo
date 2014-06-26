@@ -98,7 +98,7 @@ public class LazyTaskScheduler extends AbstractTaskScheduler {
   public void start() {
     containerNum = subQuery.getContext().getResourceAllocator().calculateNumRequestContainers(
         subQuery.getContext().getQueryMasterContext().getWorkerContext(),
-        context.getEstimatedTaskNum(), 512, false);
+        context.getEstimatedTaskNum(), 512, subQuery.getMasterPlan().isLeaf(subQuery.getId()));
 
     LOG.info("Start TaskScheduler");
     this.schedulingThread = new Thread() {

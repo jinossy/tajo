@@ -25,7 +25,6 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
-import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryUnitAttemptId;
@@ -47,7 +46,6 @@ public class TajoWorkerManagerService extends CompositeService
 
   private AsyncRpcServer rpcServer;
   private InetSocketAddress bindAddr;
-  private NodeId nodeId;
   private int port;
 
   private TajoWorker.WorkerContext workerContext;
@@ -82,7 +80,7 @@ public class TajoWorkerManagerService extends CompositeService
       LOG.error(e.getMessage(), e);
     }
     // Get the master address
-    LOG.info("TajoWorkerManagerService is bind to " + nodeId);
+    LOG.info("TajoWorkerManagerService is bind to " + bindAddr);
     tajoConf.setVar(TajoConf.ConfVars.WORKER_PEER_RPC_ADDRESS, NetUtils.normalizeInetSocketAddress(bindAddr));
     super.init(tajoConf);
   }
@@ -118,14 +116,7 @@ public class TajoWorkerManagerService extends CompositeService
                                     RpcCallback<PrimitiveProtos.BoolProto> done) {
     workerContext.getWorkerSystemMetrics().counter("query", "executedExecutionBlocksNum").inc();
     try {
-      //String[] params = new String[7];
-      //params[0] = "standby";  //mode(never used)
-      //params[1] = request.getExecutionBlockId();
-
-      // QueryMaster's address
-      //NodeId queryMasterNodeId = NodeId.newInstance(, request.getQueryMasterPort());
       //params[6] = request.getQueryOutputPath();
-      //workerContext.getTaskRunnerManager().startTask(params);
 
       workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerStartEvent(
           new WorkerConnectionInfo(request.getConnectionInfo())

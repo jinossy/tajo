@@ -339,7 +339,7 @@ public class TajoConf extends Configuration {
     TAJO_DEBUG("tajo.debug", false),
 
     //JOB_SCHEDULER
-    JOB_SCHEDULER_CLASS("tajo.job.scheduler.class", "org.apache.tajo.scheduler.MultiQueueFiFoScheduler"), //"org.apache.tajo.scheduler.SimpleFifoScheduler"),
+    JOB_SCHEDULER_CLASS("tajo.job.scheduler.class", "org.apache.tajo.scheduler.SimpleFifoScheduler"),
     JOB_QUEUE_NAMES("tajo.job.queue.names", "default")
     ;
 

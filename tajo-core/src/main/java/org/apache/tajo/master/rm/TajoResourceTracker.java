@@ -205,8 +205,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
       workerResource.setCpuCoreSlots(4);
     }
 
-    Worker worker = new Worker(rmContext, workerResource, new WorkerConnectionInfo(request.getConnectionInfo()));
-    return worker;
+    return new Worker(rmContext, workerResource, new WorkerConnectionInfo(request.getConnectionInfo()));
   }
 
   public TajoMasterProtocol.ClusterResourceSummary getClusterResourceSummary() {

@@ -227,8 +227,11 @@ public class TajoWorker extends CompositeService {
       }
     }
     super.serviceInit(conf);
-    LOG.info("Tajo Worker is initialized. \r\nQueryMaster=" + queryMasterMode + " TaskRunner=" + taskRunnerMode + "\n"
-        + connectionInfo.toString());
+    if(pullService != null){
+      this.workerContext.getConnectionInfo().setPullServerPort(pullService.getPort());
+    }
+    LOG.info("Tajo Worker is initialized. \r\nQueryMaster=" + queryMasterMode + " TaskRunner=" + taskRunnerMode
+        + " connection :" + connectionInfo.toString());
   }
 
   private void initWorkerMetrics() {
@@ -312,8 +315,6 @@ public class TajoWorker extends CompositeService {
 
     initWorkerMetrics();
     super.serviceStart();
-    //TODO pull service event move to serviceInit
-    this.workerContext.getConnectionInfo().setPullServerPort(pullService.getPort());
     LOG.info("Tajo Worker is started");
   }
 
@@ -401,7 +402,7 @@ public class TajoWorker extends CompositeService {
       if(queryMasterMode) {
         return getQueryMasterManagerService().getHostAndPort();
       } else {
-        return connectionInfo.toString();
+        return connectionInfo.getHostAndPeerRpcPort();
       }
     }
     public void stopWorker(boolean force) {

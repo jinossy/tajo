@@ -52,9 +52,7 @@ import static org.apache.tajo.ipc.TajoMasterProtocol.*;
  * It manages all resources of tajo workers.
  */
 public class TajoWorkerResourceManager extends CompositeService implements WorkerResourceManager {
-  /**
-   * class logger
-   */
+  /** class logger */
   private static final Log LOG = LogFactory.getLog(TajoWorkerResourceManager.class);
 
   private TajoMaster.MasterContext masterContext;
