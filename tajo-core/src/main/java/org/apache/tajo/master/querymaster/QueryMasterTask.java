@@ -331,7 +331,7 @@ public class QueryMasterTask extends CompositeService {
       LogicalOptimizer optimizer = new LogicalOptimizer(systemConf);
       Expr expr = JsonHelper.fromJson(jsonExpr, Expr.class);
       LogicalPlan plan = planner.createPlan(session, expr);
-      optimizer.optimize(plan);
+      optimizer.optimize(session, plan);
 
       GlobalEngine.DistributedQueryHookManager hookManager = new GlobalEngine.DistributedQueryHookManager();
       hookManager.addHook(new GlobalEngine.InsertHook());
@@ -496,6 +496,10 @@ public class QueryMasterTask extends CompositeService {
     } else {
       return query.getState();
     }
+  }
+
+  public Throwable getInitError() {
+    return initError;
   }
 
   public String getErrorMessage() {
