@@ -88,7 +88,6 @@ public class QueryMasterManagerService extends CompositeService
 
       queryMaster = new QueryMaster(workerContext);
       addService(queryMaster);
-      this.workerContext.getConnectionInfo().setQueryMasterPort(port);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }

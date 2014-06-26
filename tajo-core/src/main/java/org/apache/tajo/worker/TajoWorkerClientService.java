@@ -88,7 +88,6 @@ public class TajoWorkerClientService extends AbstractService {
       this.rpcServer.start();
 
       this.bindAddr = NetUtils.getConnectAddress(rpcServer.getListenAddress());
-      this.workerContext.getConnectionInfo().setClientPort(bindAddr.getPort());
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }

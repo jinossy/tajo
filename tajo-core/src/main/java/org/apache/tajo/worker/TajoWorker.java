@@ -176,7 +176,6 @@ public class TajoWorker extends CompositeService {
 
     this.connPool = RpcConnectionPool.getPool(systemConf);
     this.workerContext = new WorkerContext();
-    this.connectionInfo = new WorkerConnectionInfo();
 
     String resourceManagerClassName = systemConf.getVar(ConfVars.RESOURCE_MANAGER_CLASS);
 
@@ -216,6 +215,7 @@ public class TajoWorker extends CompositeService {
     workerHeartbeatThread = new WorkerHeartbeatService(workerContext);
     addIfService(workerHeartbeatThread);
 
+    int httpPort = 0;
     if(!yarnContainerMode) {
       if(taskRunnerMode) {
         pullService = new TajoPullServerService();
@@ -223,13 +223,24 @@ public class TajoWorker extends CompositeService {
       }
 
       if (!systemConf.get(CommonTestingUtil.TAJO_TEST, "FALSE").equalsIgnoreCase("TRUE")) {
-        initWebServer();
+        httpPort = initWebServer();
       }
     }
     super.serviceInit(conf);
+
+    int pullServerPort = 0;
     if(pullService != null){
-      this.workerContext.getConnectionInfo().setPullServerPort(pullService.getPort());
+      pullServerPort = pullService.getPort();
     }
+
+    this.connectionInfo = new WorkerConnectionInfo(
+        tajoWorkerManagerService.getBindAddr().getHostName(),
+        tajoWorkerManagerService.getBindAddr().getPort(),
+        pullServerPort,
+        tajoWorkerClientService.getBindAddr().getPort(),
+        queryMasterManagerService.getBindAddr().getPort(),
+        httpPort);
+
     LOG.info("Tajo Worker is initialized. \r\nQueryMaster=" + queryMasterMode + " TaskRunner=" + taskRunnerMode
         + " connection :" + connectionInfo.toString());
   }
@@ -261,9 +272,9 @@ public class TajoWorker extends CompositeService {
     });
   }
 
-  private void initWebServer() {
+  private int initWebServer() {
+    int httpPort = systemConf.getSocketAddrVar(ConfVars.WORKER_INFO_ADDRESS).getPort();
     try {
-      int httpPort = systemConf.getSocketAddrVar(ConfVars.WORKER_INFO_ADDRESS).getPort();
       if (queryMasterMode && !taskRunnerMode) {
         //If QueryMaster and TaskRunner run on single host, http port conflicts
         httpPort = systemConf.getSocketAddrVar(ConfVars.WORKER_QM_INFO_ADDRESS).getPort();
@@ -273,10 +284,10 @@ public class TajoWorker extends CompositeService {
       webServer.start();
       httpPort = webServer.getPort();
       LOG.info("Worker info server started:" + httpPort);
-      getWorkerContext().getConnectionInfo().setHttpInfoPort(httpPort);
     } catch (IOException e) {
       LOG.error(e.getMessage(), e);
     }
+    return httpPort;
   }
 
   private void initCleanupService() throws IOException {
@@ -301,7 +312,6 @@ public class TajoWorker extends CompositeService {
       queryMasterManagerService.getQueryMaster().reportQueryStatusToQueryMaster(
           queryId, TajoProtos.QueryState.QUERY_MASTER_LAUNCHED);
     } else if(yarnContainerMode && taskRunnerMode) { //TaskRunner mode
-      //taskRunnerManager.startTask(cmdArgs);
       throw new NotImplementedException();
     } else {
       tajoMasterAddress = NetUtils.createSocketAddr(systemConf.getVar(ConfVars.TAJO_MASTER_UMBILICAL_RPC_ADDRESS));

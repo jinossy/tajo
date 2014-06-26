@@ -96,7 +96,7 @@ public class TestTajoResourceManager {
           .build();
 
       WorkerConnectionInfo connectionInfo =
-          new WorkerConnectionInfo("host" + (i + 1), 12345 + i, 4321 + i, 21000, 28080 + i);
+          new WorkerConnectionInfo("host" + (i + 1), 28091, 28092, 21000 + i, 28093, 28080);
       NodeHeartbeat tajoHeartbeat = NodeHeartbeat.newBuilder()
           .setConnectionInfo(connectionInfo.getProto())
           .setServerStatus(serverStatus)

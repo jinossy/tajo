@@ -25,17 +25,33 @@ import static org.apache.tajo.TajoProtos.WorkerConnectionInfoProto;
 
 public class WorkerConnectionInfo implements ProtoObject<WorkerConnectionInfoProto>, Comparable<WorkerConnectionInfo> {
   private WorkerConnectionInfoProto.Builder builder;
-  /** Hostname */
+  /**
+  * unique worker id
+  */
+  private int id;
+  /**
+   * Hostname
+   */
   private String host;
-  /** Peer rpc port */
+  /**
+   * Peer rpc port
+   */
   private int peerRpcPort;
-  /** pull server port */
+  /**
+   * pull server port
+   */
   private int pullServerPort;
-  /** QueryMaster rpc port */
+  /**
+   * QueryMaster rpc port
+   */
   private int queryMasterPort;
-  /** the port of client rpc which provides an client API */
+  /**
+   * the port of client rpc which provides an client API
+   */
   private int clientPort;
-  /** http info port */
+  /**
+   * http info port
+   */
   private int httpInfoPort;
 
   public WorkerConnectionInfo() {
@@ -44,91 +60,68 @@ public class WorkerConnectionInfo implements ProtoObject<WorkerConnectionInfoPro
 
   public WorkerConnectionInfo(WorkerConnectionInfoProto proto) {
     this();
+    this.id = proto.getId();
     this.host = proto.getHost();
     this.peerRpcPort = proto.getPeerRpcPort();
     this.pullServerPort = proto.getPullServerPort();
     this.clientPort = proto.getClientPort();
     this.httpInfoPort = proto.getHttpInfoPort();
-    if (proto.hasQueryMasterPort()) {
-      this.queryMasterPort = proto.getQueryMasterPort();
-    }
+    this.queryMasterPort = proto.getQueryMasterPort();
   }
 
-  public WorkerConnectionInfo(String host, int peerRpcPort, int pullServerPort, int clientPort, int httpInfoPort) {
+  public WorkerConnectionInfo(String host, int peerRpcPort, int pullServerPort, int clientPort,
+                              int queryMasterPort, int httpInfoPort) {
     this();
     this.host = host;
     this.peerRpcPort = peerRpcPort;
     this.pullServerPort = pullServerPort;
     this.clientPort = clientPort;
+    this.queryMasterPort = queryMasterPort;
     this.httpInfoPort = httpInfoPort;
+    this.id = hashCode();
   }
 
   public String getHost() {
     return host;
   }
 
-  public void setHost(String host) {
-    this.host = host;
-  }
-
   public int getPeerRpcPort() {
     return peerRpcPort;
-  }
-
-  public void setPeerRpcPort(int peerRpcPort) {
-    this.peerRpcPort = peerRpcPort;
   }
 
   public int getPullServerPort() {
     return pullServerPort;
   }
 
-  public void setPullServerPort(int pullServerPort) {
-    this.pullServerPort = pullServerPort;
-  }
-
   public int getQueryMasterPort() {
     return queryMasterPort;
-  }
-
-  public void setQueryMasterPort(int queryMasterPort) {
-    this.queryMasterPort = queryMasterPort;
   }
 
   public int getClientPort() {
     return clientPort;
   }
 
-  public void setClientPort(int clientPort) {
-    this.clientPort = clientPort;
-  }
-
   public int getHttpInfoPort() {
     return httpInfoPort;
   }
 
-  public void setHttpInfoPort(int HttpInfoPort) {
-    this.httpInfoPort = httpInfoPort;
-  }
-
   public int getId() {
-    return hashCode();
+    return id;
   }
 
-  public String getHostAndPeerRpcPort(){
+  public String getHostAndPeerRpcPort() {
     return this.getHost() + ":" + this.getPeerRpcPort();
   }
 
   @Override
   public WorkerConnectionInfoProto getProto() {
-    builder.setHost(host)
+    builder.setId(id)
+        .setHost(host)
         .setPeerRpcPort(peerRpcPort)
         .setPullServerPort(pullServerPort)
         .setClientPort(clientPort)
-        .setHttpInfoPort(httpInfoPort);
-    if (queryMasterPort > 0) {
-      builder.setQueryMasterPort(queryMasterPort);
-    }
+        .setHttpInfoPort(httpInfoPort)
+        .setQueryMasterPort(queryMasterPort);
     return builder.build();
   }
 
@@ -170,12 +163,13 @@ public class WorkerConnectionInfo implements ProtoObject<WorkerConnectionInfoPro
   @Override
   public String toString() {
     StringBuilder builder = new StringBuilder();
-    builder.append("host:").append(host).append(", ")
+    builder.append("id:").append(id).append(", ")
+        .append("host:").append(host).append(", ")
         .append("PeerRpcPort:").append(peerRpcPort).append(", ")
         .append("PullServerPort:").append(pullServerPort).append(", ")
         .append("ClientPort:").append(clientPort).append(", ")
-        .append("HttpInfoPort:").append(httpInfoPort).append(", ")
-        .append("QueryMasterPort:").append(queryMasterPort);
+        .append("QueryMasterPort:").append(queryMasterPort).append(", ")
+        .append("HttpInfoPort:").append(httpInfoPort);
     return builder.toString();
   }
 }

@@ -73,9 +73,6 @@ public class TajoWorkerManagerService extends CompositeService
       this.rpcServer.start();
 
       this.bindAddr = NetUtils.getConnectAddress(rpcServer.getListenAddress());
-
-      this.workerContext.getConnectionInfo().setHost(bindAddr.getHostName());
-      this.workerContext.getConnectionInfo().setPeerRpcPort(bindAddr.getPort());
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
     }

@@ -23,7 +23,6 @@ import org.apache.hadoop.service.CompositeService;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 
-import java.util.Collection;
 import java.util.concurrent.ConcurrentMap;
 
 public abstract class AbstractResourceAllocator extends CompositeService implements ResourceAllocator {
@@ -50,20 +49,16 @@ public abstract class AbstractResourceAllocator extends CompositeService impleme
     workerInfoMap.putIfAbsent(connectionInfo.getId(), connectionInfo);
   }
 
+  protected WorkerConnectionInfo removeWorker(int workerId) {
+    return workerInfoMap.remove(workerId);
+  }
+
   public void addContainerId(ContainerId cId, int workerId) {
     containerIds.putIfAbsent(cId, getWorkerConnectionInfo(workerId));
   }
 
   public void removeContainer(ContainerId cId) {
     containerIds.remove(cId);
-  }
-
-  public boolean containsContainer(ContainerId cId) {
-    return containerIds.containsKey(cId);
-  }
-
-  public Collection<ContainerId> getContainerIds() {
-    return containerIds.keySet();
   }
 
   @Override

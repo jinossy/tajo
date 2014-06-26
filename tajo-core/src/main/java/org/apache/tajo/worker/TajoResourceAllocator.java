@@ -22,9 +22,7 @@ import com.google.common.collect.Maps;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.event.EventHandler;
-import org.apache.hadoop.yarn.proto.YarnProtos;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryUnitAttemptId;
@@ -42,7 +40,6 @@ import org.apache.tajo.master.event.WorkerResourceRequestEvent;
 import org.apache.tajo.master.querymaster.QueryMasterTask;
 import org.apache.tajo.master.querymaster.SubQuery;
 import org.apache.tajo.master.querymaster.SubQueryState;
-import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.rpc.CallFuture;
 import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.NullCallback;
@@ -87,7 +84,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     tajoConf = (TajoConf) conf;
 
     queryTaskContext.getDispatcher().register(TaskRunnerGroupEvent.EventType.class, new TajoTaskRunnerLauncher());
-
     queryTaskContext.getDispatcher().register(ContainerAllocatorEventType.class, new TajoWorkerAllocationHandler());
     queryTaskContext.getDispatcher().register(WorkerResourceRequestEvent.EventType.class, new WorkerResourceHandler());
 
@@ -117,16 +113,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     super.start();
     allocatorThread = new WorkerResourceAllocator(this);
     allocatorThread.start();
-  }
-
-  private boolean isRunningState(ExecutionBlockId ebId){
-    SubQuery subQuery = queryTaskContext.getSubQuery(ebId);
-    return subQuery != null && SubQuery.isRunningState(subQuery.getState());
-  }
-
-  @Override
-  public ContainerId makeContainerId(YarnProtos.ContainerIdProto containerIdProto) {
-    return new TajoWorkerContainerId(containerIdProto);
   }
 
   @Override
@@ -191,7 +177,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
       });
     }
-    workerInfoMap.clear();
     containerIds.clear();
   }
 
@@ -280,7 +265,8 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   private void stopExecutionBlock(ExecutionBlockId executionBlockId, int workerId) {
     NettyClientBase tajoWorkerRpc = null;
     try {
-      WorkerConnectionInfo connectionInfo = getWorkerConnectionInfo(workerId);
+      WorkerConnectionInfo connectionInfo = removeWorker(workerId);
+
       InetSocketAddress addr = new InetSocketAddress(connectionInfo.getHost(), connectionInfo.getPeerRpcPort());
       tajoWorkerRpc = RpcConnectionPool.getPool(tajoConf).getConnection(addr, TajoWorkerProtocol.class, true);
       TajoWorkerProtocol.TajoWorkerProtocolService tajoWorkerRpcClient = tajoWorkerRpc.getStub();

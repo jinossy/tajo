@@ -54,10 +54,11 @@ enum FetcherState {
 }
 
 message WorkerConnectionInfoProto {
-    required string host = 1;
-    required int32 peerRpcPort = 2;
-    required int32 pullServerPort = 3;
-    optional int32 queryMasterPort = 4;
-    required int32 clientPort = 5;
-    required int32 httpInfoPort = 6;
+    required int32 id = 1;
+    required string host = 2;
+    required int32 peerRpcPort = 3;
+    required int32 pullServerPort = 4;
+    optional int32 queryMasterPort = 5;
+    required int32 clientPort = 6;
+    required int32 httpInfoPort = 7;
 }
