@@ -116,7 +116,7 @@ public class TajoWorkerManagerService extends CompositeService
       //params[6] = request.getQueryOutputPath();
 
       workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerStartEvent(
-          new WorkerConnectionInfo(request.getConnectionInfo())
+          new WorkerConnectionInfo(request.getQueryMaster())
           , new ExecutionBlockId(request.getExecutionBlockId())
           , request.getTasks()
       ));

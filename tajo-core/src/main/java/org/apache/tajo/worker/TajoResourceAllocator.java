@@ -160,7 +160,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     }
   }
 
-  private void stopExecutionBlock(final ExecutionBlockId executionBlockId) {
+  public void stopExecutionBlock(final ExecutionBlockId executionBlockId) {
     for (final Integer workerId : workerInfoMap.keySet()) {
       executorService.submit(new Runnable() {
         @Override
@@ -246,10 +246,11 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
       tajoWorkerRpc = RpcConnectionPool.getPool(tajoConf).getConnection(addr, TajoWorkerProtocol.class, true);
       TajoWorkerProtocol.TajoWorkerProtocolService tajoWorkerRpcClient = tajoWorkerRpc.getStub();
 
+      WorkerConnectionInfo queryMaster = queryTaskContext.getQueryMasterContext().getWorkerContext().getConnectionInfo();
       TajoWorkerProtocol.RunExecutionBlockRequestProto request =
           TajoWorkerProtocol.RunExecutionBlockRequestProto.newBuilder()
               .setExecutionBlockId(executionBlockId.getProto())
-              .setConnectionInfo(connectionInfo.getProto())
+              .setQueryMaster(queryMaster.getProto())
               .setTasks(launchTasks)
               .setQueryOutputPath(queryTaskContext.getStagingDir().toString())
               .build();
@@ -283,7 +284,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
                                                    List<TajoMasterProtocol.AllocatedWorkerResourceProto> resources) {
     if (resources.size() == 0) return;
 
-    allocatedSize.addAndGet(-resources.size());
     RpcConnectionPool connPool = RpcConnectionPool.getPool(queryTaskContext.getConf());
     NettyClientBase tmClient = null;
     try {
@@ -301,6 +301,10 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
       LOG.error(e.getMessage(), e);
     } finally {
       connPool.releaseConnection(tmClient);
+    }
+    allocatedSize.addAndGet(-resources.size());
+    synchronized (allocatorThread) {
+      allocatorThread.notifyAll();
     }
   }
   class WorkerResourceHandler implements EventHandler<WorkerResourceRequestEvent> {

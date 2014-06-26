@@ -309,6 +309,7 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
     } finally {
       stop();
       getContext().runningTasksNum.decrementAndGet();
+      getContext().releaseTaskRunnerId(taskRunnerId);
     }
   }
 

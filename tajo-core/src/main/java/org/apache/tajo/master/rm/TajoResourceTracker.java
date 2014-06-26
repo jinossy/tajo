@@ -129,7 +129,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
 
     try {
       // get a workerId from the heartbeat
-      int workerId = getWorkerId(heartbeat);
+      int workerId = heartbeat.getConnectionInfo().getId();
 
       if(rmContext.getWorkers().containsKey(workerId)) { // if worker is running
 
@@ -177,10 +177,6 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
       builder.setClusterResourceSummary(getClusterResourceSummary());
       done.run(builder.build());
     }
-  }
-
-  private static final int getWorkerId(NodeHeartbeat heartbeat) {
-    return new WorkerConnectionInfo(heartbeat.getConnectionInfo()).getId();
   }
 
   private Worker createWorkerResource(NodeHeartbeat request) {

@@ -459,6 +459,7 @@ public class QueryMasterTask extends CompositeService {
   }
 
   public void expiredSessionTimeout() {
+    //TODO kill query
     stop();
   }
 

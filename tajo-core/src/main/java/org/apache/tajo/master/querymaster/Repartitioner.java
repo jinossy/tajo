@@ -18,6 +18,7 @@
 
 package org.apache.tajo.master.querymaster;
 
+import com.google.common.base.Objects;
 import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -354,13 +355,13 @@ public class Repartitioner {
                                                           TajoWorkerProtocol.ShuffleType type,
                                                           List<IntermediateEntry> partitions) {
     // ebId + pullhost -> FetchImmpl
-    Map<String, FetchImpl> mergedPartitions = new HashMap<String, FetchImpl>();
+    Map<Integer, FetchImpl> mergedPartitions = new HashMap<Integer, FetchImpl>();
 
     for (IntermediateEntry partition : partitions) {
-      String mergedKey = partition.getEbId().toString() + "," + partition.getPullHost();
+      int mergedKey = Objects.hashCode(partition.getEbId(), partition.getPullHost());
 
       if (mergedPartitions.containsKey(mergedKey)) {
-        FetchImpl fetch = mergedPartitions.get(partition.getPullHost());
+        FetchImpl fetch = mergedPartitions.get(mergedKey);
         fetch.addPart(partition.getTaskId(), partition.getAttemptId());
       } else {
         // In some cases like union each IntermediateEntry has different EBID.

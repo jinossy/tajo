@@ -88,7 +88,7 @@ public class TajoContainerProxy extends ContainerProxy {
       TajoWorkerProtocol.RunExecutionBlockRequestProto request =
           TajoWorkerProtocol.RunExecutionBlockRequestProto.newBuilder()
               .setExecutionBlockId(executionBlockId.getProto())
-              .setConnectionInfo(context.getQueryMasterContext().getWorkerContext().getConnectionInfo().getProto())
+              .setQueryMaster(context.getQueryMasterContext().getWorkerContext().getConnectionInfo().getProto())
               .setTasks(1)
               .setQueryOutputPath(context.getStagingDir().toString())
               .build();
