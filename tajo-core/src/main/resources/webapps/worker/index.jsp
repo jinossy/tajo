@@ -140,7 +140,7 @@ if(tajoWorker.getWorkerContext().isTaskRunnerMode()) {
       <td><%=df.format(eachTaskRunner.getStartTime())%></td>
       <td><%=eachTaskRunner.getFinishTime() == 0 ? "-" : df.format(eachTaskRunner.getFinishTime())%></td>
       <td><%=JSPUtil.getElapsedTime(eachTaskRunner.getStartTime(), eachTaskRunner.getFinishTime())%></td>
-      <td><%=eachTaskRunner.getServiceState()%></td>
+      <td><%=eachTaskRunner.getState()%></td>
 <%
       }   //end of for
 %>

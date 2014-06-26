@@ -306,7 +306,7 @@ function getPage() {
   <hr/>
   <div id="queryResultTools"></div>
   <hr/>
-  <div style="dispaly:none;"><form name="dataForm" id="dataForm" method="post" action="getCSV.jsp"><input type="hidden" id="csvData" name="csvData" value="" /></div>
+  <div style="dispaly:none;"><form name="dataForm" id="dataForm" method="post" action="getCSV.jsp"><input type="hidden" id="csvData" name="csvData" value=""></form></div>
 </div>
 </body>
 </html>

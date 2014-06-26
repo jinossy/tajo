@@ -109,6 +109,7 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
   // Contains the object references related for TaskRunner
   private TaskRunnerContext taskRunnerContext;
 
+  private long startTime;
   private long finishTime;
 
   private TaskRunnerHistory history;
@@ -161,6 +162,9 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
     this.history.setState(getState());
   }
 
+  public long getStartTime() {
+    return startTime;
+  }
   public long getFinishTime() {
     return finishTime;
   }
@@ -212,7 +216,8 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
   public void run() {
     setState(STATE.STARTED);
     getContext().runningTasksNum.incrementAndGet();
-    this.history.setStartTime(System.currentTimeMillis());
+    startTime = System.currentTimeMillis();
+    this.history.setStartTime(startTime);
     this.history.setState(getState());
     LOG.info("TaskRunner state:" + getState());
 

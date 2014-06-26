@@ -64,7 +64,7 @@
       <td><%=df.format(eachTaskRunner.getStartTime())%></td>
       <td><%=eachTaskRunner.getFinishTime() == 0 ? "-" : df.format(eachTaskRunner.getFinishTime())%></td>
       <td><%=JSPUtil.getElapsedTime(eachTaskRunner.getStartTime(), eachTaskRunner.getFinishTime())%></td>
-      <td><%=eachTaskRunner.getServiceState()%></td>
+      <td><%=eachTaskRunner.getState()%></td>
 <%
   }
 %>
@@ -76,7 +76,7 @@
     <tr><th>ContainerId</th><th>StartTime</th><th>FinishTime</th><th>RunTime</th><th>Status</th></tr>
 <%
       for(TaskRunnerHistory history: histories) {
-          String taskRunnerId = TaskRunner.getId(history.getExecutionBlockId(), history.getContainerId());
+          String taskRunnerId = history.getTaskRunnerId().toString();
 %>
     <tr>
         <td><a href="tasks.jsp?taskRunnerId=<%=taskRunnerId%>"><%=taskRunnerId%></a></td>

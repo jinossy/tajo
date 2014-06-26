@@ -70,7 +70,7 @@
   Map<String, TajoMasterProtocol.WorkerResourceProto> workerMap = new HashMap<String, TajoMasterProtocol.WorkerResourceProto>();
   if(allWorkers != null) {
     for(TajoMasterProtocol.WorkerResourceProto eachWorker: allWorkers) {
-      workerMap.put(eachWorker.getHost(), eachWorker);
+      workerMap.put(eachWorker.getConnectionInfo().getHost(), eachWorker);
     }
   }
   QueryMasterTask queryMasterTask = tajoWorker.getWorkerContext()
@@ -206,7 +206,8 @@
                   QueryUnitAttempt lastAttempt = eachQueryUnit.getLastAttempt();
                   if(lastAttempt != null) {
                     QueryUnitAttemptId lastAttemptId = lastAttempt.getId();
-                    queryUnitHost = "<a href='http://" + eachQueryUnit.getSucceededHost() + ":" + worker.getInfoPort() + "/taskdetail.jsp?queryUnitAttemptId=" + lastAttemptId + "'>" + eachQueryUnit.getSucceededHost() + "</a>";
+                    queryUnitHost = "<a href='http://" + eachQueryUnit.getSucceededHost() + ":" + worker.getConnectionInfo().getHttpInfoPort()
+                            + "/taskdetail.jsp?queryUnitAttemptId=" + lastAttemptId + "'>" + eachQueryUnit.getSucceededHost() + "</a>";
                   }
               }
           }

@@ -22,6 +22,7 @@ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.impl.pb.ApplicationAttemptIdPBImpl;
 import org.apache.hadoop.yarn.proto.YarnProtos;
+import org.apache.hadoop.yarn.util.ConverterUtils;
 
 public class TaskRunnerId extends ContainerId {
   ApplicationAttemptId applicationAttemptId;
@@ -99,6 +100,10 @@ public class TaskRunnerId extends ContainerId {
           .setId(containerId.getId())
           .build();
     }
+  }
+
+  public static TaskRunnerId getTaskRunnerIdByString(String containerId) {
+    return new TaskRunnerId(ConverterUtils.toContainerId(containerId));
   }
 
   @Override

@@ -52,7 +52,7 @@
   for(Integer eachQueryMasterKey: queryMasters) {
     Worker queryMaster = workers.get(eachQueryMasterKey);
     if(queryMaster != null) {
-      portMap.put(queryMaster.getHostName(), queryMaster.getHttpPort());
+      portMap.put(queryMaster.getConnectionInfo().getHost(), queryMaster.getConnectionInfo().getHttpInfoPort());
     }
   }
 %>

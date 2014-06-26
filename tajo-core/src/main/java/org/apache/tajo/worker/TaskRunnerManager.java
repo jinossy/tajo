@@ -128,11 +128,11 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     return Collections.unmodifiableCollection(taskRunnerHistoryMap.values());
   }
 
-  public TaskRunnerHistory getExcutionBlockHistoryByTaskRunnerId(String taskRunnerId) {
+  public TaskRunnerHistory getExcutionBlockHistoryByTaskRunnerId(TaskRunnerId taskRunnerId) {
     return taskRunnerHistoryMap.get(taskRunnerId);
   }
 
-  public TaskRunner getTaskRunner(String taskRunnerId) {
+  public TaskRunner getTaskRunner(TaskRunnerId taskRunnerId) {
     return taskRunnerMap.get(taskRunnerId);
   }
 

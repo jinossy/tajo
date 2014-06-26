@@ -161,10 +161,10 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
 
   @Override
   public void serviceStop() throws Exception {
-    if (stopped.get()) {
+    if (stopped.getAndSet(true)) {
       return;
     }
-    stopped.set(true);
+
     if (workerResourceAllocator != null) {
       workerResourceAllocator.interrupt();
     }
@@ -211,7 +211,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
     allocateWorkerResources(qmResourceRequest, callFuture);
 
     // Wait for 3 seconds
-    WorkerResourceAllocationResponse response = null;
+    WorkerResourceAllocationResponse response;
     try {
       response = callFuture.get(3, TimeUnit.SECONDS);
     } catch (Throwable t) {
@@ -276,7 +276,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
                 ", liveWorkers=" + rmContext.getWorkers().size());
           }
 
-          List<AllocatedWorkerResourceProto> allocatedWorkerResources = chooseWorkers(resourceRequest, true);
+          List<AllocatedWorkerResourceProto> allocatedWorkerResources = chooseWorkers(resourceRequest);
 
           if (allocatedWorkerResources.size() > 0) {
             resourceRequest.callBack.run(WorkerResourceAllocationResponse.newBuilder()
@@ -304,7 +304,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
     }
   }
 
-  private List<AllocatedWorkerResourceProto> chooseWorkers(WorkerResourceRequest resourceRequest, boolean allocate) {
+  private List<AllocatedWorkerResourceProto> chooseWorkers(WorkerResourceRequest resourceRequest) {
     List<AllocatedWorkerResourceProto> selectedWorkers = Lists.newArrayList();
 
     int allocatedResources = 0;
@@ -517,7 +517,6 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
     } else {
       AllocatedWorkerResourceProto resource = rmContext.getQueryMasterResource().remove(queryId);
       releaseWorkerResource(resource);
-//      rmContext.getStoppedQueryIds().add(queryId);
       LOG.info(String.format("Released QueryMaster (%s) resource:" + resource.getWorker().getConnectionInfo().getHost()
           , queryId.toString()));
     }

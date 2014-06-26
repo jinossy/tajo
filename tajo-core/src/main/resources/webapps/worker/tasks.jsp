@@ -27,11 +27,11 @@
 <%@ page import="org.apache.tajo.worker.*" %>
 
 <%
-    String containerId = request.getParameter("taskRunnerId");
+    String taskRunnerIdStr = request.getParameter("taskRunnerId");
+    TaskRunnerId taskRunnerId = TaskRunnerId.getTaskRunnerIdByString(taskRunnerIdStr);
     TajoWorker tajoWorker = (TajoWorker) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
-
-    TaskRunner taskRunner = tajoWorker.getWorkerContext().getTaskRunnerManager().getTaskRunner(containerId);
-    org.apache.tajo.worker.TaskRunnerHistory history = tajoWorker.getWorkerContext().getTaskRunnerManager().getExcutionBlockHistoryByTaskRunnerId(containerId);
+    TaskRunner taskRunner = tajoWorker.getWorkerContext().getTaskRunnerManager().getTaskRunner(taskRunnerId);
+    org.apache.tajo.worker.TaskRunnerHistory history = tajoWorker.getWorkerContext().getTaskRunnerManager().getExcutionBlockHistoryByTaskRunnerId(taskRunnerId);
     SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 %>
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
@@ -44,7 +44,7 @@
         if (taskRunner == null && history == null) {
     %>
     <script type="text/javascript">
-        alert("No Task Container for" + containerId);
+        alert("No Task Container for" + containerIdStr);
         document.history.back();
     </script>
 </head>
@@ -73,7 +73,7 @@
         %>
                     <tr>
                         <td>
-                            <a href="taskdetail.jsp?containerId=<%=containerId%>&queryUnitAttemptId=<%=queryUnitId%>"><%=queryUnitId%></a></td>
+                            <a href="taskdetail.jsp?taskRunnerId=<%=taskRunnerIdStr%>&queryUnitAttemptId=<%=queryUnitId%>"><%=queryUnitId%></a></td>
                         <td><%=df.format(eachTask.getStartTime())%></td>
                         <td><%=eachTask.getFinishTime() == 0 ? "-" : df.format(eachTask.getFinishTime())%></td>
                         <td><%=JSPUtil.getElapsedTime(eachTask.getStartTime(), eachTask.getFinishTime())%></td>
@@ -91,7 +91,7 @@
                     TaskHistory eachTask = entry.getValue();
         %>
                         <tr>
-                            <td><a href="taskdetail.jsp?containerId=<%=containerId%>&queryUnitAttemptId=<%=queryUnitId%>"><%=queryUnitId%></a></td>
+                            <td><a href="taskdetail.jsp?taskRunnerId=<%=taskRunnerIdStr%>&queryUnitAttemptId=<%=queryUnitId%>"><%=queryUnitId%></a></td>
                             <td><%=df.format(eachTask.getStartTime())%></td>
                             <td><%=eachTask.getFinishTime() == 0 ? "-" : df.format(eachTask.getFinishTime())%></td>
                             <td><%=JSPUtil.getElapsedTime(eachTask.getStartTime(), eachTask.getFinishTime())%></td>

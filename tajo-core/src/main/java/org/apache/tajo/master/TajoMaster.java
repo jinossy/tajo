@@ -135,7 +135,7 @@ public class TajoMaster extends CompositeService {
   }
 
   public String getMasterName() {
-    return NetUtils.normalizeInetSocketAddress(tajoMasterService.getBindAddress());
+    return tajoMasterService.getBindAddress().getHostName() + ":" + tajoMasterService.getBindAddress().getPort();
   }
 
   public String getVersion() {
