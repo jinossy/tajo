@@ -92,7 +92,6 @@ message FetchProto {
 }
 
 
-
 message QueryUnitResponseProto {
     required string id = 1;
     required QueryState status = 2;
@@ -138,8 +137,9 @@ message QueryExecutionRequestProto {
 }
 
 message GetTaskRequestProto {
-    required hadoop.yarn.ContainerIdProto containerId = 1;
-    required ExecutionBlockIdProto executionBlockId = 2;
+    required int32 workerId = 1;
+    required hadoop.yarn.ContainerIdProto containerId = 2;
+    required ExecutionBlockIdProto executionBlockId = 3;
 }
 
 enum ShuffleType {
@@ -171,10 +171,9 @@ message DataChannelProto {
 
 message RunExecutionBlockRequestProto {
     required ExecutionBlockIdProto executionBlockId = 1;
-    required string queryMasterHost = 2;
-    required int32 queryMasterPort = 3;
-    repeated hadoop.yarn.ContainerIdProto containerId = 4;
-    optional string queryOutputPath = 5;
+    required WorkerConnectionInfoProto connectionInfo = 2;
+    required int32 tasks = 3;
+    optional string queryOutputPath = 4;
 }
 
 service TajoWorkerProtocolService {
@@ -314,7 +313,7 @@ message TaskHistoryProto {
 message TaskRunnerHistoryProto {
   required ExecutionBlockIdProto executionBlockId = 1;
   required string state = 2;
-  required string containerId = 3;
+  required hadoop.yarn.ContainerIdProto taskRunnerId = 3;
   optional int64 startTime = 4;
   optional int64 finishTime = 5;
   repeated TaskHistoryProto taskHistories = 6;

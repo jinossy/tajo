@@ -22,13 +22,15 @@ import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.tajo.QueryUnitAttemptId;
 
 public class TaskAttemptAssignedEvent extends TaskAttemptEvent {
+  private final int workerId;
   private final ContainerId cId;
   private final String hostName;
   private final int pullServerPort;
 
-  public TaskAttemptAssignedEvent(QueryUnitAttemptId id, ContainerId cId,
+  public TaskAttemptAssignedEvent(QueryUnitAttemptId id, int workerId, ContainerId cId,
                                   String hostname, int pullServerPort) {
     super(id, TaskAttemptEventType.TA_ASSIGNED);
+    this.workerId = workerId;
     this.cId = cId;
     this.hostName = hostname;
     this.pullServerPort = pullServerPort;
@@ -44,5 +46,9 @@ public class TaskAttemptAssignedEvent extends TaskAttemptEvent {
 
   public int getPullServerPort() {
     return pullServerPort;
+  }
+
+  public int getWorkerId() {
+    return workerId;
   }
 }

@@ -173,9 +173,9 @@ public class QueryInProgress extends CompositeService {
         return false;
       }
 
-      queryInfo.setQueryMaster(resource.getWorker().getHost());
-      queryInfo.setQueryMasterPort(resource.getWorker().getQueryMasterPort());
-      queryInfo.setQueryMasterclientPort(resource.getWorker().getClientPort());
+      queryInfo.setQueryMaster(resource.getWorker().getConnectionInfo().getHost());
+      queryInfo.setQueryMasterPort(resource.getWorker().getConnectionInfo().getQueryMasterPort());
+      queryInfo.setQueryMasterclientPort(resource.getWorker().getConnectionInfo().getClientPort());
 
       getEventHandler().handle(new QueryJobEvent(QueryJobEvent.Type.QUERY_MASTER_START, queryInfo));
 

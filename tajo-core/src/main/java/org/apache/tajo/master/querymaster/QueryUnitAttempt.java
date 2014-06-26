@@ -55,6 +55,7 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
   final EventHandler eventHandler;
 
   private ContainerId containerId;
+  private int workerId;
   private String hostName;
   private int port;
   private int expire;
@@ -326,6 +327,7 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
                            TaskAttemptEvent event) {
       TaskAttemptAssignedEvent castEvent = (TaskAttemptAssignedEvent) event;
       taskAttempt.containerId = castEvent.getContainerId();
+      taskAttempt.workerId = castEvent.getWorkerId();
       taskAttempt.setHost(castEvent.getHostName());
       taskAttempt.setPullServerPort(castEvent.getPullServerPort());
       taskAttempt.eventHandler.handle(
@@ -396,11 +398,11 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
 
         taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_SUCCEEDED));
 
-        ContainerRequestEvent cEvent =
-            new ContainerRequestEvent(ContainerRequestEvent.EventType.CONTAINER_RELEASE,
+        WorkerResourceRequestEvent cEvent =
+            new WorkerResourceRequestEvent(WorkerResourceRequestEvent.EventType.CONTAINER_RELEASE,
                 taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
-                taskAttempt.containerId,
-                taskAttempt.isLeafTask());
+                taskAttempt.workerId,
+                1);
         taskAttempt.eventHandler.handle(cEvent);
       } catch (Throwable t) {
         taskAttempt.eventHandler.handle(new TaskFatalErrorEvent(taskAttempt.getId(), t.getMessage()));
@@ -413,15 +415,8 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
 
     @Override
     public void transition(QueryUnitAttempt taskAttempt, TaskAttemptEvent event) {
-      taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.containerId,
+      taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.workerId,
           LocalTaskEventType.KILL));
-
-      ContainerRequestEvent cEvent =
-          new ContainerRequestEvent(ContainerRequestEvent.EventType.CONTAINER_RELEASE,
-              taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
-              taskAttempt.containerId,
-              taskAttempt.isLeafTask());
-      taskAttempt.eventHandler.handle(cEvent);
     }
   }
 
@@ -433,11 +428,11 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
       taskAttempt.addDiagnosticInfo(errorEvent.errorMessage());
       LOG.error(taskAttempt.getId() + " FROM " + taskAttempt.getHost() + " >> " + errorEvent.errorMessage());
 
-      ContainerRequestEvent cEvent =
-          new ContainerRequestEvent(ContainerRequestEvent.EventType.CONTAINER_RELEASE,
+      WorkerResourceRequestEvent cEvent =
+          new WorkerResourceRequestEvent(WorkerResourceRequestEvent.EventType.CONTAINER_RELEASE,
               taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
-              taskAttempt.containerId,
-              taskAttempt.isLeafTask());
+              taskAttempt.workerId,
+              1);
       taskAttempt.eventHandler.handle(cEvent);
     }
   }

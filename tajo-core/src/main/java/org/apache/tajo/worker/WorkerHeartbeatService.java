@@ -67,23 +67,30 @@ public class WorkerHeartbeatService extends AbstractService {
   }
 
   @Override
-  public void serviceInit(Configuration conf) {
+  public void serviceInit(Configuration conf) throws Exception {
     Preconditions.checkArgument(conf instanceof TajoConf, "Configuration must be a TajoConf instance.");
     this.systemConf = (TajoConf) conf;
 
     connectionPool = RpcConnectionPool.getPool(systemConf);
-    thread = new WorkerHeartbeatThread();
-    thread.start();
-    super.init(conf);
+    super.serviceInit(conf);
   }
 
   @Override
-  public void serviceStop() {
-    thread.stopped.set(true);
+  public void serviceStart(){
+    thread = new WorkerHeartbeatThread();
+    thread.start();
+  }
+
+  @Override
+  public void serviceStop() throws Exception {
+    if(thread.stopped.getAndSet(true)){
+      return;
+    }
+    super.serviceStop();
+
     synchronized (thread) {
       thread.notifyAll();
     }
-    super.stop();
   }
 
   class WorkerHeartbeatThread extends Thread {
@@ -139,45 +146,6 @@ public class WorkerHeartbeatService extends AbstractService {
     public void run() {
       LOG.info("Worker Resource Heartbeat Thread start.");
       int sendDiskInfoCount = 0;
-      int pullServerPort = 0;
-      if(context.getPullService()!= null) {
-        long startTime = System.currentTimeMillis();
-        while(true) {
-          pullServerPort = context.getPullService().getPort();
-          if(pullServerPort > 0) {
-            break;
-          }
-          //waiting while pull server init
-          try {
-            Thread.sleep(100);
-          } catch (InterruptedException e) {
-          }
-          if(System.currentTimeMillis() - startTime > 30 * 1000) {
-            LOG.fatal("Too long push server init.");
-            System.exit(0);
-          }
-        }
-      }
-
-      String hostName = null;
-      int peerRpcPort = 0;
-      int queryMasterPort = 0;
-      int clientPort = 0;
-
-      if(context.getTajoWorkerManagerService() != null) {
-        hostName = context.getTajoWorkerManagerService().getBindAddr().getHostName();
-        peerRpcPort = context.getTajoWorkerManagerService().getBindAddr().getPort();
-      }
-      if(context.getQueryMasterManagerService() != null) {
-        hostName = context.getQueryMasterManagerService().getBindAddr().getHostName();
-        queryMasterPort = context.getQueryMasterManagerService().getBindAddr().getPort();
-      }
-      if(context.getTajoWorkerClientService() != null) {
-        clientPort = context.getTajoWorkerClientService().getBindAddr().getPort();
-      }
-      if (context.getPullService() != null) {
-        pullServerPort = context.getPullService().getPort();
-      }
 
       while(!stopped.get()) {
         if(sendDiskInfoCount == 0 && diskDeviceInfos != null) {
@@ -203,12 +171,7 @@ public class WorkerHeartbeatService extends AbstractService {
             .build();
 
         NodeHeartbeat heartbeatProto = NodeHeartbeat.newBuilder()
-            .setTajoWorkerHost(hostName)
-            .setTajoQueryMasterPort(queryMasterPort)
-            .setPeerRpcPort(peerRpcPort)
-            .setTajoWorkerClientPort(clientPort)
-            .setTajoWorkerHttpPort(context.getHttpPort())
-            .setTajoWorkerPullServerPort(pullServerPort)
+            .setConnectionInfo(context.getConnectionInfo().getProto())
             .setServerStatus(serverStatus)
             .build();
 
@@ -244,8 +207,10 @@ public class WorkerHeartbeatService extends AbstractService {
         }
 
         try {
-          synchronized (WorkerHeartbeatThread.this){
-            wait(10 * 1000);
+          if(!stopped.get()){
+            synchronized (thread){
+              thread.wait(10 * 1000);
+            }
           }
         } catch (InterruptedException e) {
           break;

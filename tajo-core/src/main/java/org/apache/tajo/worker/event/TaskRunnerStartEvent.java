@@ -18,15 +18,15 @@
 
 package org.apache.tajo.worker.event;
 
-import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.tajo.ExecutionBlockId;
+import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 
 public class TaskRunnerStartEvent extends TaskRunnerEvent {
 
   protected final int tasks;
-  protected final NodeId queryMaster;
+  protected final WorkerConnectionInfo queryMaster;
 
-  public TaskRunnerStartEvent(NodeId queryMaster,
+  public TaskRunnerStartEvent(WorkerConnectionInfo queryMaster,
                               ExecutionBlockId executionBlockId,
                               int tasks) {
     super(EventType.TASK_START, executionBlockId);
@@ -34,7 +34,7 @@ public class TaskRunnerStartEvent extends TaskRunnerEvent {
     this.tasks = tasks;
   }
 
-  public NodeId getQueryMasterNode(){
+  public WorkerConnectionInfo getQueryMaster(){
     return queryMaster;
   }
 

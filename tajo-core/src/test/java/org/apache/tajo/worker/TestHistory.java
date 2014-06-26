@@ -75,7 +75,7 @@ public class TestHistory {
     assertTrue(histories.size() > 0);
 
     TaskRunnerHistory history = histories.iterator().next();
-    assertEquals(Service.STATE.STOPPED, history.getState());
+    assertEquals(TaskRunner.STATE.STOPPED, history.getState());
 
     assertEquals(history, new TaskRunnerHistory(history.getProto()));
   }
@@ -99,7 +99,7 @@ public class TestHistory {
     TaskRunnerHistory history = histories.iterator().next();
 
     assertTrue(history.size() > 0);
-    assertEquals(Service.STATE.STOPPED, history.getState());
+    assertEquals(TaskRunner.STATE.STOPPED, history.getState());
 
     Map.Entry<QueryUnitAttemptId, TaskHistory> entry =
         history.getTaskHistoryMap().entrySet().iterator().next();

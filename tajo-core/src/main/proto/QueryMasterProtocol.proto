@@ -47,7 +47,4 @@ service QueryMasterProtocolService {
   //from TajoMaster's QueryJobManager
   rpc killQuery(QueryIdProto) returns (BoolProto);
   rpc executeQuery(QueryExecutionRequestProto) returns (BoolProto);
-
-  rpc getContainers (ContainerResources) returns (ContainerResources);
-  rpc reserveContainerResource (ContainerResource) returns (BoolProto);
 }

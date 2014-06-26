@@ -18,7 +18,6 @@
 
 package org.apache.tajo.master.event;
 
-import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.event.AbstractEvent;
 import org.apache.tajo.QueryUnitAttemptId;
 
@@ -27,19 +26,19 @@ import org.apache.tajo.QueryUnitAttemptId;
  */
 public class LocalTaskEvent extends AbstractEvent<LocalTaskEventType> {
   private final QueryUnitAttemptId taskAttemptId;
-  private final ContainerId containerId;
+  private final int workerId;
 
-  public LocalTaskEvent(QueryUnitAttemptId taskAttemptId, ContainerId containerId, LocalTaskEventType eventType) {
+  public LocalTaskEvent(QueryUnitAttemptId taskAttemptId, int workerId, LocalTaskEventType eventType) {
     super(eventType);
     this.taskAttemptId = taskAttemptId;
-    this.containerId = containerId;
+    this.workerId = workerId;
   }
 
   public QueryUnitAttemptId getTaskAttemptId() {
     return taskAttemptId;
   }
 
-  public ContainerId getContainerId() {
-    return containerId;
+  public int getWorkerId() {
+    return workerId;
   }
 }

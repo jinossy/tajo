@@ -28,17 +28,18 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
-import org.apache.hadoop.yarn.api.records.NodeId;
+import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.TajoProtos;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.ipc.QueryMasterProtocol;
-import org.apache.tajo.master.rm.TajoWorkerContainerId;
+import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.rpc.RpcChannelFactory;
 import org.apache.tajo.rpc.RpcConnectionPool;
+import org.apache.tajo.util.ApplicationIdUtils;
 import org.jboss.netty.channel.socket.ClientSocketChannelFactory;
 
 import java.io.IOException;
@@ -63,6 +64,8 @@ public class TaskRunnerContext {
   public AtomicInteger runningTasksNum = new AtomicInteger();
   public AtomicInteger killedTasksNum = new AtomicInteger();
   public AtomicInteger failedTasksNum = new AtomicInteger();
+  public AtomicInteger containerIdSeq = new AtomicInteger();
+
   private ClientSocketChannelFactory channelFactory;
   // for temporal or intermediate files
   private FileSystem localFS;
@@ -75,7 +78,7 @@ public class TaskRunnerContext {
   private LocalDirAllocator lDirAllocator;
   private RpcConnectionPool connPool;
   private InetSocketAddress qmMasterAddr;
-  private NodeId queryMasterNode;
+  private WorkerConnectionInfo queryMaster;
   private TajoConf systemConf;
   // for the doAs block
   private UserGroupInformation taskOwner;
@@ -85,17 +88,17 @@ public class TaskRunnerContext {
   private ExecutorService fetcherExecutor;
   private AtomicBoolean stop = new AtomicBoolean();
 
-  private final LinkedList<TajoWorkerContainerId> allocatedContainers = Lists.newLinkedList();
+  private final LinkedList<TaskRunnerId> taskRunnerIdPool = Lists.newLinkedList();
   // It keeps all of the query unit attempts while a TaskRunner is running.
   private final ConcurrentMap<QueryUnitAttemptId, Task> tasks = Maps.newConcurrentMap();
 
-  private final ConcurrentMap<TajoWorkerContainerId, TaskRunnerHistory> histories = Maps.newConcurrentMap();
+  private final ConcurrentMap<TaskRunnerId, TaskRunnerHistory> histories = Maps.newConcurrentMap();
 
-  public TaskRunnerContext(TaskRunnerManager manager, ExecutionBlockId executionBlockId, NodeId queryMasterNode) throws IOException {
+  public TaskRunnerContext(TaskRunnerManager manager, ExecutionBlockId executionBlockId, WorkerConnectionInfo queryMaster) throws IOException {
     this.manager = manager;
     this.executionBlockId = executionBlockId;
     this.connPool = RpcConnectionPool.getPool(manager.getTajoConf());
-    this.queryMasterNode = queryMasterNode;
+    this.queryMaster = queryMaster;
     this.systemConf = manager.getTajoConf();
 
     init();
@@ -107,7 +110,7 @@ public class TaskRunnerContext {
     LOG.info("Worker Local Dir: " + systemConf.getVar(TajoConf.ConfVars.WORKER_TEMPORAL_DIR));
 
     // QueryMaster's address
-    this.qmMasterAddr = NetUtils.createSocketAddrForHost(queryMasterNode.getHost(), queryMasterNode.getPort());
+    this.qmMasterAddr = NetUtils.createSocketAddrForHost(queryMaster.getHost(), queryMaster.getQueryMasterPort());
     LOG.info("QueryMaster Address:" + qmMasterAddr);
 
     UserGroupInformation.setConfiguration(systemConf);
@@ -165,7 +168,7 @@ public class TaskRunnerContext {
       return;
     }
 
-    allocatedContainers.clear();
+    taskRunnerIdPool.clear();
 
     try {
       reporter.stop();
@@ -204,10 +207,6 @@ public class TaskRunnerContext {
 
   public TajoConf getConf() {
     return manager.getTajoConf();
-  }
-
-  public NodeId getNodeId() {
-    return manager.getWorkerContext().getNodeId();
   }
 
   public FileSystem getLocalFS() {
@@ -258,7 +257,7 @@ public class TaskRunnerContext {
     return executionBlockId;
   }
 
-  public void stopTask(String id){
+  public void stopTask(TaskRunnerId id){
     manager.stopTask(id);
   }
 
@@ -266,29 +265,35 @@ public class TaskRunnerContext {
     return manager.getWorkerContext();
   }
 
-  public void addContainerId(TajoWorkerContainerId containerId) {
-    synchronized (allocatedContainers) {
-      allocatedContainers.addLast(containerId);
+  public void releaseTaskRunnerId(TaskRunnerId taskRunnerId) {
+    synchronized (taskRunnerIdPool) {
+      taskRunnerIdPool.addLast(taskRunnerId);
     }
   }
 
-  public TajoWorkerContainerId pollContainerId() {
-    synchronized (allocatedContainers) {
-      if(!allocatedContainers.isEmpty()){
-        return allocatedContainers.pollFirst();
+  /* Shareable taskRunnerId must be released back to the taskRunnerIdPool when a taskRunner completed. */
+  public TaskRunnerId getTaskRunnerId() {
+    synchronized (taskRunnerIdPool) {
+      if(taskRunnerIdPool.isEmpty()){
+        taskRunnerIdPool.addLast(newTaskRunnerId());
       }
+      return taskRunnerIdPool.pollFirst();
     }
-    return null;
   }
 
-  public void addTaskHistory(TajoWorkerContainerId containerId, QueryUnitAttemptId quAttemptId, TaskHistory taskHistory) {
-    getTaskRunnerHistory(containerId).addTaskHistory(quAttemptId, taskHistory);
+  public TaskRunnerId newTaskRunnerId(){
+    ApplicationAttemptId applicationAttemptId = ApplicationIdUtils.createApplicationAttemptId(executionBlockId.getQueryId());
+    return new TaskRunnerId(applicationAttemptId, getWorkerContext().getConnectionInfo().getId() + containerIdSeq.incrementAndGet());
   }
 
-  public TaskRunnerHistory getTaskRunnerHistory(TajoWorkerContainerId containerId){
-    TaskRunnerHistory history = histories.putIfAbsent(containerId, new TaskRunnerHistory(containerId, executionBlockId));
+  public void addTaskHistory(TaskRunnerId taskRunnerId, QueryUnitAttemptId quAttemptId, TaskHistory taskHistory) {
+    getTaskRunnerHistory(taskRunnerId).addTaskHistory(quAttemptId, taskHistory);
+  }
+
+  public TaskRunnerHistory getTaskRunnerHistory(TaskRunnerId taskRunnerId){
+    TaskRunnerHistory history = histories.putIfAbsent(taskRunnerId, new TaskRunnerHistory(taskRunnerId, executionBlockId));
     if(history == null){
-      return histories.get(containerId);
+      return histories.get(taskRunnerId);
     }
     return history;
   }
@@ -327,7 +332,7 @@ public class TaskRunnerContext {
         QueryMasterProtocol.QueryMasterProtocolService.Interface masterStub;
         @Override
         public void run() {
-          while (!stop.get() && !Thread.interrupted()) {
+          while (!reporterStop.get() && !Thread.interrupted()) {
             try {
               masterStub = getQueryMasterStub();
 
@@ -351,7 +356,7 @@ public class TaskRunnerContext {
                 throw new RuntimeException(t);
               }
             } finally {
-              if (remainingRetries > 0) {
+              if (remainingRetries > 0 && !reporterStop.get()) {
                 synchronized (reporterThread) {
                   try {
                     reporterThread.wait(PROGRESS_INTERVAL);

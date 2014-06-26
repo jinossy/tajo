@@ -52,3 +52,12 @@ enum FetcherState {
   FETCH_FETCHING = 1;
   FETCH_FINISHED = 2;
 }
+
+message WorkerConnectionInfoProto {
+    required string host = 1;
+    required int32 peerRpcPort = 2;
+    required int32 pullServerPort = 3;
+    optional int32 queryMasterPort = 4;
+    required int32 clientPort = 5;
+    required int32 httpInfoPort = 6;
+}

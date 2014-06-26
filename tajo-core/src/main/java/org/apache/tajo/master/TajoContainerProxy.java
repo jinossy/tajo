@@ -27,7 +27,6 @@ import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.querymaster.QueryMasterTask;
 import org.apache.tajo.master.rm.TajoWorkerContainer;
-import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.rpc.RpcConnectionPool;
@@ -43,10 +42,9 @@ public class TajoContainerProxy extends ContainerProxy {
 
   @Override
   public void launch(ContainerLaunchContext containerLaunchContext) {
-    context.getResourceAllocator().addContainer(containerId, this);
 
     this.hostName = container.getNodeId().getHost();
-    this.port = ((TajoWorkerContainer)container).getWorkerResource().getPullServerPort();
+    this.port = ((TajoWorkerContainer)container).getWorkerResource().getConnectionInfo().getPullServerPort();
     this.state = ContainerState.RUNNING;
 
     if (LOG.isDebugEnabled()) {
@@ -62,7 +60,7 @@ public class TajoContainerProxy extends ContainerProxy {
    *
    * @param taskAttemptId The TaskAttemptId to be killed.
    */
-  public void killTaskAttempt(QueryUnitAttemptId taskAttemptId) {
+  public void killTaskAttempt(int workerId, QueryUnitAttemptId taskAttemptId) {
     NettyClientBase tajoWorkerRpc = null;
     try {
       InetSocketAddress addr = new InetSocketAddress(container.getNodeId().getHost(), container.getNodeId().getPort());
@@ -89,9 +87,8 @@ public class TajoContainerProxy extends ContainerProxy {
       TajoWorkerProtocol.RunExecutionBlockRequestProto request =
           TajoWorkerProtocol.RunExecutionBlockRequestProto.newBuilder()
               .setExecutionBlockId(executionBlockId.getProto())
-              .setQueryMasterHost(myAddr.getHostName())
-              .setQueryMasterPort(myAddr.getPort())
-              .addContainerId(((TajoWorkerContainerId) container.getId()).getProto())
+              .setConnectionInfo(context.getQueryMasterContext().getWorkerContext().getConnectionInfo().getProto())
+              .setTasks(1)
               .setQueryOutputPath(context.getStagingDir().toString())
               .build();
 
@@ -114,7 +111,6 @@ public class TajoContainerProxy extends ContainerProxy {
     } else {
       try {
         context.getResourceAllocator().removeContainer(containerId);
-        context.getResourceAllocator().releaseContainer(containerId);
         this.state = ContainerState.DONE;
       } catch (Throwable t) {
         // ignore the cleanup failure

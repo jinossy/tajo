@@ -18,36 +18,38 @@
 
 package org.apache.tajo.master.event;
 
-import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.event.AbstractEvent;
 import org.apache.tajo.ExecutionBlockId;
 
-public class ContainerRequestEvent extends AbstractEvent<ContainerRequestEvent.EventType> {
+public class WorkerResourceRequestEvent extends AbstractEvent<WorkerResourceRequestEvent.EventType> {
 
   public enum EventType {
-    CONTAINER_RESERVE,
     CONTAINER_RELEASE
   }
 
-  private final ContainerId containerId;
+  private final int workerId;
   private final ExecutionBlockId executionBlockId;
-  private final boolean isLeafQuery;
+  private final int resourceSize;
 
-  public ContainerRequestEvent(ContainerRequestEvent.EventType eventType,
-                               ExecutionBlockId executionBlockId,
-                               ContainerId containerId,
-                               boolean isLeafQuery) {
+  public WorkerResourceRequestEvent(WorkerResourceRequestEvent.EventType eventType,
+                                    ExecutionBlockId executionBlockId,
+                                    int workerId,
+                                    int resourceSize) {
     super(eventType);
-    this.containerId = containerId;
+    this.workerId = workerId;
     this.executionBlockId = executionBlockId;
-    this.isLeafQuery = isLeafQuery;
+    this.resourceSize = resourceSize;
   }
 
-  public ContainerId getContainerId() {
-    return containerId;
+  public int getWorkerId() {
+    return workerId;
   }
 
   public ExecutionBlockId getExecutionBlockId() {
     return executionBlockId;
+  }
+
+  public int getResourceSize() {
+    return resourceSize;
   }
 }

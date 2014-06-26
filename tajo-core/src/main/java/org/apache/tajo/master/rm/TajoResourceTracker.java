@@ -28,6 +28,7 @@ import org.apache.hadoop.service.AbstractService;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.ipc.TajoResourceTrackerProtocol;
+import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.rpc.AsyncRpcServer;
 import org.apache.tajo.util.NetUtils;
 import org.apache.tajo.util.ProtoUtil;
@@ -128,7 +129,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
 
     try {
       // get a workerId from the heartbeat
-      int workerId = createWorkerId(heartbeat);
+      int workerId = getWorkerId(heartbeat);
 
       if(rmContext.getWorkers().containsKey(workerId)) { // if worker is running
 
@@ -178,8 +179,8 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
     }
   }
 
-  private static final int createWorkerId(NodeHeartbeat heartbeat) {
-    return Worker.getWorkerId(heartbeat.getTajoWorkerHost(), heartbeat.getPeerRpcPort());
+  private static final int getWorkerId(NodeHeartbeat heartbeat) {
+    return new WorkerConnectionInfo(heartbeat.getConnectionInfo()).getId();
   }
 
   private Worker createWorkerResource(NodeHeartbeat request) {
@@ -204,13 +205,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
       workerResource.setCpuCoreSlots(4);
     }
 
-    Worker worker = new Worker(rmContext, workerResource);
-    worker.setHostName(request.getTajoWorkerHost());
-    worker.setHttpPort(request.getTajoWorkerHttpPort());
-    worker.setPeerRpcPort(request.getPeerRpcPort());
-    worker.setQueryMasterPort(request.getTajoQueryMasterPort());
-    worker.setClientPort(request.getTajoWorkerClientPort());
-    worker.setPullServerPort(request.getTajoWorkerPullServerPort());
+    Worker worker = new Worker(rmContext, workerResource, new WorkerConnectionInfo(request.getConnectionInfo()));
     return worker;
   }
 

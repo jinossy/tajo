@@ -20,17 +20,12 @@ package org.apache.tajo.worker;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.engine.query.QueryUnitRequestImpl;
-import org.apache.tajo.ipc.QueryMasterProtocol;
 import org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService;
-import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.rpc.CallFuture;
 import org.apache.tajo.rpc.NullCallback;
-import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RunnableFuture;
@@ -44,6 +39,10 @@ import static org.apache.tajo.ipc.TajoWorkerProtocol.*;
  * The driver class for Tajo QueryUnit processing.
  */
 public class TaskRunner implements RunnableFuture<TaskRunner>{
+
+  /** class logger */
+  private static final Log LOG = LogFactory.getLog(TaskRunner.class);
+
   /**
    * TaskRunner states
    */
@@ -101,11 +100,8 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
     }
   }
 
-  /** class logger */
-  private static final Log LOG = LogFactory.getLog(TaskRunner.class);
-
   private AtomicBoolean stop = new AtomicBoolean();
-  private TajoWorkerContainerId containerId;
+  private TaskRunnerId taskRunnerId;
 
   // Cluster Management
   //private TajoWorkerProtocol.TajoWorkerProtocolService.Interface master;
@@ -117,13 +113,14 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
 
   private TaskRunnerHistory history;
   private STATE state;
+  private Task task = null;
 
   public TaskRunner(TaskRunnerContext context,
-                    TajoWorkerContainerId containerId) {
+                    TaskRunnerId taskRunnerId) {
     setState(STATE.NOTINITED);
-    this.containerId = containerId;
+    this.taskRunnerId = taskRunnerId;
     this.taskRunnerContext = context;
-    this.history = context.getTaskRunnerHistory(containerId);
+    this.history = context.getTaskRunnerHistory(taskRunnerId);
     this.history.setState(getState());
   }
 
@@ -135,14 +132,9 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
     this.state = state;
   }
 
-  public String getId() {
-    return getId(getContext().getExecutionBlockId(), containerId);
+  public TaskRunnerId getId() {
+    return taskRunnerId;
   }
-
-  public static String getId(ExecutionBlockId executionBlockId, ContainerId containerId) {
-    return executionBlockId + "," + containerId;
-  }
-
 
   public void init() {
     setState(STATE.INITED);
@@ -153,6 +145,10 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
     // If this flag become true, TaskRunner will be terminated.
     if(stop.getAndSet(true)) {
       return;
+    }
+
+    if(task != null && task.isRunning()){
+      task.abort();
     }
     this.finishTime = System.currentTimeMillis();
     this.history.setFinishTime(finishTime);
@@ -220,60 +216,13 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
     this.history.setState(getState());
     LOG.info("TaskRunner state:" + getState());
 
-
-      CallFuture<PrimitiveProtos.BoolProto> containerCallFuture = null;
-
-
     CallFuture<QueryUnitRequestProto> callFuture = null;
     QueryUnitRequestProto taskRequest = null;
     QueryMasterProtocolService.Interface qmClientService;
     try {
       qmClientService = getContext().getQueryMasterStub();
-
       setState(STATE.PENDING);
 
-      // TODO move to launch event
-      while (!stop.get() && !Thread.interrupted()) {
-        if (containerCallFuture == null) {
-          containerCallFuture = new CallFuture<PrimitiveProtos.BoolProto>();
-          LOG.info("reserve resource: " + getId());
-          QueryMasterProtocol.ContainerResource request = QueryMasterProtocol.ContainerResource.newBuilder()
-              .setExecutionBlockId(getContext().getExecutionBlockId().getProto())
-              .setContainerId(containerId.getProto())
-              .build();
-
-          qmClientService.reserveContainerResource(null, request, containerCallFuture);
-
-          try {
-            // wait for an assigning task for 3 seconds
-            PrimitiveProtos.BoolProto succeed = containerCallFuture.get(1, TimeUnit.SECONDS);
-            if (!succeed.getValue()) {
-              LOG.info("Can't get resource. ShouldDie:" + getId());
-              stop();
-
-              //notify to TaskRunnerManager
-              //taskRunnerContext.stopTask(getId());
-            } else{
-              break;
-            }
-          } catch (InterruptedException e) {
-            if (isStopped()) {
-              break;
-            }
-          } catch (TimeoutException te) {
-            if (isStopped()) {
-              break;
-            }
-            // if there has been no assigning task for a given period,
-            // TaskRunner will retry to request an assigning task.
-
-            LOG.info("Retry reservation resource:" + getId() + " state:" + getState());
-            continue;
-          }
-        }
-      }
-
-      ////////////////////////////
       int retryCount = 0;
       while (!stop.get() && !Thread.interrupted()) {
         if (callFuture == null) {
@@ -281,7 +230,8 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
           LOG.info("Request GetTask: " + getId());
           GetTaskRequestProto request = GetTaskRequestProto.newBuilder()
               .setExecutionBlockId(getContext().getExecutionBlockId().getProto())
-              .setContainerId(containerId.getProto())
+              .setContainerId(taskRunnerId.getProto())
+              .setWorkerId(getContext().getWorkerContext().getConnectionInfo().getId())
               .build();
 
           qmClientService.getTask(null, request, callFuture);
@@ -324,9 +274,8 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
           } else {
             LOG.info("Initializing: " + taskAttemptId);
             setState(STATE.RUNNING);
-            Task task = null;
             try {
-              task = new Task(containerId, taskRunnerContext, qmClientService,
+              task = new Task(taskRunnerId, taskRunnerContext, qmClientService,
                   new QueryUnitRequestImpl(taskRequest));
               getContext().putTask(taskAttemptId, task);
 

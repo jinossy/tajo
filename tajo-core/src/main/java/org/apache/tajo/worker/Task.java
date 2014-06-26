@@ -45,9 +45,9 @@ import org.apache.tajo.engine.planner.logical.*;
 import org.apache.tajo.engine.planner.physical.PhysicalExec;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.engine.query.QueryUnitRequest;
+import org.apache.tajo.ipc.QueryMasterProtocol;
 import org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService;
 import org.apache.tajo.ipc.TajoWorkerProtocol.*;
-import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.storage.StorageUtil;
 import org.apache.tajo.storage.TupleComparator;
@@ -69,9 +69,8 @@ public class Task {
 
   private final QueryContext queryContext;
   private TaskRunnerContext taskRunnerContext;
-  private final QueryMasterProtocolService.Interface masterProxy;
   private final QueryUnitAttemptId taskId;
-  private final TajoWorkerContainerId containerId;
+  private final TaskRunnerId taskRunnerId;
 
   private final Path taskDir;
   private final QueryUnitRequest request;
@@ -118,17 +117,16 @@ public class Task {
         }
       };
 
-  public Task(final TajoWorkerContainerId containerId,
+  public Task(final TaskRunnerId taskRunnerId,
               final TaskRunnerContext worker,
               final QueryMasterProtocolService.Interface masterProxy,
               final QueryUnitRequest request) throws IOException {
     this.request = request;
     this.taskId = request.getId();
-    this.containerId = containerId;
+    this.taskRunnerId = taskRunnerId;
 
     this.queryContext = request.getQueryContext();
     this.taskRunnerContext = worker;
-    this.masterProxy = masterProxy;
     this.taskDir = StorageUtil.concatPath(taskRunnerContext.getBaseDir(),
         taskId.getQueryUnitId().getId() + "_" + taskId.getId());
 
@@ -294,7 +292,7 @@ public class Task {
 
   public TaskStatusProto getReport() {
     TaskStatusProto.Builder builder = TaskStatusProto.newBuilder();
-    builder.setWorkerName(taskRunnerContext.getNodeId().toString());
+    builder.setWorkerName(taskRunnerContext.getWorkerContext().getConnectionInfo().getHostAndPeerRpcPort());
     builder.setId(context.getTaskId().getProto())
         .setProgress(context.getProgress())
         .setState(context.getState());
@@ -307,6 +305,9 @@ public class Task {
     return builder.build();
   }
 
+  public boolean isRunning(){
+    return context.getState() == TaskAttemptState.TA_RUNNING;
+  }
   public boolean isProgressChanged() {
     return context.isProgressChanged();
   }
@@ -340,7 +341,7 @@ public class Task {
   private TaskCompletionReport getTaskCompletionReport() {
     TaskCompletionReport.Builder builder = TaskCompletionReport.newBuilder();
     builder.setId(context.getTaskId().getProto());
-    builder.setContainerId(containerId.getProto());
+    builder.setContainerId(taskRunnerId.getProto());
     builder.setInputStats(reloadInputStats());
 
     if (context.hasResultStats()) {
@@ -373,7 +374,7 @@ public class Task {
     }
   }
 
-  public void run() {
+  public void run() throws Exception {
     startTime = System.currentTimeMillis();
     Exception error = null;
     try {
@@ -391,7 +392,7 @@ public class Task {
           createPlan(context, plan);
       this.executor.init();
 
-      while(!killed && executor.next() != null) {
+      while(!killed && !aborted && executor.next() != null) {
       }
       this.executor.close();
       reloadInputStats();
@@ -403,13 +404,13 @@ public class Task {
     } finally {
       stopped = true;
       taskRunnerContext.completedTasksNum.incrementAndGet();
-
+      QueryMasterProtocol.QueryMasterProtocolService.Interface queryMasterStub =  taskRunnerContext.getQueryMasterStub();
       if (killed || aborted) {
         context.setExecutorProgress(0.0f);
         context.setProgress(0.0f);
         if(killed) {
           context.setState(TaskAttemptState.TA_KILLED);
-          masterProxy.statusUpdate(null, getReport(), NullCallback.get());
+          queryMasterStub.statusUpdate(null, getReport(), NullCallback.get());
           taskRunnerContext.killedTasksNum.incrementAndGet();
         } else {
           context.setState(TaskAttemptState.TA_FAILED);
@@ -425,7 +426,7 @@ public class Task {
             errorBuilder.setErrorTrace(ExceptionUtils.getStackTrace(error));
           }
 
-          masterProxy.fatalError(null, errorBuilder.build(), NullCallback.get());
+          queryMasterStub.fatalError(null, errorBuilder.build(), NullCallback.get());
           taskRunnerContext.failedTasksNum.incrementAndGet();
         }
       } else {
@@ -435,7 +436,7 @@ public class Task {
         taskRunnerContext.succeededTasksNum.incrementAndGet();
 
         TaskCompletionReport report = getTaskCompletionReport();
-        masterProxy.done(null, report, NullCallback.get());
+        queryMasterStub.done(null, report, NullCallback.get());
       }
 
       finishTime = System.currentTimeMillis();
@@ -448,7 +449,7 @@ public class Task {
   }
 
   public void cleanupTask() {
-    taskRunnerContext.addTaskHistory(containerId, getId(), createTaskHistory());
+    taskRunnerContext.addTaskHistory(taskRunnerId, getId(), createTaskHistory());
     taskRunnerContext.removeTask(getId());
     taskRunnerContext = null;
 

@@ -45,43 +45,29 @@ public class QueryUnitAttemptScheduleEvent extends TaskSchedulerEvent {
 
   public static class QueryUnitAttemptScheduleContext {
     private ContainerId containerId;
-    private String host;
-    private RpcCallback<QueryUnitRequestProto> callback;
+    private int workerId;
+    private TaskRequestEvent requestEvent;
 
     public QueryUnitAttemptScheduleContext() {
 
     }
 
     public QueryUnitAttemptScheduleContext(ContainerId containerId,
-                                           String host,
-                                           RpcCallback<QueryUnitRequestProto> callback) {
+                                           int workerId,
+                                           TaskRequestEvent requestEvent) {
       this.containerId = containerId;
-      this.host = host;
-      this.callback = callback;
+      this.workerId = workerId;
+      this.requestEvent = requestEvent;
     }
 
     public ContainerId getContainerId() {
       return containerId;
     }
-
-    public void setContainerId(ContainerId containerId) {
-      this.containerId = containerId;
+    public int getWorkerId() {
+      return workerId;
     }
-
-    public String getHost() {
-      return host;
-    }
-
-    public void setHost(String host) {
-      this.host = host;
-    }
-
     public RpcCallback<QueryUnitRequestProto> getCallback() {
-      return callback;
-    }
-
-    public void setCallback(RpcCallback<QueryUnitRequestProto> callback) {
-      this.callback = callback;
+      return requestEvent.getCallback();
     }
   }
 }

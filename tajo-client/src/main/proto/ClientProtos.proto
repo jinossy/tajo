@@ -157,12 +157,7 @@ message GetClusterInfoRequest {
 }
 
 message WorkerResourceInfo {
-  required string allocatedHost = 1;
-  required int32 peerRpcPort = 2;
-  required int32 queryMasterPort = 3;
-  required int32 clientPort = 4;
-  required int32 pullServerPort = 5;
-  required int32 httpPort = 6;
+  required WorkerConnectionInfoProto connectionInfo = 1;
   required float diskSlots = 7;
   required int32 cpuCoreSlots = 8;
   required int32 memoryMB = 9;

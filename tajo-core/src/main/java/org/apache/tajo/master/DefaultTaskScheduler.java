@@ -31,6 +31,7 @@ import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.planner.logical.ScanNode;
 import org.apache.tajo.engine.query.QueryUnitRequest;
 import org.apache.tajo.engine.query.QueryUnitRequestImpl;
+import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.QueryUnitAttemptScheduleEvent.QueryUnitAttemptScheduleContext;
 import org.apache.tajo.master.event.TaskSchedulerEvent.EventType;
@@ -120,7 +121,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     // Return all of request callbacks instantly.
     for (TaskRequestEvent req : taskRequests.taskRequestQueue) {
       req.getCallback().run(stopTaskRunnerReq);
-      context.getMasterContext().getResourceAllocator().releaseContainer(req.getContainerId());
+      context.getMasterContext().getResourceAllocator()
+          .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
     }
 
     LOG.info("Task Scheduler stopped");
@@ -245,7 +247,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
 
       if(stopEventHandling.get()) {
         event.getCallback().run(stopTaskRunnerReq);
-        context.getMasterContext().getResourceAllocator().releaseContainer(event.getContainerId());
+        context.getMasterContext().getResourceAllocator()
+            .releaseWorkerResource(event.getExecutionBlockId(), event.getWorkerId(), 1);
         return;
       }
       int qSize = taskRequestQueue.size();
@@ -706,18 +709,10 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           taskRequest = remoteTaskRequests.pollFirst();
         }
 
-        // checking if this container is still alive.
-        // If not, ignore the task request and stop the task runner
-        ContainerProxy container = context.getMasterContext().getResourceAllocator()
-            .getContainer(taskRequest.getContainerId());
-        if(container == null) {
-          taskRequest.getCallback().run(stopTaskRunnerReq);
-          context.getMasterContext().getResourceAllocator().releaseContainer(taskRequest.getContainerId());
-          continue;
-        }
-
         // getting the hostname of requested node
-        String host = container.getTaskHostName();
+        WorkerConnectionInfo connectionInfo =
+            context.getMasterContext().getResourceAllocator().getWorkerConnectionInfo(taskRequest.getWorkerId());
+        String host = connectionInfo.getHost();
 
         // if there are no worker matched to the hostname a task request
         if(!leafTaskHostMapping.containsKey(host)){
@@ -758,7 +753,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
               //release container
               hostVolumeMapping.decreaseConcurrency(containerId);
               taskRequest.getCallback().run(stopTaskRunnerReq);
-              context.getMasterContext().getResourceAllocator().releaseContainer(containerId);
+              context.getMasterContext().getResourceAllocator()
+                  .releaseWorkerResource(taskRequest.getExecutionBlockId(), taskRequest.getWorkerId(), 1);
               continue;
             }
           }
@@ -799,8 +795,9 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           }
 
           context.getMasterContext().getEventHandler().handle(new TaskAttemptAssignedEvent(attemptId,
+              taskRequest.getWorkerId(),
               taskRequest.getContainerId(),
-              host, container.getTaskPort()));
+              host, connectionInfo.getPullServerPort()));
           assignedRequest.add(attemptId);
 
           scheduledObjectNum--;
@@ -813,7 +810,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       // Return additional requests instantly.
       for (TaskRequestEvent req : taskRequests) {
         req.getCallback().run(stopTaskRunnerReq);
-        context.getMasterContext().getResourceAllocator().releaseContainer(req.getContainerId());
+        context.getMasterContext().getResourceAllocator()
+            .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
       }
     }
 
@@ -870,10 +868,13 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
             }
           }
 
-          ContainerProxy container = context.getMasterContext().getResourceAllocator().getContainer(
-              taskRequest.getContainerId());
+          WorkerConnectionInfo connectionInfo = context.getMasterContext().getResourceAllocator().getWorkerConnectionInfo(
+              taskRequest.getWorkerId());
           context.getMasterContext().getEventHandler().handle(new TaskAttemptAssignedEvent(attemptId,
-              taskRequest.getContainerId(), container.getTaskHostName(), container.getTaskPort()));
+              taskRequest.getWorkerId(),
+              taskRequest.getContainerId(),
+              connectionInfo.getHost(),
+              connectionInfo.getPullServerPort()));
           taskRequest.getCallback().run(taskAssign.getProto());
           totalAssigned++;
           scheduledObjectNum--;
@@ -882,7 +883,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           // Return additional requests instantly.
           for (TaskRequestEvent req : taskRequests) {
             req.getCallback().run(stopTaskRunnerReq);
-            context.getMasterContext().getResourceAllocator().releaseContainer(req.getContainerId());
+            context.getMasterContext().getResourceAllocator()
+                .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
           }
         }
       }

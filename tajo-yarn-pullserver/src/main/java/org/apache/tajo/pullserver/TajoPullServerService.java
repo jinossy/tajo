@@ -213,21 +213,20 @@ public class TajoPullServerService extends AbstractService {
       this.getConfig().setInt(TajoConf.ConfVars.PULLSERVER_PORT.varname
           , TajoConf.ConfVars.PULLSERVER_PORT.defaultIntVal);
     } catch (Throwable t) {
-      LOG.error(t);
+      LOG.fatal(t.getMessage(), t);
     }
   }
 
   // TODO change AbstractService to throw InterruptedException
   @Override
-  public synchronized void start() {
-    Configuration conf = getConfig();
+  protected synchronized void serviceInit(Configuration conf) throws Exception {
     ServerBootstrap bootstrap = new ServerBootstrap(selector);
-
     try {
-      pipelineFact = new HttpPipelineFactory(conf);
+      pipelineFact = new HttpPipelineFactory(getConfig());
     } catch (Exception ex) {
       throw new RuntimeException(ex);
     }
+
     bootstrap.setPipelineFactory(pipelineFact);
     port = conf.getInt(ConfVars.PULLSERVER_PORT.varname,
         ConfVars.PULLSERVER_PORT.defaultIntVal);
@@ -235,12 +234,17 @@ public class TajoPullServerService extends AbstractService {
     accepted.add(ch);
     port = ((InetSocketAddress)ch.getLocalAddress()).getPort();
     conf.set(ConfVars.PULLSERVER_PORT.varname, Integer.toString(port));
-    pipelineFact.PullServer.setPort(port);
     LOG.info(getName() + " listening on port " + port);
-    super.start();
-
     sslFileBufferSize = conf.getInt(SUFFLE_SSL_FILE_BUFFER_SIZE_KEY,
                                     DEFAULT_SUFFLE_SSL_FILE_BUFFER_SIZE);
+
+    super.serviceInit(conf);
+  }
+
+  @Override
+  public synchronized void serviceStart() throws Exception {
+    pipelineFact.PullServer.setPort(port);
+    super.serviceStart();
   }
 
   public int getPort() {
@@ -257,7 +261,7 @@ public class TajoPullServerService extends AbstractService {
 
       localFS.close();
     } catch (Throwable t) {
-      LOG.error(t);
+      LOG.error(t.getMessage(), t);
     } finally {
       super.stop();
     }

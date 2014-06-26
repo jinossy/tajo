@@ -26,14 +26,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
 import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
-import org.apache.hadoop.yarn.proto.YarnProtos;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.utils.TupleCache;
-import org.apache.tajo.master.rm.TajoWorkerContainerId;
 import org.apache.tajo.worker.event.TaskRunnerEvent;
-import org.apache.tajo.worker.event.TaskRunnerLaunchEvent;
 import org.apache.tajo.worker.event.TaskRunnerStartEvent;
 
 import java.io.IOException;
@@ -47,8 +44,8 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
   private static final Log LOG = LogFactory.getLog(TaskRunnerManager.class);
 
   private final ConcurrentMap<ExecutionBlockId, TaskRunnerContext> taskRunnerContextMap = Maps.newConcurrentMap();
-  private final ConcurrentMap<String, TaskRunner> taskRunnerMap = Maps.newConcurrentMap();
-  private final ConcurrentMap<String, TaskRunnerHistory> taskRunnerHistoryMap = Maps.newConcurrentMap();
+  private final ConcurrentMap<TaskRunnerId, TaskRunner> taskRunnerMap = Maps.newConcurrentMap();
+  private final ConcurrentMap<TaskRunnerId, TaskRunnerHistory> taskRunnerHistoryMap = Maps.newConcurrentMap();
   private TajoWorker.WorkerContext workerContext;
   private TajoConf tajoConf;
   private AtomicBoolean stop = new AtomicBoolean(false);
@@ -114,7 +111,7 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     }
   }
 
-  public void stopTask(String id) {
+  public void stopTask(TaskRunnerId id) {
     LOG.info("Stop Task:" + id);
     TaskRunner runner = taskRunnerMap.remove(id);
     runner.stop();
@@ -160,79 +157,32 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     return taskRunnerMap.size();
   }
 
-//  @Override
-//  public void handle(TaskRunnerEvent event) {
-//    LOG.info("======================== Processing " + event.getExecutionBlockId() + " of type " + event.getType());
-//    if (event instanceof TaskRunnerLaunchEvent) {
-//      TaskRunnerStartEvent startEvent = (TaskRunnerStartEvent) event;
-//      try {
-//        TaskRunnerContext context = taskRunnerContextMap.get(event.getExecutionBlockId());
-//        if(context == null){
-//          context = new TaskRunnerContext(this, event.getExecutionBlockId(), startEvent.getQueryMasterNode());
-//          taskRunnerContextMap.put(event.getExecutionBlockId(), context);
-//        }
-//
-//        for (YarnProtos.ContainerIdProto containerIdProto : startEvent.getContainers()) {
-//
-//          TajoWorkerContainerId containerId = new TajoWorkerContainerId(containerIdProto);
-//          TaskRunner taskRunner = new TaskRunner(context, containerId);
-//
-//          LOG.info("Start TaskRunner:" + taskRunner.getId());
-//          taskRunnerMap.put(taskRunner.getId(), taskRunner);
-//
-//          taskRunnerHistoryMap.putIfAbsent(taskRunner.getId(), taskRunner.getHistory());
-//          taskRunner.init();
-//
-//          Future future = taskExecutor.submit(taskRunner);
-//          //LOG.info("started task : " + future.isDone());
-//        }
-//      } catch (Exception e) {
-//        LOG.error(e.getMessage(), e);
-//        throw new RuntimeException(e.getMessage(), e);
-//      }
-//    } else if (event.getType() == TaskRunnerEvent.EventType.TASK_STOP) {
-//      TaskRunnerContext taskRunnerContext =  taskRunnerContextMap.remove(event.getExecutionBlockId());
-//      if(taskRunnerContext != null){
-//        taskRunnerContext.stop();
-//        TupleCache.getInstance().removeBroadcastCache(event.getExecutionBlockId());
-//      }
-//    }
-//  }
-
   @Override
   public void handle(TaskRunnerEvent event) {
     LOG.info("======================== Processing " + event.getExecutionBlockId() + " of type " + event.getType());
-    if (event instanceof TaskRunnerLaunchEvent) {
-      TaskRunnerLaunchEvent launchEvent = (TaskRunnerLaunchEvent) event;
+    if (event instanceof TaskRunnerStartEvent) {
+      TaskRunnerStartEvent startEvent = (TaskRunnerStartEvent) event;
       TaskRunnerContext context = taskRunnerContextMap.get(event.getExecutionBlockId());
       if(context == null){
         try {
-          context = new TaskRunnerContext(this, event.getExecutionBlockId(), launchEvent.getQueryMasterNode());
+          context = new TaskRunnerContext(this, event.getExecutionBlockId(), startEvent.getQueryMaster());
         } catch (IOException e) {
           LOG.error(e.getMessage(), e);
         }
         taskRunnerContextMap.put(event.getExecutionBlockId(), context);
       }
 
-      for (YarnProtos.ContainerIdProto containerIdProto : launchEvent.getContainers()) {
-        context.addContainerId(new TajoWorkerContainerId(containerIdProto));
-      }
-    } else if (event instanceof TaskRunnerStartEvent) {
-      TaskRunnerStartEvent startEvent = (TaskRunnerStartEvent) event;
-      TaskRunnerContext context = taskRunnerContextMap.get(event.getExecutionBlockId());
-      if(context != null){
-        for (int i = 0; i < startEvent.getTasks(); i++) {
-          TajoWorkerContainerId containerId =  context.pollContainerId();
-          if(containerId != null){
-            TaskRunner taskRunner = new TaskRunner(context, containerId);
+      for (int i = 0; i < startEvent.getTasks(); i++) {
+        TaskRunnerId taskRunnerId = context.getTaskRunnerId();
+        if(taskRunnerId != null){
+          TaskRunner taskRunner = new TaskRunner(context, taskRunnerId);
 
-            LOG.info("Start TaskRunner:" + taskRunner.getId());
-            taskRunnerMap.put(taskRunner.getId(), taskRunner);
+          LOG.info("Start TaskRunner:" + taskRunner.getId());
+          taskRunnerMap.put(taskRunner.getId(), taskRunner);
 
-            taskRunnerHistoryMap.putIfAbsent(taskRunner.getId(), taskRunner.getHistory());
-            taskRunner.init();
-            taskExecutor.submit(taskRunner);
-          }
+          taskRunnerHistoryMap.putIfAbsent(taskRunner.getId(), taskRunner.getHistory());
+          taskRunner.init();
+          taskExecutor.submit(taskRunner);
         }
       }
     } else if (event.getType() == TaskRunnerEvent.EventType.TASK_STOP) {
@@ -273,14 +223,14 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     }
 
     private void cleanExpiredFinishedQueryMasterTask(long expireTime) {
-      List<String> expiredIds = new ArrayList<String>();
-      for(Map.Entry<String, TaskRunnerHistory> entry: taskRunnerHistoryMap.entrySet()) {
+      List<TaskRunnerId> expiredIds = new ArrayList<TaskRunnerId>();
+      for(Map.Entry<TaskRunnerId, TaskRunnerHistory> entry: taskRunnerHistoryMap.entrySet()) {
         if(entry.getValue().getStartTime() > expireTime) {
           expiredIds.add(entry.getKey());
         }
       }
 
-      for(String eachId: expiredIds) {
+      for(TaskRunnerId eachId: expiredIds) {
         taskRunnerHistoryMap.remove(eachId);
       }
     }

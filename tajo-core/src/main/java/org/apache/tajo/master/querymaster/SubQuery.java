@@ -550,14 +550,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
 
   private void releaseContainers() {
     // If there are still live TaskRunners, try to kill the containers.
-    eventHandler.handle(new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_CLEANUP, getId(), containers.values()));
-  }
-
-  public void releaseContainer(ContainerId containerId) {
-    // try to kill the container.
-    ArrayList<Container> list = new ArrayList<Container>();
-    list.add(containers.get(containerId));
-    eventHandler.handle(new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_CLEANUP, getId(), list));
+    eventHandler.handle(new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_CLEANUP, getId(), new HashMap<Integer, Integer>()));
   }
 
   /**
@@ -981,19 +974,11 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       try {
         SubQueryContainerAllocationEvent allocationEvent =
             (SubQueryContainerAllocationEvent) event;
-        for (Container container : allocationEvent.getAllocatedContainer()) {
-          ContainerId cId = container.getId();
-          if (subQuery.containers.containsKey(cId)) {
-            subQuery.eventHandler.handle(new SubQueryDiagnosticsUpdateEvent(subQuery.getId(),
-                "Duplicated containers are allocated: " + cId.toString()));
-            subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_INTERNAL_ERROR));
-          }
-          subQuery.containers.put(cId, container);
-        }
-        LOG.info("SubQuery (" + subQuery.getId() + ") has " + subQuery.containers.size() + " containers!");
+
+        LOG.info("SubQuery (" + subQuery.getId() + ") launch " + allocationEvent.getAllocatedSize() + " containers!");
         subQuery.eventHandler.handle(
             new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_LAUNCH,
-                subQuery.getId(), allocationEvent.getAllocatedContainer()));
+                subQuery.getId(), allocationEvent.getAllocatedResources()));
 
         subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_START));
       } catch (Throwable t) {
@@ -1016,10 +1001,10 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
             (SubQueryContainerAllocationEvent) event;
         subQuery.eventHandler.handle(
             new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_CLEANUP,
-                subQuery.getId(), allocationEvent.getAllocatedContainer()));
-        LOG.info(String.format("[%s] %d allocated containers are canceled",
+                subQuery.getId(), allocationEvent.getAllocatedResources()));
+        LOG.info(String.format("[%s] %d allocated workers are canceled",
             subQuery.getId().toString(),
-            allocationEvent.getAllocatedContainer().size()));
+            allocationEvent.getAllocatedResources().size()));
       } catch (Throwable t) {
         subQuery.eventHandler.handle(new SubQueryDiagnosticsUpdateEvent(subQuery.getId(),
             ExceptionUtils.getStackTrace(t)));
@@ -1094,8 +1079,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   }
 
   private void cleanup() {
-    stopScheduler();
     releaseContainers();
+    stopScheduler();
   }
 
   private static class SubQueryCompleteTransition

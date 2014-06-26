@@ -19,11 +19,11 @@
 package org.apache.tajo.master.rm;
 
 import com.google.protobuf.RpcCallback;
-import org.apache.hadoop.yarn.proto.YarnProtos;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.ipc.TajoMasterProtocol.*;
+import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.junit.Test;
@@ -34,7 +34,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.tajo.ipc.TajoResourceTrackerProtocol.NodeHeartbeat;
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TestTajoResourceManager {
   private final PrimitiveProtos.BoolProto BOOL_TRUE = PrimitiveProtos.BoolProto.newBuilder().setValue(true).build();
@@ -94,11 +95,10 @@ public class TestTajoResourceManager {
           .setRunningTaskNum(0)
           .build();
 
+      WorkerConnectionInfo connectionInfo =
+          new WorkerConnectionInfo("host" + (i + 1), 12345 + i, 4321 + i, 21000, 28080 + i);
       NodeHeartbeat tajoHeartbeat = NodeHeartbeat.newBuilder()
-          .setTajoWorkerHost("host" + (i + 1))
-          .setTajoQueryMasterPort(21000)
-          .setTajoWorkerHttpPort(28080 + i)
-          .setPeerRpcPort(12345)
+          .setConnectionInfo(connectionInfo.getProto())
           .setServerStatus(serverStatus)
           .build();
 
@@ -137,7 +137,10 @@ public class TestTajoResourceManager {
       final int maxMemory = 512;
       float diskSlots = 1.0f;
 
+      QueryId queryId = QueryIdFactory.newQueryId(queryIdTime, 1);
+
       WorkerResourcesRequestProto request = WorkerResourcesRequestProto.newBuilder()
+          .setQueryId(queryId.getProto())
           .setResourceRequestPriority(ResourceRequestPriority.MEMORY)
           .setNumContainers(60)
           .setMaxDiskSlotPerContainer(diskSlots)
@@ -147,8 +150,6 @@ public class TestTajoResourceManager {
           .build();
 
       final CountDownLatch barrier = new CountDownLatch(1);
-      final List<YarnProtos.ContainerIdProto> containerIds = new ArrayList<YarnProtos.ContainerIdProto>();
-
       RpcCallback<WorkerResourceAllocationResponse> callBack = new RpcCallback<WorkerResourceAllocationResponse>() {
 
         @Override
@@ -225,6 +226,7 @@ public class TestTajoResourceManager {
       int loopCount = 0;
       while(true) {
         WorkerResourcesRequestProto request = WorkerResourcesRequestProto.newBuilder()
+            .setQueryId(queryId.getProto())
             .setResourceRequestPriority(ResourceRequestPriority.MEMORY)
             .setNumContainers(requiredContainers - numAllocatedContainers)
             .setMaxDiskSlotPerContainer(diskSlots)
@@ -300,7 +302,9 @@ public class TestTajoResourceManager {
       final float maxDiskSlots = 2.0f;
       int memoryMB = 256;
 
+      QueryId queryId = QueryIdFactory.newQueryId(queryIdTime, 3);
       WorkerResourcesRequestProto request = WorkerResourcesRequestProto.newBuilder()
+          .setQueryId(queryId.getProto())
           .setResourceRequestPriority(ResourceRequestPriority.DISK)
           .setNumContainers(60)
           .setMaxDiskSlotPerContainer(maxDiskSlots)

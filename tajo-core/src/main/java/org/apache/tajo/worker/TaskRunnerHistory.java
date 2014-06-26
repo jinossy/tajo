@@ -20,8 +20,6 @@ package org.apache.tajo.worker;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.Maps;
-import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.common.ProtoObject;
@@ -38,21 +36,21 @@ import static org.apache.tajo.ipc.TajoWorkerProtocol.TaskRunnerHistoryProto;
 public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
 
   private TaskRunner.STATE state;
-  private ContainerId containerId;
+  private TaskRunnerId taskRunnerId;
   private long startTime;
   private long finishTime;
   private ExecutionBlockId executionBlockId;
   private Map<QueryUnitAttemptId, TaskHistory> taskHistoryMap = null;
 
-  public TaskRunnerHistory(ContainerId containerId, ExecutionBlockId executionBlockId) {
+  public TaskRunnerHistory(TaskRunnerId taskRunnerId, ExecutionBlockId executionBlockId) {
     init();
-    this.containerId = containerId;
+    this.taskRunnerId = taskRunnerId;
     this.executionBlockId = executionBlockId;
   }
 
   public TaskRunnerHistory(TaskRunnerHistoryProto proto) {
     this.state = TaskRunner.STATE.valueOf(proto.getState());
-    this.containerId = ConverterUtils.toContainerId(proto.getContainerId());
+    this.taskRunnerId = new TaskRunnerId(proto.getTaskRunnerId());
     this.startTime = proto.getStartTime();
     this.finishTime = proto.getFinishTime();
     this.executionBlockId = new ExecutionBlockId(proto.getExecutionBlockId());
@@ -73,7 +71,7 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(containerId, executionBlockId, taskHistoryMap);
+    return Objects.hashCode(taskRunnerId, executionBlockId, taskHistoryMap);
   }
 
   @Override
@@ -88,7 +86,7 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
   @Override
   public TaskRunnerHistoryProto getProto() {
     TaskRunnerHistoryProto.Builder builder = TaskRunnerHistoryProto.newBuilder();
-    builder.setContainerId(containerId.toString());
+    builder.setTaskRunnerId(taskRunnerId.getProto());
     builder.setState(state.toString());
     builder.setExecutionBlockId(executionBlockId.getProto());
     builder.setStartTime(startTime);
@@ -127,12 +125,12 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
     this.state = state;
   }
 
-  public ContainerId getContainerId() {
-    return containerId;
+  public TaskRunnerId getTaskRunnerId() {
+    return taskRunnerId;
   }
 
-  public void setContainerId(ContainerId containerId) {
-    this.containerId = containerId;
+  public void setTaskRunnerId(TaskRunnerId taskRunnerId) {
+    this.taskRunnerId = taskRunnerId;
   }
 
   public TaskHistory getTaskHistory(QueryUnitAttemptId queryUnitAttemptId) {
