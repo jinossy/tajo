@@ -73,7 +73,6 @@
         document.history.back();
     </script>
     </head>
-</div>
 </body>
 </html>
     <%

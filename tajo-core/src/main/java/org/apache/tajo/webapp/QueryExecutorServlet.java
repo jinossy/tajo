@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -270,10 +271,13 @@ public class QueryExecutorServlet extends HttpServlet {
       try {
         queryRespons = tajoClient.executeQuery(query);
         if (queryRespons.getResultCode() == ClientProtos.ResultCode.OK) {
-          QueryId queryId = null;
           try {
-            queryId = new QueryId(queryRespons.getQueryId());
-            getQueryResult(queryId);
+            if (queryRespons.getIsForwarded()) {
+              QueryId queryId = new QueryId(queryRespons.getQueryId());
+              getQueryResult(queryId);
+            } else if (queryRespons.hasResultSet()) {
+              getLocalQueryResult(queryRespons);
+            }
           } finally {
             if (queryId != null) {
               tajoClient.closeQuery(queryId);
@@ -388,6 +392,57 @@ public class QueryExecutorServlet extends HttpServlet {
       } catch (Exception e) {
         LOG.error(e.getMessage(), e);
         error = e;
+      }
+    }
+
+    private void getLocalQueryResult(ClientProtos.SubmitQueryResponse response) {
+      ResultSet res = null;
+      try {
+        TableDesc desc = CatalogUtil.newTableDesc(response.getTableDesc());
+        tajoClient.getConf().setVar(TajoConf.ConfVars.USERNAME, response.getUserName());
+        res = TajoClient.createResultSet(tajoClient, response);
+
+        ResultSetMetaData rsmd = res.getMetaData();
+        resultSize = desc.getStats().getNumBytes();
+        LOG.info("Tajo Query Result: " + desc.getPath() + "\n");
+
+        int numOfColumns = rsmd.getColumnCount();
+        for(int i = 0; i < numOfColumns; i++) {
+          columnNames.add(rsmd.getColumnName(i + 1));
+        }
+        queryResult = new ArrayList<List<Object>>();
+
+        if(sizeLimit < resultSize) {
+          numOfRows = (long)((float)(desc.getStats().getNumRows()) * ((float)sizeLimit / (float)resultSize));
+        } else {
+          numOfRows = desc.getStats().getNumRows();
+        }
+        int rowCount = 0;
+        boolean hasMoreData = false;
+        while (res.next()) {
+          if(rowCount > numOfRows) {
+            hasMoreData = true;
+            break;
+          }
+          List<Object> row = new ArrayList<Object>();
+          for(int i = 0; i < numOfColumns; i++) {
+            row.add(res.getObject(i + 1).toString());
+          }
+          queryResult.add(row);
+          rowCount++;
+
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
+      } finally {
+        if (res != null) {
+          try {
+            res.close();
+          } catch (SQLException e) {
+            e.printStackTrace();
+          }
+        }
+        progress.set(100);
       }
     }
   }
