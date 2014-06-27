@@ -18,7 +18,6 @@
 
 package org.apache.tajo.util;
 
-import org.apache.hadoop.conf.Configuration;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitId;
 import org.apache.tajo.conf.TajoConf;
@@ -37,7 +36,7 @@ public class TestJSPUtil {
   public void testSortQueryUnit() throws Exception {
     List<QueryUnit> queryUnits = new ArrayList<QueryUnit>();
 
-    Configuration conf = new TajoConf();
+    TajoConf conf = new TajoConf();
 
     QueryUnitAttemptScheduleEvent.QueryUnitAttemptScheduleContext scheduleContext =
         new QueryUnitAttemptScheduleEvent.QueryUnitAttemptScheduleContext();
@@ -46,7 +45,7 @@ public class TestJSPUtil {
 
     for (int i = 0; i < 10; i++) {
       QueryUnitId id = new QueryUnitId(ebId, i);
-      QueryUnit queryUnit = new QueryUnit(conf, scheduleContext, id, true, null);
+      QueryUnit queryUnit = new QueryUnit(conf, null, scheduleContext, id, true, null);
       queryUnits.add(queryUnit);
 
       int launchTime = i + 1;

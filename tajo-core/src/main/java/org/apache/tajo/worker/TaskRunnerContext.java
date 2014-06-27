@@ -94,6 +94,8 @@ public class TaskRunnerContext {
 
   private final ConcurrentMap<TaskRunnerId, TaskRunnerHistory> histories = Maps.newConcurrentMap();
 
+  QueryMasterProtocol.QueryMasterProtocolService.Interface stub;
+
   public TaskRunnerContext(TaskRunnerManager manager, ExecutionBlockId executionBlockId, WorkerConnectionInfo queryMaster) throws IOException {
     this.manager = manager;
     this.executionBlockId = executionBlockId;
@@ -155,12 +157,16 @@ public class TaskRunnerContext {
 
   public QueryMasterProtocol.QueryMasterProtocolService.Interface getQueryMasterStub() throws Exception {
     NettyClientBase clientBase = null;
-    try{
-      clientBase = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
-      return clientBase.getStub();
-    } finally {
-      connPool.releaseConnection(clientBase);
+    if(stub == null) {
+      try {
+
+        clientBase = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
+        stub = clientBase.getStub();
+      } finally {
+        connPool.releaseConnection(clientBase);
+      }
     }
+    return stub;
   }
 
   public void stop(){
@@ -266,9 +272,7 @@ public class TaskRunnerContext {
   }
 
   public void releaseTaskRunnerId(TaskRunnerId taskRunnerId) {
-    synchronized (taskRunnerIdPool) {
-      taskRunnerIdPool.addLast(taskRunnerId);
-    }
+    taskRunnerIdPool.addLast(taskRunnerId);
   }
 
   /* Shareable taskRunnerId must be released back to the taskRunnerIdPool when a taskRunner completed. */

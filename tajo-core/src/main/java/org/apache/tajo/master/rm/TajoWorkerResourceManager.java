@@ -298,7 +298,9 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
               LOG.debug("=========================================");
             }
             requestQueue.put(resourceRequest);
-            Thread.sleep(50);
+            synchronized (workerResourceAllocator){
+              workerResourceAllocator.wait(50);
+            }
           }
 
         } catch (InterruptedException ie) {

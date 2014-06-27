@@ -27,8 +27,6 @@ import org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService;
 import org.apache.tajo.rpc.CallFuture;
 import org.apache.tajo.rpc.NullCallback;
 
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.RunnableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,7 +36,7 @@ import static org.apache.tajo.ipc.TajoWorkerProtocol.*;
 /**
  * The driver class for Tajo QueryUnit processing.
  */
-public class TaskRunner implements RunnableFuture<TaskRunner>{
+public class TaskRunner implements Runnable{
 
   /** class logger */
   private static final Log LOG = LogFactory.getLog(TaskRunner.class);
@@ -167,32 +165,6 @@ public class TaskRunner implements RunnableFuture<TaskRunner>{
   }
   public long getFinishTime() {
     return finishTime;
-  }
-
-  @Override
-  public boolean cancel(boolean b) {
-    stop();
-    return stop.get();
-  }
-
-  @Override
-  public boolean isCancelled() {
-    return stop.get();
-  }
-
-  @Override
-  public boolean isDone() {
-    return stop.get();
-  }
-
-  @Override
-  public TaskRunner get() throws InterruptedException, ExecutionException {
-    return this;
-  }
-
-  @Override
-  public TaskRunner get(long l, TimeUnit timeUnit) throws InterruptedException, ExecutionException, TimeoutException {
-    return null;
   }
 
   public TaskRunnerContext getContext() {

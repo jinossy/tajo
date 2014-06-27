@@ -33,6 +33,7 @@ import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.QueryUnitId;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.logical.*;
 import org.apache.tajo.master.FragmentPair;
 import org.apache.tajo.master.TaskState;
@@ -169,10 +170,13 @@ public class QueryUnit implements EventHandler<TaskEvent> {
   private final Lock readLock;
   private final Lock writeLock;
   private QueryUnitAttemptScheduleContext scheduleContext;
+  private QueryMasterTask.QueryMasterTaskContext queryMasterTaskContext;
 
-	public QueryUnit(Configuration conf, QueryUnitAttemptScheduleContext scheduleContext,
-                   QueryUnitId id, boolean isLeafTask, EventHandler eventHandler) {
+	public QueryUnit(TajoConf conf, QueryMasterTask.QueryMasterTaskContext queryMasterTaskContext,
+                   QueryUnitAttemptScheduleContext scheduleContext, QueryUnitId id,
+                   boolean isLeafTask, EventHandler eventHandler) {
     this.systemConf = conf;
+    this.queryMasterTaskContext = queryMasterTaskContext;
 		this.taskId = id;
     this.eventHandler = eventHandler;
     this.isLeafTask = isLeafTask;
@@ -193,6 +197,10 @@ public class QueryUnit implements EventHandler<TaskEvent> {
     stateMachine = stateMachineFactory.make(this);
     totalFragmentNum = 0;
 	}
+
+  public QueryMasterTask.QueryMasterTaskContext getQueryMasterTaskContext(){
+    return queryMasterTaskContext;
+  }
 
   public boolean isLeafTask() {
     return this.isLeafTask;

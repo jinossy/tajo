@@ -397,13 +397,9 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
         taskAttempt.fillTaskStatistics(report);
 
         taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_SUCCEEDED));
-
-        WorkerResourceRequestEvent cEvent =
-            new WorkerResourceRequestEvent(WorkerResourceRequestEvent.EventType.CONTAINER_RELEASE,
-                taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
-                taskAttempt.workerId,
-                1);
-        taskAttempt.eventHandler.handle(cEvent);
+        taskAttempt.getQueryUnit().getQueryMasterTaskContext().getResourceAllocator().releaseWorkerResource(
+            taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+            taskAttempt.workerId, 1);
       } catch (Throwable t) {
         taskAttempt.eventHandler.handle(new TaskFatalErrorEvent(taskAttempt.getId(), t.getMessage()));
         taskAttempt.addDiagnosticInfo(ExceptionUtils.getStackTrace(t));
@@ -428,12 +424,9 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
       taskAttempt.addDiagnosticInfo(errorEvent.errorMessage());
       LOG.error(taskAttempt.getId() + " FROM " + taskAttempt.getHost() + " >> " + errorEvent.errorMessage());
 
-      WorkerResourceRequestEvent cEvent =
-          new WorkerResourceRequestEvent(WorkerResourceRequestEvent.EventType.CONTAINER_RELEASE,
-              taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
-              taskAttempt.workerId,
-              1);
-      taskAttempt.eventHandler.handle(cEvent);
+      taskAttempt.getQueryUnit().getQueryMasterTaskContext().getResourceAllocator().releaseWorkerResource(
+          taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+          taskAttempt.workerId, 1);
     }
   }
 

@@ -958,7 +958,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
                                             QueryUnitAttemptScheduleContext queryUnitContext,
                                             SubQuery subQuery, int taskId) {
     ExecutionBlock execBlock = subQuery.getBlock();
-    QueryUnit unit = new QueryUnit(schedulerContext.getMasterContext().getConf(),
+    QueryUnit unit = new QueryUnit(schedulerContext.getMasterContext().getConf(), schedulerContext.getMasterContext(),
         queryUnitContext,
         QueryIdFactory.newQueryUnitId(schedulerContext.getBlockId(), taskId),
         schedulerContext.isLeafQuery(), subQuery.eventHandler);
@@ -977,9 +977,9 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
             (SubQueryContainerAllocationEvent) event;
 
         LOG.info("SubQuery (" + subQuery.getId() + ") launch " + allocationEvent.getAllocatedSize() + " containers!");
-        subQuery.eventHandler.handle(
-            new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_LAUNCH,
-                subQuery.getId(), allocationEvent.getAllocatedResources()));
+//        subQuery.eventHandler.handle(
+//            new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_LAUNCH,
+//                subQuery.getId(), allocationEvent.getAllocatedResources()));
 
         subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_START));
       } catch (Throwable t) {
