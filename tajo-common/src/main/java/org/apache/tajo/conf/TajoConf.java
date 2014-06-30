@@ -338,6 +338,9 @@ public class TajoConf extends Configuration {
     // DEBUG OPTION
     TAJO_DEBUG("tajo.debug", false),
 
+    // ONLY FOR TESTCASE
+    TESTCASE_MIN_TASK_NUM("tajo.testcase.min.task.num", -1),
+
     //JOB_SCHEDULER
     JOB_SCHEDULER_CLASS("tajo.job.scheduler.class", "org.apache.tajo.scheduler.SimpleFifoScheduler"),
     JOB_QUEUE_NAMES("tajo.job.queue.names", "default")
