@@ -299,7 +299,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
             }
             requestQueue.put(resourceRequest);
             synchronized (workerResourceAllocator){
-              workerResourceAllocator.wait(50);
+              workerResourceAllocator.wait(100);
             }
           }
 
@@ -322,7 +322,9 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
     List<Integer> randomWorkers = new ArrayList<Integer>();
 
     if (request.getWorkerIdCount() > 0) {
-      for (int workerId : request.getWorkerIdList()) {
+      ArrayList<Integer> requestWorkerIds = new ArrayList<Integer>(request.getWorkerIdList());
+      Collections.shuffle(requestWorkerIds);
+      for (int workerId : requestWorkerIds) {
         if (rmContext.getWorkers().containsKey(workerId)) {
           randomWorkers.add(workerId);
         } else {
@@ -330,16 +332,12 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
         }
       }
 
-      if (request.getNumContainers() > randomWorkers.size()) {
+      if (rmContext.getWorkers().size() > randomWorkers.size()) {
         ArrayList<Integer> workerIds = new ArrayList<Integer>(rmContext.getWorkers().keySet());
         Collections.shuffle(workerIds);
         for (int workerId : workerIds) {
           if (!randomWorkers.contains(workerId)) {
             randomWorkers.add(workerId);
-          }
-
-          if (randomWorkers.size() >= request.getNumContainers()) {
-            break;
           }
         }
       }

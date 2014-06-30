@@ -20,6 +20,7 @@ package org.apache.tajo.worker;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -38,6 +39,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class TaskRunnerManager extends CompositeService implements EventHandler<TaskRunnerEvent> {
@@ -71,7 +73,9 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     tajoConf = (TajoConf)conf;
     dispatcher.register(TaskRunnerEvent.EventType.class, this);
 
-    taskExecutor = Executors.newFixedThreadPool(tajoConf.getIntVar(TajoConf.ConfVars.WORKER_EXECUTION_MAX_SLOTS));
+    ThreadFactoryBuilder builder = new ThreadFactoryBuilder();
+    ThreadFactory taskFactory = builder.setNameFormat("Task executor #%d").build();
+    taskExecutor = Executors.newFixedThreadPool(tajoConf.getIntVar(TajoConf.ConfVars.WORKER_EXECUTION_MAX_SLOTS), taskFactory);
     super.init(tajoConf);
   }
 
@@ -149,7 +153,6 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
       TaskHistory taskHistory = history.getTaskHistory(quAttemptId);
       if (taskHistory != null) return taskHistory;
     }
-
     return null;
   }
 
@@ -191,6 +194,7 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
         taskRunnerContext.stop();
         TupleCache.getInstance().removeBroadcastCache(event.getExecutionBlockId());
       }
+      LOG.info("Stopped execution block:" + event.getExecutionBlockId());
     }
   }
 

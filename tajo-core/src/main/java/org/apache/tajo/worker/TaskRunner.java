@@ -98,8 +98,8 @@ public class TaskRunner implements Runnable{
     }
   }
 
-  private AtomicBoolean stop = new AtomicBoolean();
-  private TaskRunnerId taskRunnerId;
+  private final AtomicBoolean stop = new AtomicBoolean();
+  private final TaskRunnerId taskRunnerId;
 
   // Cluster Management
   //private TajoWorkerProtocol.TajoWorkerProtocolService.Interface master;

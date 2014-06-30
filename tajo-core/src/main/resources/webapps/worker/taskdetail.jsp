@@ -70,10 +70,10 @@
     %>
     <script type="text/javascript">
         alert("No Task Info for" + quAttemptId);
-        document.history.back();
+        history.back(0);
     </script>
     </head>
-</body>
+<body></body>
 </html>
     <%
             return;

@@ -22,6 +22,7 @@ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.proto.YarnProtos;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
+import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryIdFactory;
 
@@ -30,8 +31,8 @@ public class ApplicationIdUtils {
     return BuilderUtils.newApplicationAttemptId(queryIdToAppId(queryId), attemptId);
   }
 
-  public static ApplicationAttemptId createApplicationAttemptId(QueryId queryId) {
-    return BuilderUtils.newApplicationAttemptId(queryIdToAppId(queryId), 1);
+  public static ApplicationAttemptId createApplicationAttemptId(ExecutionBlockId executionBlockId) {
+    return BuilderUtils.newApplicationAttemptId(queryIdToAppId(executionBlockId.getQueryId()), executionBlockId.getId());
   }
 
   public static ApplicationId queryIdToAppId(QueryId queryId) {

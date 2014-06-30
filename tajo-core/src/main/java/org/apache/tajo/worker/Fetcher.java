@@ -97,6 +97,10 @@ public class Fetcher {
     return fileLen;
   }
 
+  public String getOutputPath() {
+    return file.getAbsolutePath();
+  }
+
   public TajoProtos.FetcherState getState() {
     return state;
   }

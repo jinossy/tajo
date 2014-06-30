@@ -215,6 +215,10 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
     return this.hostName;
   }
 
+  public int getWorkerId(){
+    return workerId;
+  }
+
   public int getPort() {
     return this.port;
   }

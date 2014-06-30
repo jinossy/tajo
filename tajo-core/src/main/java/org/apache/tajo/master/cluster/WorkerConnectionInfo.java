@@ -18,7 +18,6 @@
 
 package org.apache.tajo.master.cluster;
 
-import com.google.common.base.Objects;
 import org.apache.tajo.common.ProtoObject;
 
 import static org.apache.tajo.TajoProtos.WorkerConnectionInfoProto;
@@ -127,7 +126,11 @@ public class WorkerConnectionInfo implements ProtoObject<WorkerConnectionInfoPro
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(host, peerRpcPort);
+    final int prime = 493217;
+    int result = 8501;
+    result = prime * result + this.getHost().hashCode();
+    result = prime * result + this.getPeerRpcPort();
+    return result;
   }
 
   @Override

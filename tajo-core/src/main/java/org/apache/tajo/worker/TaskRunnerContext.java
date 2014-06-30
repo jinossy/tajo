@@ -20,6 +20,7 @@ package org.apache.tajo.worker;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileSystem;
@@ -45,11 +46,13 @@ import org.jboss.netty.channel.socket.ClientSocketChannelFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -72,8 +75,7 @@ public class TaskRunnerContext {
   // for input files
   private FileSystem defaultFS;
   private ExecutionBlockId executionBlockId;
-  // for the local temporal dir
-  private Path baseDirPath;
+
   private TajoQueryEngine queryEngine;
   private LocalDirAllocator lDirAllocator;
   private RpcConnectionPool connPool;
@@ -84,8 +86,9 @@ public class TaskRunnerContext {
   private UserGroupInformation taskOwner;
 
   private Reporter reporter;
-  // for Fetcher
-  private ExecutorService fetcherExecutor;
+
+  //key is a local absolute path of temporal directories
+  private Map<String, ExecutorService> fetcherExecutorMap = Maps.newHashMap();
   private AtomicBoolean stop = new AtomicBoolean();
 
   private final LinkedList<TaskRunnerId> taskRunnerIdPool = Lists.newLinkedList();
@@ -93,8 +96,6 @@ public class TaskRunnerContext {
   private final ConcurrentMap<QueryUnitAttemptId, Task> tasks = Maps.newConcurrentMap();
 
   private final ConcurrentMap<TaskRunnerId, TaskRunnerHistory> histories = Maps.newConcurrentMap();
-
-  QueryMasterProtocol.QueryMasterProtocolService.Interface stub;
 
   public TaskRunnerContext(TaskRunnerManager manager, ExecutionBlockId executionBlockId, WorkerConnectionInfo queryMaster) throws IOException {
     this.manager = manager;
@@ -137,36 +138,36 @@ public class TaskRunnerContext {
     this.defaultFS = TajoConf.getTajoRootDir(systemConf).getFileSystem(systemConf);
     this.localFS = FileSystem.getLocal(systemConf);
 
-    // the base dir for an output dir
-    String baseDir = executionBlockId.getQueryId().toString() + "/output" + "/" + executionBlockId.getId();
-
     // initialize LocalDirAllocator
     lDirAllocator = new LocalDirAllocator(TajoConf.ConfVars.WORKER_TEMPORAL_DIR.varname);
 
-    baseDirPath = localFS.makeQualified(lDirAllocator.getLocalPathForWrite(baseDir, systemConf));
-    LOG.info("TaskRunnerContext basedir is created (" + baseDir +")");
+    ThreadFactoryBuilder builder = new ThreadFactoryBuilder();
+    ThreadFactory fetcherFactory = builder.setNameFormat("Fetcher executor #%d").build();
 
+    Iterable<Path> iter = lDirAllocator.getAllLocalPathsToRead(".", systemConf);
+    for (Path localDir : iter){
+      if(!fetcherExecutorMap.containsKey(localDir)){
+        ExecutorService fetcherExecutor = Executors.newFixedThreadPool(
+            systemConf.getIntVar(TajoConf.ConfVars.SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM), fetcherFactory);
+        fetcherExecutorMap.put(localDir.toUri().getRawPath(), fetcherExecutor);
+      }
+
+    }
     // Setup QueryEngine according to the query plan
     // Here, we can setup row-based query engine or columnar query engine.
     this.queryEngine = new TajoQueryEngine(systemConf);
 
     this.reporter = new Reporter();
-    fetcherExecutor = Executors.newFixedThreadPool(
-        systemConf.getIntVar(TajoConf.ConfVars.SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM));
   }
 
   public QueryMasterProtocol.QueryMasterProtocolService.Interface getQueryMasterStub() throws Exception {
     NettyClientBase clientBase = null;
-    if(stub == null) {
-      try {
-
-        clientBase = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
-        stub = clientBase.getStub();
-      } finally {
-        connPool.releaseConnection(clientBase);
-      }
+    try {
+      clientBase = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
+      return clientBase.getStub();
+    } finally {
+      connPool.releaseConnection(clientBase);
     }
-    return stub;
   }
 
   public void stop(){
@@ -203,11 +204,14 @@ public class TaskRunnerContext {
     }
 
 
-    try{
-      fetcherExecutor.shutdownNow();
+    try {
+      for(ExecutorService executorService : fetcherExecutorMap.values()){
+        executorService.shutdown();
+      }
+      fetcherExecutorMap.clear();
       releaseShuffleChannelFactory();
     } catch (Throwable e) {
-      LOG.error(e);
+      LOG.error(e.getMessage(), e);
     }
   }
 
@@ -251,11 +255,31 @@ public class TaskRunnerContext {
     return tasks.remove(queryUnitAttemptId);
   }
 
-  public ExecutorService getFetchLauncher() {
+  public ExecutorService getFetchLauncher(String outPutPath) {
+    // for random access
+    ExecutorService fetcherExecutor = null;
+    for (Map.Entry<String, ExecutorService> entry : fetcherExecutorMap.entrySet()) {
+      if (outPutPath.startsWith(entry.getKey())) {
+        fetcherExecutor = entry.getValue();
+        break;
+      }
+    }
+
+    // random executor
+    if (fetcherExecutor == null) {
+      ArrayList<ExecutorService> executorServices = new ArrayList<ExecutorService>(fetcherExecutorMap.values());
+      Collections.shuffle(executorServices);
+      fetcherExecutor = executorServices.iterator().next();
+    }
     return fetcherExecutor;
   }
 
-  public Path getBaseDir() {
+  // for the local temporal dir
+  public Path getBaseDir() throws IOException {
+    // the base dir for an output dir
+    String baseDir = executionBlockId.getQueryId().toString() + "/output" + "/" + executionBlockId.getId();
+    Path baseDirPath = localFS.makeQualified(lDirAllocator.getLocalPathForWrite(baseDir, systemConf));
+    LOG.info("TaskRunnerContext basedir is created (" + baseDir +")");
     return baseDirPath;
   }
 
@@ -285,8 +309,8 @@ public class TaskRunnerContext {
     }
   }
 
-  public TaskRunnerId newTaskRunnerId(){
-    ApplicationAttemptId applicationAttemptId = ApplicationIdUtils.createApplicationAttemptId(executionBlockId.getQueryId());
+  public TaskRunnerId newTaskRunnerId() {
+    ApplicationAttemptId applicationAttemptId = ApplicationIdUtils.createApplicationAttemptId(executionBlockId);
     return new TaskRunnerId(applicationAttemptId, getWorkerContext().getConnectionInfo().getId() + containerIdSeq.incrementAndGet());
   }
 
@@ -295,11 +319,8 @@ public class TaskRunnerContext {
   }
 
   public TaskRunnerHistory getTaskRunnerHistory(TaskRunnerId taskRunnerId){
-    TaskRunnerHistory history = histories.putIfAbsent(taskRunnerId, new TaskRunnerHistory(taskRunnerId, executionBlockId));
-    if(history == null){
-      return histories.get(taskRunnerId);
-    }
-    return history;
+    histories.putIfAbsent(taskRunnerId, new TaskRunnerHistory(taskRunnerId, executionBlockId));
+    return histories.get(taskRunnerId);
   }
 
   protected ClientSocketChannelFactory getShuffleChannelFactory(){

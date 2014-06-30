@@ -169,7 +169,7 @@ public class Worker implements EventHandler<WorkerEvent>, Comparable<Worker> {
     if(o == null) {
       return 1;
     }
-    return Integer.valueOf(getWorkerId()).compareTo(o.getWorkerId());
+    return getConnectionInfo().getHost().compareTo(o.getConnectionInfo().getHost());
   }
 
   public static class AddNodeTransition implements SingleArcTransition<Worker, WorkerEvent> {

@@ -927,6 +927,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
   public static void scheduleFragment(SubQuery subQuery, FileFragment fragment) {
     subQuery.taskScheduler.handle(new FragmentScheduleEvent(TaskSchedulerEvent.EventType.T_SCHEDULE,
         subQuery.getId(), fragment));
+    subQuery.taskScheduler.getLeafTaskHosts().addAll(Arrays.asList(fragment.getHosts()));
   }
 
 
@@ -976,10 +977,8 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
         SubQueryContainerAllocationEvent allocationEvent =
             (SubQueryContainerAllocationEvent) event;
 
+        // TODO should add log message
         LOG.info("SubQuery (" + subQuery.getId() + ") launch " + allocationEvent.getAllocatedSize() + " containers!");
-//        subQuery.eventHandler.handle(
-//            new TaskRunnerGroupEvent(EventType.CONTAINER_REMOTE_LAUNCH,
-//                subQuery.getId(), allocationEvent.getAllocatedResources()));
 
         subQuery.eventHandler.handle(new SubQueryEvent(subQuery.getId(), SubQueryEventType.SQ_START));
       } catch (Throwable t) {

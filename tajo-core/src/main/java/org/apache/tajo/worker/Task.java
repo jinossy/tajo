@@ -60,6 +60,7 @@ import java.net.URI;
 import java.text.NumberFormat;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ExecutorService;
 
 import static org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
 
@@ -259,7 +260,8 @@ public class Task {
 
   public void fetch() {
     for (Fetcher f : fetcherRunners) {
-      taskRunnerContext.getFetchLauncher().submit(new FetchRunner(context, f));
+      ExecutorService executor  = taskRunnerContext.getFetchLauncher(f.getOutputPath());
+      executor.submit(new FetchRunner(context, f));
     }
   }
 
@@ -503,7 +505,7 @@ public class Task {
         taskHistory.setFinishedFetchCount(i);
       }
     } catch (Exception e) {
-      e.printStackTrace();
+      LOG.error(e.getMessage(), e);
     }
 
     return taskHistory;
@@ -620,8 +622,7 @@ public class Task {
     if (fetches.size() > 0) {
       ClientSocketChannelFactory channelFactory = taskRunnerContext.getShuffleChannelFactory();
       Path inputDir = taskRunnerContext.getLocalDirAllocator().
-          getLocalPathToRead(
-              getTaskAttemptDir(ctx.getTaskId()).toString(), taskRunnerContext.getConf());
+          getLocalPathToRead(getTaskAttemptDir(ctx.getTaskId()).toString(), taskRunnerContext.getConf());
       File storeDir;
 
       int i = 0;

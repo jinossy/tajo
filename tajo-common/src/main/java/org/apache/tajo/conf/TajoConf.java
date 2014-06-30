@@ -216,7 +216,7 @@ public class TajoConf extends Configuration {
     PULLSERVER_PORT("tajo.pullserver.port", 0),
     SHUFFLE_SSL_ENABLED_KEY("tajo.pullserver.ssl.enabled", false),
     SHUFFLE_FILE_FORMAT("tajo.shuffle.file-format", "RAW"),
-    SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM("tajo.shuffle.fetcher.parallel-execution.max-num", Runtime.getRuntime().availableProcessors() * 2),
+    SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM("tajo.shuffle.fetcher.parallel-execution.max-num", 2),
 
     //////////////////////////////////
     // Storage Configuration
