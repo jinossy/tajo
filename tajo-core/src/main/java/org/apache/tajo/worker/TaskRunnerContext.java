@@ -46,13 +46,9 @@ import org.jboss.netty.channel.socket.ClientSocketChannelFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -88,7 +84,7 @@ public class TaskRunnerContext {
   private Reporter reporter;
 
   //key is a local absolute path of temporal directories
-  private Map<String, ExecutorService> fetcherExecutorMap = Maps.newHashMap();
+  private Map<String, ThreadPoolExecutor> fetcherExecutorMap = Maps.newHashMap();
   private AtomicBoolean stop = new AtomicBoolean();
 
   private final LinkedList<TaskRunnerId> taskRunnerIdPool = Lists.newLinkedList();
@@ -147,7 +143,7 @@ public class TaskRunnerContext {
     Iterable<Path> iter = lDirAllocator.getAllLocalPathsToRead(".", systemConf);
     for (Path localDir : iter){
       if(!fetcherExecutorMap.containsKey(localDir)){
-        ExecutorService fetcherExecutor = Executors.newFixedThreadPool(
+        ThreadPoolExecutor fetcherExecutor = (ThreadPoolExecutor)Executors.newFixedThreadPool(
             systemConf.getIntVar(TajoConf.ConfVars.SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM), fetcherFactory);
         fetcherExecutorMap.put(localDir.toUri().getRawPath(), fetcherExecutor);
       }
@@ -195,14 +191,6 @@ public class TaskRunnerContext {
       }
     }
     tasks.clear();
-
-    try{
-      NettyClientBase clientBase = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
-      connPool.closeConnection(clientBase);
-    } catch (Throwable e){
-      LOG.error(e);
-    }
-
 
     try {
       for(ExecutorService executorService : fetcherExecutorMap.values()){
@@ -258,18 +246,19 @@ public class TaskRunnerContext {
   public ExecutorService getFetchLauncher(String outPutPath) {
     // for random access
     ExecutorService fetcherExecutor = null;
-    for (Map.Entry<String, ExecutorService> entry : fetcherExecutorMap.entrySet()) {
+    int minScheduledSize = Integer.MAX_VALUE;
+
+    for (Map.Entry<String, ThreadPoolExecutor> entry : fetcherExecutorMap.entrySet()) {
       if (outPutPath.startsWith(entry.getKey())) {
         fetcherExecutor = entry.getValue();
         break;
       }
-    }
 
-    // random executor
-    if (fetcherExecutor == null) {
-      ArrayList<ExecutorService> executorServices = new ArrayList<ExecutorService>(fetcherExecutorMap.values());
-      Collections.shuffle(executorServices);
-      fetcherExecutor = executorServices.iterator().next();
+      int scheduledSize = entry.getValue().getQueue().size();
+      if(minScheduledSize > scheduledSize){
+        fetcherExecutor = entry.getValue();
+        minScheduledSize = scheduledSize;
+      }
     }
     return fetcherExecutor;
   }

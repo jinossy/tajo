@@ -750,6 +750,18 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
               hostVolumeMapping.decreaseConcurrency(containerId);
               hostVolumeMapping.increaseConcurrency(containerId, HostVolumeMapping.REMOTE);
             }
+
+            // this part is remote concurrency management of a tail tasks
+            int tailLimit = Math.max(remainingScheduledObjectNum() / (leafTaskHostMapping.size()), 1);
+
+            if(hostVolumeMapping.getRemoteConcurrency() > tailLimit){
+              //release container
+              hostVolumeMapping.decreaseConcurrency(containerId);
+              taskRequest.getCallback().run(stopTaskRunnerReq);
+              context.getMasterContext().getResourceAllocator()
+                  .releaseWorkerResource(taskRequest.getExecutionBlockId(), taskRequest.getWorkerId(), 1);
+              continue;
+            }
           }
 
           //////////////////////////////////////////////////////////////////////

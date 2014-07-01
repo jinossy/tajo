@@ -51,7 +51,7 @@ public class WorkerResource {
   private long freeHeap;
   private long totalHeap;
 
-  private int numRunningTasks;
+  private AtomicInteger numRunningTasks = new AtomicInteger(0);
 
   private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final Lock rlock = lock.readLock();
@@ -177,6 +177,8 @@ public class WorkerResource {
 
       if(queryMaster){
         numQueryMasterTasks.decrementAndGet();
+      } else {
+        numRunningTasks.decrementAndGet();
       }
     } finally {
       wlock.unlock();
@@ -199,6 +201,8 @@ public class WorkerResource {
 
       if(queryMaster){
         numQueryMasterTasks.incrementAndGet();
+      } else {
+        numRunningTasks.incrementAndGet();
       }
     } finally {
       wlock.unlock();
@@ -230,11 +234,11 @@ public class WorkerResource {
   }
 
   public int getNumRunningTasks() {
-    return numRunningTasks;
+    return numRunningTasks.get();
   }
 
   public void setNumRunningTasks(int numRunningTasks) {
-    this.numRunningTasks = numRunningTasks;
+    this.numRunningTasks.set(numRunningTasks);
   }
 
   public int getNumQueryMasterTasks() {

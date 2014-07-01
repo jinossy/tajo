@@ -603,16 +603,14 @@ public class Task {
     if(fetcherSize == 0) {
       return;
     }
-    try {
-      int numRunningFetcher = (int)(ctx.getFetchLatch().getCount()) - 1;
 
-      if (numRunningFetcher == 0) {
-        context.setProgress(FETCHER_PROGRESS);
-      } else {
-        context.setProgress(adjustFetchProcess(fetcherSize, numRunningFetcher));
-      }
-    } finally {
-      ctx.getFetchLatch().countDown();
+    ctx.getFetchLatch().countDown();
+
+    int remainFetcher = (int)(ctx.getFetchLatch().getCount());
+    if (remainFetcher == 0) {
+      context.setProgress(FETCHER_PROGRESS);
+    } else {
+      context.setProgress(adjustFetchProcess(fetcherSize, remainFetcher));
     }
   }
 

@@ -249,7 +249,7 @@ public class Fetcher {
     public ChannelPipeline getPipeline() throws Exception {
       ChannelPipeline pipeline = pipeline();
 
-      pipeline.addLast("codec", new HttpClientCodec());
+      pipeline.addLast("codec", new HttpClientCodec(4096, 8192, 8192 * 8));
       pipeline.addLast("inflater", new HttpContentDecompressor());
       pipeline.addLast("handler", new HttpClientHandler(file));
       return pipeline;

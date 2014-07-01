@@ -297,7 +297,15 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
               }
               LOG.debug("=========================================");
             }
-            requestQueue.put(resourceRequest);
+            if(resourceRequest.queryMasterRequest){
+              requestQueue.put(resourceRequest);
+            } else {
+              resourceRequest.callBack.run(WorkerResourceAllocationResponse.newBuilder()
+                      .addAllAllocatedWorkerResource(allocatedWorkerResources)
+                      .build()
+              );
+            }
+
             synchronized (workerResourceAllocator){
               workerResourceAllocator.wait(100);
             }
@@ -320,27 +328,8 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
         = request.getResourceRequestPriority();
 
     List<Integer> randomWorkers = new ArrayList<Integer>();
-
     if (request.getWorkerIdCount() > 0) {
-      ArrayList<Integer> requestWorkerIds = new ArrayList<Integer>(request.getWorkerIdList());
-      Collections.shuffle(requestWorkerIds);
-      for (int workerId : requestWorkerIds) {
-        if (rmContext.getWorkers().containsKey(workerId)) {
-          randomWorkers.add(workerId);
-        } else {
-          LOG.warn("Can't found worker : " + workerId);
-        }
-      }
-
-      if (rmContext.getWorkers().size() > randomWorkers.size()) {
-        ArrayList<Integer> workerIds = new ArrayList<Integer>(rmContext.getWorkers().keySet());
-        Collections.shuffle(workerIds);
-        for (int workerId : workerIds) {
-          if (!randomWorkers.contains(workerId)) {
-            randomWorkers.add(workerId);
-          }
-        }
-      }
+      randomWorkers.addAll(request.getWorkerIdList());
     } else {
       randomWorkers.addAll(rmContext.getWorkers().keySet());
       Collections.shuffle(randomWorkers);
@@ -373,7 +362,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
           }
           int compareAvailableMemory = checkMax ? maxMemoryMB : minMemoryMB;
 
-          for (Integer eachWorker : randomWorkers) {
+          for (int eachWorker : randomWorkers) {
             if (allocatedResources >= numContainers) {
               stop = true;
               break;
@@ -435,7 +424,7 @@ public class TajoWorkerResourceManager extends CompositeService implements Worke
           }
           float compareAvailableDisk = checkMax ? maxDiskSlots : minDiskSlots;
 
-          for (Integer eachWorker : randomWorkers) {
+          for (int eachWorker : randomWorkers) {
             if (allocatedResources >= numContainers) {
               stop = true;
               break;

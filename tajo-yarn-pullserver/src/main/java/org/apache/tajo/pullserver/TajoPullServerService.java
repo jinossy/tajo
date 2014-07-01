@@ -303,9 +303,9 @@ public class TajoPullServerService extends AbstractService {
       if (sslFactory != null) {
         pipeline.addLast("ssl", new SslHandler(sslFactory.createSSLEngine()));
       }
-      pipeline.addLast("decoder", new HttpRequestDecoder());
+
+      pipeline.addLast("codec", new HttpServerCodec(4096, 8192, 8192 * 8));
       pipeline.addLast("aggregator", new HttpChunkAggregator(1 << 16));
-      pipeline.addLast("encoder", new HttpResponseEncoder());
       pipeline.addLast("chunking", new ChunkedWriteHandler());
       pipeline.addLast("shuffle", PullServer);
       return pipeline;

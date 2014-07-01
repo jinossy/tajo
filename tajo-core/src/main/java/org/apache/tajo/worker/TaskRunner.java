@@ -98,6 +98,7 @@ public class TaskRunner implements Runnable{
     }
   }
 
+  private static final int MAX_GET_TASK_RETRY = 100;
   private final AtomicBoolean stop = new AtomicBoolean();
   private final TaskRunnerId taskRunnerId;
 
@@ -223,6 +224,11 @@ public class TaskRunner implements Runnable{
           }
         } catch (TimeoutException te) {
           if (isStopped()) {
+            break;
+          }
+
+          if(retryCount > MAX_GET_TASK_RETRY){
+            // yield to other taskrunner. most case, a netty stub has been disconnect
             break;
           }
           // if there has been no assigning task for a given period,
