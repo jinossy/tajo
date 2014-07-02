@@ -417,6 +417,9 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
     public void transition(QueryUnitAttempt taskAttempt, TaskAttemptEvent event) {
       taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.workerId,
           LocalTaskEventType.KILL));
+      taskAttempt.getQueryUnit().getQueryMasterTaskContext().getResourceAllocator().releaseWorkerResource(
+          taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+          taskAttempt.workerId, 1);
     }
   }
 
