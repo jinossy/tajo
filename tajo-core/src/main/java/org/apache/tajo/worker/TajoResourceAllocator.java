@@ -180,7 +180,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
         }
       });
     }
-    containerIds.clear();
   }
 
 

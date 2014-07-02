@@ -135,7 +135,6 @@ public class QueryMasterManagerService extends CompositeService
       } else {
         ContainerId cId = new TaskRunnerId(request.getContainerId());
         LOG.debug("getTask:" + cId + ", ebId:" + ebId);
-        queryMasterTask.getQueryTaskContext().getResourceAllocator().addContainerId(cId, request.getWorkerId());
         queryMasterTask.handleTaskRequestEvent(new TaskRequestEvent(request.getWorkerId(), cId, ebId, done));
       }
     } catch (Exception e) {

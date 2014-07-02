@@ -45,8 +45,6 @@ public class TajoContainerProxy extends ContainerProxy {
     this.hostName = container.getNodeId().getHost();
     this.port = ((TajoWorkerContainer)container).getWorkerResource().getConnectionInfo().getPullServerPort();
     this.state = ContainerState.RUNNING;
-    context.getResourceAllocator().addContainerId(containerId,
-        ((TajoWorkerContainer)container).getWorkerResource().getConnectionInfo().getId());
 
     if (LOG.isDebugEnabled()) {
       LOG.debug("Launch Container:" + executionBlockId + "," + containerId.getId() + "," +
@@ -111,7 +109,6 @@ public class TajoContainerProxy extends ContainerProxy {
       this.state = ContainerState.KILLED_BEFORE_LAUNCH;
     } else {
       try {
-        context.getResourceAllocator().removeContainer(containerId);
         this.state = ContainerState.DONE;
       } catch (Throwable t) {
         // ignore the cleanup failure

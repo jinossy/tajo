@@ -20,7 +20,6 @@ package org.apache.tajo.worker;
 
 import com.google.common.collect.Maps;
 import org.apache.hadoop.service.CompositeService;
-import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 
 import java.util.concurrent.ConcurrentMap;
@@ -31,18 +30,12 @@ public abstract class AbstractResourceAllocator extends CompositeService impleme
    */
   protected ConcurrentMap<Integer, WorkerConnectionInfo> workerInfoMap = Maps.newConcurrentMap();
 
-  protected ConcurrentMap<ContainerId, WorkerConnectionInfo> containerIds = Maps.newConcurrentMap();
-
   public AbstractResourceAllocator() {
     super(AbstractResourceAllocator.class.getName());
   }
 
   public WorkerConnectionInfo getWorkerConnectionInfo(int workerId) {
     return workerInfoMap.get(workerId);
-  }
-
-  public WorkerConnectionInfo getWorkerConnectionInfo(ContainerId containerId) {
-    return containerIds.get(containerId);
   }
 
   protected void addWorkerConnectionInfo(WorkerConnectionInfo connectionInfo) {
@@ -53,18 +46,9 @@ public abstract class AbstractResourceAllocator extends CompositeService impleme
     return workerInfoMap.remove(workerId);
   }
 
-  public void addContainerId(ContainerId cId, int workerId) {
-    containerIds.putIfAbsent(cId, getWorkerConnectionInfo(workerId));
-  }
-
-  public void removeContainer(ContainerId cId) {
-    containerIds.remove(cId);
-  }
-
   @Override
   protected void serviceStop() throws Exception {
     workerInfoMap.clear();
-    containerIds.clear();
     super.serviceStop();
   }
 }
