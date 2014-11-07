@@ -34,7 +34,6 @@ public abstract class ContainerProxy {
   final public static FsPermission QUERYCONF_FILE_PERMISSION =
           FsPermission.createImmutable((short) 0644); // rw-r--r--
 
-
   protected static enum ContainerState {
     PREP, FAILED, RUNNING, DONE, KILLED_BEFORE_LAUNCH
   }
@@ -46,7 +45,7 @@ public abstract class ContainerProxy {
   protected ContainerState state;
   // store enough information to be able to cleanup the container
   protected Container container;
-  protected ContainerId containerID;
+  protected ContainerId containerId;
   protected String hostName;
   protected int port = -1;
 
@@ -60,7 +59,7 @@ public abstract class ContainerProxy {
     this.state = ContainerState.PREP;
     this.container = container;
     this.executionBlockId = executionBlockId;
-    this.containerID = container.getId();
+    this.containerId = container.getId();
   }
 
   public synchronized boolean isCompletelyDone() {
@@ -77,5 +76,14 @@ public abstract class ContainerProxy {
 
   public String getId() {
     return executionBlockId.toString();
+  }
+
+
+  public ContainerId getContainerId() {
+    return containerId;
+  }
+
+  public ContainerState getState() {
+    return state;
   }
 }

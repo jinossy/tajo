@@ -18,6 +18,7 @@
 
 package org.apache.tajo.master.querymaster;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -56,6 +57,7 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
   final EventHandler eventHandler;
 
   private ContainerId containerId;
+  private int workerId;
   private WorkerConnectionInfo workerConnectionInfo;
   private int expire;
 
@@ -309,6 +311,7 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
                            TaskAttemptEvent event) {
       TaskAttemptAssignedEvent castEvent = (TaskAttemptAssignedEvent) event;
       taskAttempt.containerId = castEvent.getContainerId();
+      taskAttempt.workerId = castEvent.getWorkerId();
       taskAttempt.workerConnectionInfo = castEvent.getWorkerConnectionInfo();
       taskAttempt.eventHandler.handle(
           new TaskTAttemptEvent(taskAttempt.getId(),
@@ -376,8 +379,12 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
       try {
         taskAttempt.fillTaskStatistics(report);
         taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_SUCCEEDED));
+        taskAttempt.getQueryUnit().getQueryMasterTaskContext().getResourceAllocator().releaseWorkerResource(
+            taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+            taskAttempt.workerId, 1);
       } catch (Throwable t) {
         taskAttempt.eventHandler.handle(new TaskFatalErrorEvent(taskAttempt.getId(), t.getMessage()));
+        LOG.info(t.getMessage());
         taskAttempt.addDiagnosticInfo(ExceptionUtils.getStackTrace(t));
       }
     }
@@ -387,8 +394,11 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
 
     @Override
     public void transition(QueryUnitAttempt taskAttempt, TaskAttemptEvent event) {
-      taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.containerId,
+      taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.workerId,
           LocalTaskEventType.KILL));
+      taskAttempt.getQueryUnit().getQueryMasterTaskContext().getResourceAllocator().releaseWorkerResource(
+          taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+          taskAttempt.workerId, 1);
     }
   }
 
@@ -398,8 +408,16 @@ public class QueryUnitAttempt implements EventHandler<TaskAttemptEvent> {
       TaskFatalErrorEvent errorEvent = (TaskFatalErrorEvent) event;
       taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_FAILED));
       taskAttempt.addDiagnosticInfo(errorEvent.errorMessage());
-      LOG.error(taskAttempt.getId() + " FROM " + taskAttempt.getWorkerConnectionInfo().getHost()
-          + " >> " + errorEvent.errorMessage());
+
+      String detailMessages = "";
+      if(LOG.isInfoEnabled()){
+        detailMessages = "\n Diagnostics : " +
+            StringUtils.abbreviate(StringUtils.join(taskAttempt.diagnostics, "\n"), 500);
+      }
+      LOG.error(taskAttempt.getId() + " FROM " + taskAttempt.getWorkerConnectionInfo().getHostAndPeerRpcPort() + " >> " + errorEvent.errorMessage() + detailMessages);
+      taskAttempt.getQueryUnit().getQueryMasterTaskContext().getResourceAllocator().releaseWorkerResource(
+          taskAttempt.getQueryUnit().getId().getExecutionBlockId(),
+          taskAttempt.workerId, 1);
     }
   }
 

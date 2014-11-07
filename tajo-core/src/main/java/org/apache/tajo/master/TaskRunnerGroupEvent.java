@@ -18,12 +18,11 @@
 
 package org.apache.tajo.master;
 
-import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.hadoop.yarn.event.AbstractEvent;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.master.TaskRunnerGroupEvent.EventType;
 
-import java.util.Collection;
+import java.util.Map;
 
 public class TaskRunnerGroupEvent extends AbstractEvent<EventType> {
   public enum EventType {
@@ -32,17 +31,18 @@ public class TaskRunnerGroupEvent extends AbstractEvent<EventType> {
   }
 
   protected final ExecutionBlockId executionBlockId;
-  protected final Collection<Container> containers;
+  protected final Map<Integer, Integer> allocatedResources;
+
   public TaskRunnerGroupEvent(EventType eventType,
                               ExecutionBlockId executionBlockId,
-                              Collection<Container> containers) {
+                              Map<Integer, Integer> allocatedResources) {
     super(eventType);
     this.executionBlockId = executionBlockId;
-    this.containers = containers;
+    this.allocatedResources = allocatedResources;
   }
 
-  public Collection<Container> getContainers() {
-    return containers;
+  public Map<Integer, Integer> getAllocatedResources() {
+    return allocatedResources;
   }
 
   public ExecutionBlockId getExecutionBlockId() {

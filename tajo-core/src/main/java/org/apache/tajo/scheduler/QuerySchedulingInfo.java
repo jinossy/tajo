@@ -20,16 +20,23 @@ package org.apache.tajo.scheduler;
 
 import com.google.common.base.Objects;
 import org.apache.tajo.QueryId;
+import org.apache.tajo.engine.query.QueryContext;
+
+import java.util.Set;
 
 public class QuerySchedulingInfo {
   private QueryId queryId;
   private Integer priority;
   private Long startTime;
+  private String assignedQueueName;
+  private Set<String> candidateQueueNames;
+  private QueryContext queryContext;
 
-  public QuerySchedulingInfo(QueryId queryId, Integer priority, Long startTime) {
+  public QuerySchedulingInfo(QueryId queryId, int priority, long startTime, QueryContext queryContext) {
     this.queryId = queryId;
     this.priority = priority;
     this.startTime = startTime;
+    this.queryContext = queryContext;
   }
 
   public QueryId getQueryId() {
@@ -48,8 +55,39 @@ public class QuerySchedulingInfo {
     return queryId.getId();
   }
 
+  public String getAssignedQueueName() {
+    return assignedQueueName;
+  }
+
+  public void setAssignedQueueName(String assignedQueueName) {
+    this.assignedQueueName = assignedQueueName;
+    queryContext.set(Scheduler.QUERY_QUEUE_KEY, assignedQueueName);
+  }
+
+  public Set<String> getCandidateQueueNames() {
+    return candidateQueueNames;
+  }
+
+  public void setCandidateQueueNames(Set<String> candidateQueueNames) {
+    this.candidateQueueNames = candidateQueueNames;
+  }
+
+  public QueryContext getQueryContext() {
+    return queryContext;
+  }
+
   @Override
   public int hashCode() {
     return Objects.hashCode(startTime, getName(), priority);
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if ( !(obj instanceof QuerySchedulingInfo)) {
+      return false;
+    }
+
+    QuerySchedulingInfo other = (QuerySchedulingInfo)obj;
+    return queryId.equals(other.queryId);
   }
 }

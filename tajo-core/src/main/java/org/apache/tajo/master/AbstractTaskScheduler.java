@@ -18,17 +18,39 @@
 
 package org.apache.tajo.master;
 
+import com.google.common.collect.Sets;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.hadoop.yarn.event.EventHandler;
+import org.apache.tajo.ExecutionBlockId;
+import org.apache.tajo.QueryIdFactory;
+import org.apache.tajo.QueryUnitAttemptId;
+import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.event.TaskRequestEvent;
 import org.apache.tajo.master.event.TaskSchedulerEvent;
 
+import java.util.Set;
+
 
 public abstract class AbstractTaskScheduler extends AbstractService implements EventHandler<TaskSchedulerEvent> {
+  public static final TajoWorkerProtocol.QueryUnitRequestProto stopTaskRunnerReq;
+  static {
+    ExecutionBlockId nullSubQuery = QueryIdFactory.newExecutionBlockId(QueryIdFactory.NULL_QUERY_ID, 0);
+    QueryUnitAttemptId nullAttemptId = QueryIdFactory.newQueryUnitAttemptId(QueryIdFactory.newQueryUnitId(nullSubQuery, 0), 0);
+
+    TajoWorkerProtocol.QueryUnitRequestProto.Builder builder =
+        TajoWorkerProtocol.QueryUnitRequestProto.newBuilder();
+    builder.setId(nullAttemptId.getProto());
+    builder.setShouldDie(true);
+    builder.setOutputTable("");
+    builder.setSerializedData("");
+    builder.setClusteredOutput(false);
+    stopTaskRunnerReq = builder.build();
+  }
 
   protected int hostLocalAssigned;
   protected int rackLocalAssigned;
   protected int totalAssigned;
+  protected Set<String> hosts = Sets.newHashSet();
 
   /**
    * Construct the service.
@@ -49,6 +71,10 @@ public abstract class AbstractTaskScheduler extends AbstractService implements E
 
   public int getTotalAssigned() {
     return totalAssigned;
+  }
+
+  public Set<String> getLeafTaskHosts(){
+   return hosts;
   }
 
   public abstract void handleTaskRequestEvent(TaskRequestEvent event);

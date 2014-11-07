@@ -110,6 +110,10 @@ public class Fetcher {
     return fileLen;
   }
 
+  public String getOutputPath() {
+    return fileChunk.getFile().getAbsolutePath();
+  }
+
   public TajoProtos.FetcherState getState() {
     return state;
   }

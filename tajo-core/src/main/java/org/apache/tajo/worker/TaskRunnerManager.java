@@ -20,6 +20,7 @@ package org.apache.tajo.worker;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -39,20 +40,26 @@ import org.jboss.netty.util.Timer;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class TaskRunnerManager extends CompositeService implements EventHandler<TaskRunnerEvent> {
   private static final Log LOG = LogFactory.getLog(TaskRunnerManager.class);
 
   private final ConcurrentMap<ExecutionBlockId, ExecutionBlockContext> executionBlockContextMap = Maps.newConcurrentMap();
-  private final ConcurrentMap<String, TaskRunner> taskRunnerMap = Maps.newConcurrentMap();
-  private final ConcurrentMap<String, TaskRunnerHistory> taskRunnerHistoryMap = Maps.newConcurrentMap();
+  private final ConcurrentMap<TaskRunnerId, TaskRunner> taskRunnerMap = Maps.newConcurrentMap();
+  private final ConcurrentMap<TaskRunnerId, TaskRunnerHistory> taskRunnerHistoryMap = Maps.newConcurrentMap();
   private TajoWorker.WorkerContext workerContext;
   private TajoConf tajoConf;
   private AtomicBoolean stop = new AtomicBoolean(false);
   private FinishedTaskCleanThread finishedTaskCleanThread;
   private Dispatcher dispatcher;
   private HashedWheelTimer rpcTimer;
+  // for task
+  private ExecutorService taskExecutor;
 
   public TaskRunnerManager(TajoWorker.WorkerContext workerContext, Dispatcher dispatcher) {
     super(TaskRunnerManager.class.getName());
@@ -70,6 +77,10 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     Preconditions.checkArgument(conf instanceof TajoConf);
     tajoConf = (TajoConf)conf;
     dispatcher.register(TaskRunnerEvent.EventType.class, this);
+
+    ThreadFactoryBuilder builder = new ThreadFactoryBuilder();
+    ThreadFactory taskFactory = builder.setNameFormat("Task executor #%d").build();
+    taskExecutor = Executors.newFixedThreadPool(tajoConf.getIntVar(TajoConf.ConfVars.WORKER_EXECUTION_MAX_SLOTS), taskFactory);
     super.init(tajoConf);
   }
 
@@ -87,17 +98,16 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
       return;
     }
 
-    synchronized(taskRunnerMap) {
-      for(TaskRunner eachTaskRunner: taskRunnerMap.values()) {
-        if(!eachTaskRunner.isStopped()) {
-          eachTaskRunner.stop();
-        }
+    for(TaskRunner eachTaskRunner: taskRunnerMap.values()) {
+      if(!eachTaskRunner.isStopped()) {
+        eachTaskRunner.stop();
       }
     }
     for(ExecutionBlockContext context: executionBlockContextMap.values()) {
       context.stop();
     }
 
+    taskExecutor.shutdownNow();
     if(finishedTaskCleanThread != null) {
       finishedTaskCleanThread.interrupted();
     }
@@ -112,10 +122,10 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     }
   }
 
-  public void stopTaskRunner(String id) {
+  public void stopTask(TaskRunnerId id) {
     LOG.info("Stop Task:" + id);
-    TaskRunner taskRunner = taskRunnerMap.remove(id);
-    taskRunner.stop();
+    TaskRunner runner = taskRunnerMap.remove(id);
+    runner.stop();
     if(workerContext.isYarnContainerMode()) {
       stop();
     }
@@ -129,11 +139,11 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     return Collections.unmodifiableCollection(taskRunnerHistoryMap.values());
   }
 
-  public TaskRunnerHistory getExcutionBlockHistoryByTaskRunnerId(String taskRunnerId) {
+  public TaskRunnerHistory getExcutionBlockHistoryByTaskRunnerId(TaskRunnerId taskRunnerId) {
     return taskRunnerHistoryMap.get(taskRunnerId);
   }
 
-  public TaskRunner getTaskRunner(String taskRunnerId) {
+  public TaskRunner getTaskRunner(TaskRunnerId taskRunnerId) {
     return taskRunnerMap.get(taskRunnerId);
   }
 
@@ -162,29 +172,38 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
 
   @Override
   public void handle(TaskRunnerEvent event) {
+    // FIXME fire once from resource allocator
+    // params ebid, resources, querymaster connection info
+    // event type: reserve resources, cancel resources, start eb, stop eb
+    // normal sequence : reserve resources, start eb, stop eb
+    // reserve cancel sequence : reserve resources, cancel resources
+    // query master failure sequence : reserve resources, cancel resources from timeout
     LOG.info("======================== Processing " + event.getExecutionBlockId() + " of type " + event.getType());
     if (event instanceof TaskRunnerStartEvent) {
       TaskRunnerStartEvent startEvent = (TaskRunnerStartEvent) event;
       ExecutionBlockContext context = executionBlockContextMap.get(event.getExecutionBlockId());
-
       if(context == null){
         try {
           context = new ExecutionBlockContext(this, startEvent, startEvent.getQueryMaster());
         } catch (Throwable e) {
-          LOG.fatal(e.getMessage(), e);
+          LOG.error(e.getMessage(), e);
           throw new RuntimeException(e);
         }
         executionBlockContextMap.put(event.getExecutionBlockId(), context);
       }
+      // TODO move following codes in taskContext and launch the tasks
+      for (int i = 0; i < startEvent.getTasks(); i++) {
+        TaskRunnerId taskRunnerId = context.getTaskRunnerId();
+        if(taskRunnerId != null){
+          TaskRunner taskRunner = new TaskRunner(context, taskRunnerId);
 
-      TaskRunner taskRunner = new TaskRunner(context, startEvent.getContainerId());
-      LOG.info("Start TaskRunner:" + taskRunner.getId());
-      taskRunnerMap.put(taskRunner.getId(), taskRunner);
-      taskRunnerHistoryMap.put(taskRunner.getId(), taskRunner.getHistory());
-
-      taskRunner.init(context.getConf());
-      taskRunner.start();
-
+          LOG.info("Start TaskRunner:" + taskRunner.getId());
+          taskRunnerMap.put(taskRunner.getId(), taskRunner);
+          taskRunner.init();
+          taskRunnerHistoryMap.putIfAbsent(taskRunner.getId(), taskRunner.getHistory());
+          taskExecutor.submit(taskRunner);
+        }
+      }
     } else if (event instanceof TaskRunnerStopEvent) {
       ExecutionBlockContext executionBlockContext =  executionBlockContextMap.remove(event.getExecutionBlockId());
       if(executionBlockContext != null){
@@ -226,7 +245,7 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
           break;
         }
         try {
-          long expireTime = System.currentTimeMillis() - expireIntervalTime * 60 * 1000;
+          long expireTime = System.currentTimeMillis() - expireIntervalTime * 60 * 1000L;
           cleanExpiredFinishedQueryMasterTask(expireTime);
         } catch (Exception e) {
           LOG.error(e.getMessage(), e);
@@ -235,17 +254,15 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
     }
 
     private void cleanExpiredFinishedQueryMasterTask(long expireTime) {
-      synchronized(taskRunnerHistoryMap) {
-        List<String> expiredIds = new ArrayList<String>();
-        for(Map.Entry<String, TaskRunnerHistory> entry: taskRunnerHistoryMap.entrySet()) {
-          if(entry.getValue().getStartTime() > expireTime) {
-            expiredIds.add(entry.getKey());
-          }
+      List<TaskRunnerId> expiredIds = new ArrayList<TaskRunnerId>();
+      for(Map.Entry<TaskRunnerId, TaskRunnerHistory> entry: taskRunnerHistoryMap.entrySet()) {
+        if(entry.getValue().getStartTime() > expireTime) {
+          expiredIds.add(entry.getKey());
         }
+      }
 
-        for(String eachId: expiredIds) {
-          taskRunnerHistoryMap.remove(eachId);
-        }
+      for(TaskRunnerId eachId: expiredIds) {
+        taskRunnerHistoryMap.remove(eachId);
       }
     }
   }

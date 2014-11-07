@@ -18,21 +18,29 @@
 
 package org.apache.tajo.master.event;
 
-import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.tajo.ExecutionBlockId;
 
-import java.util.List;
+import java.util.Map;
 
 public class SubQueryContainerAllocationEvent extends SubQueryEvent {
-  private List<Container> allocatedContainer;
+  private Map<Integer, Integer> allocatedResources;
+  private int allocatedSize;
 
   public SubQueryContainerAllocationEvent(final ExecutionBlockId id,
-                                          List<Container> allocatedContainer) {
+                                          final Map<Integer, Integer> allocatedResources) {
     super(id, SubQueryEventType.SQ_CONTAINER_ALLOCATED);
-    this.allocatedContainer = allocatedContainer;
+    this.allocatedResources = allocatedResources;
+
+    for (int resources : allocatedResources.values()){
+      this.allocatedSize += resources;
+    }
   }
 
-  public List<Container> getAllocatedContainer() {
-    return this.allocatedContainer;
+  public Map<Integer, Integer> getAllocatedResources() {
+    return this.allocatedResources;
+  }
+
+  public int getAllocatedSize(){
+    return allocatedSize;
   }
 }

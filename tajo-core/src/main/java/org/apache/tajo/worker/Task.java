@@ -21,7 +21,6 @@ package org.apache.tajo.worker;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -41,7 +40,6 @@ import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.json.CoreGsonHelper;
-import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.engine.planner.physical.PhysicalExec;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.engine.query.QueryUnitRequest;
@@ -49,6 +47,7 @@ import org.apache.tajo.ipc.QueryMasterProtocol;
 import org.apache.tajo.ipc.TajoWorkerProtocol.*;
 import org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty.EnforceType;
 import org.apache.tajo.plan.logical.*;
+import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.pullserver.TajoPullServerService;
 import org.apache.tajo.pullserver.retriever.FileChunk;
 import org.apache.tajo.rpc.NullCallback;
@@ -78,11 +77,10 @@ public class Task {
   private static final Log LOG = LogFactory.getLog(Task.class);
   private static final float FETCHER_PROGRESS = 0.5f;
 
-  private final TajoConf systemConf;
   private final QueryContext queryContext;
-  private final ExecutionBlockContext executionBlockContext;
+  private ExecutionBlockContext executionBlockContext;
   private final QueryUnitAttemptId taskId;
-  private final String taskRunnerId;
+  private final TaskRunnerId taskRunnerId;
 
   private final Path taskDir;
   private final QueryUnitRequest request;
@@ -140,19 +138,19 @@ public class Task {
         }
       };
 
-  public Task(String taskRunnerId,
-              Path baseDir,
-              QueryUnitAttemptId taskId,
-              final ExecutionBlockContext executionBlockContext,
+  public Task(final TaskRunnerId taskRunnerId,
+              final ExecutionBlockContext ebContext,
               final QueryUnitRequest request) throws IOException {
-    this.taskRunnerId = taskRunnerId;
     this.request = request;
-    this.taskId = taskId;
+    this.taskId = request.getId();
+    this.taskRunnerId = taskRunnerId;
 
-    this.systemConf = executionBlockContext.getConf();
-    this.queryContext = request.getQueryContext(systemConf);
-    this.executionBlockContext = executionBlockContext;
-    this.taskDir = StorageUtil.concatPath(baseDir,
+    this.queryContext = request.getQueryContext(ebContext.getConf());
+    this.executionBlockContext = ebContext;
+
+    Path baseDirPath = executionBlockContext.createBaseDir();
+    LOG.info("Task basedir is created (" + baseDirPath +")");
+    this.taskDir = StorageUtil.concatPath(baseDirPath,
         taskId.getQueryUnitId().getId() + "_" + taskId.getId());
 
     this.context = new TaskAttemptContext(queryContext, executionBlockContext, taskId,
@@ -232,7 +230,8 @@ public class Task {
       if (request.getFetches().size() > 0) {
         inputTableBaseDir = localFS.makeQualified(
             executionBlockContext.getLocalDirAllocator().getLocalPathForWrite(
-                getTaskAttemptDir(context.getTaskId()).toString(), systemConf));
+                getTaskAttemptDir(context.getTaskId()).toString(), executionBlockContext.getConf())
+        );
         localFS.mkdirs(inputTableBaseDir);
         Path tableDir;
         for (String inputTable : context.getInputTables()) {
@@ -289,9 +288,9 @@ public class Task {
   }
 
   public void fetch() {
-    ExecutorService executorService = executionBlockContext.getTaskRunner(taskRunnerId).getFetchLauncher();
     for (Fetcher f : fetcherRunners) {
-      executorService.submit(new FetchRunner(context, f));
+      ExecutorService executor  = executionBlockContext.getFetchLauncher(f.getOutputPath());
+      executor.submit(new FetchRunner(context, f));
     }
   }
 
@@ -368,7 +367,7 @@ public class Task {
   private TaskCompletionReport getTaskCompletionReport() {
     TaskCompletionReport.Builder builder = TaskCompletionReport.newBuilder();
     builder.setId(context.getTaskId().getProto());
-
+    builder.setContainerId(taskRunnerId.getProto());
     builder.setInputStats(reloadInputStats());
 
     if (context.hasResultStats()) {
@@ -509,7 +508,8 @@ public class Task {
 
   public void cleanupTask() {
     executionBlockContext.addTaskHistory(taskRunnerId, getId(), createTaskHistory());
-    executionBlockContext.getTasks().remove(getId());
+    executionBlockContext.removeTask(getId());
+    executionBlockContext = null;
 
     fetcherRunners.clear();
     fetcherRunners = null;
@@ -547,7 +547,7 @@ public class Task {
         FetcherHistoryProto.Builder builder = FetcherHistoryProto.newBuilder();
         for (Fetcher fetcher : fetcherRunners) {
           // TODO store the fetcher histories
-          if (systemConf.getBoolVar(TajoConf.ConfVars.$DEBUG_ENABLED)) {
+          if (executionBlockContext.getConf().getBoolVar(TajoConf.ConfVars.$DEBUG_ENABLED)) {
             builder.setStartTime(fetcher.getStartTime());
             builder.setFinishTime(fetcher.getFinishTime());
             builder.setFileLength(fetcher.getFileLen());
@@ -581,7 +581,7 @@ public class Task {
 
   private FileFragment[] localizeFetchedData(File file, String name, TableMeta meta)
       throws IOException {
-    Configuration c = new Configuration(systemConf);
+    Configuration c = new Configuration(executionBlockContext.getConf());
     c.set(CommonConfigurationKeysPublic.FS_DEFAULT_NAME_KEY, "file:///");
     FileSystem fs = FileSystem.get(c);
     Path tablePath = new Path(file.getAbsolutePath());
@@ -623,7 +623,7 @@ public class Task {
     public FetchRunner(TaskAttemptContext ctx, Fetcher fetcher) {
       this.ctx = ctx;
       this.fetcher = fetcher;
-      this.maxRetryNum = systemConf.getIntVar(TajoConf.ConfVars.SHUFFLE_FETCHER_READ_RETRY_MAX_NUM);
+      this.maxRetryNum = executionBlockContext.getConf().getIntVar(TajoConf.ConfVars.SHUFFLE_FETCHER_READ_RETRY_MAX_NUM);
     }
 
     @Override
@@ -704,8 +704,8 @@ public class Task {
       ClientSocketChannelFactory channelFactory = executionBlockContext.getShuffleChannelFactory();
       Timer timer = executionBlockContext.getRPCTimer();
       Path inputDir = executionBlockContext.getLocalDirAllocator().
-          getLocalPathToRead(getTaskAttemptDir(ctx.getTaskId()).toString(), systemConf);
-
+          getLocalPathToRead(getTaskAttemptDir(ctx.getTaskId()).toString(), executionBlockContext.getConf());
+    
       int i = 0;
       File storeDir;
       File defaultStoreFile;
@@ -726,7 +726,7 @@ public class Task {
             boolean hasError = false;
             try {
               LOG.info("Try to get local file chunk at local host");
-              storeChunk = getLocalStoredFileChunk(uri, systemConf);
+              storeChunk = getLocalStoredFileChunk(uri, executionBlockContext.getConf());
             } catch (Throwable t) {
               hasError = true;
             }
@@ -752,7 +752,7 @@ public class Task {
           // If we decide that intermediate data should be really fetched from a remote host, storeChunk
           // represents a complete file. Otherwise, storeChunk may represent a complete file or only a part of it
           storeChunk.setEbId(f.getName());
-          Fetcher fetcher = new Fetcher(systemConf, uri, storeChunk, channelFactory, timer);
+          Fetcher fetcher = new Fetcher(executionBlockContext.getConf(), uri, storeChunk, channelFactory, timer);
           LOG.info("Create a new Fetcher with storeChunk:" + storeChunk.toString());
           runnerList.add(fetcher);
           i++;

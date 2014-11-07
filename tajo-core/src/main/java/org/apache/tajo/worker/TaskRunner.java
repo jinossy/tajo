@@ -18,144 +18,152 @@
 
 package org.apache.tajo.worker;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.service.AbstractService;
-import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.api.records.impl.pb.ContainerIdPBImpl;
-import org.apache.hadoop.yarn.util.ConverterUtils;
-import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitAttemptId;
-import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.conf.TajoConf.ConfVars;
+import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.engine.query.QueryUnitRequestImpl;
 import org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService;
 import org.apache.tajo.rpc.CallFuture;
 import org.apache.tajo.rpc.NullCallback;
-import org.jboss.netty.channel.ConnectTimeoutException;
 
-import java.util.concurrent.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.tajo.ipc.TajoWorkerProtocol.*;
 
 /**
  * The driver class for Tajo QueryUnit processing.
  */
-public class TaskRunner extends AbstractService {
+public class TaskRunner implements Runnable{
+
   /** class logger */
   private static final Log LOG = LogFactory.getLog(TaskRunner.class);
 
-  private TajoConf systemConf;
+  /**
+   * TaskRunner states
+   */
+  public enum STATE {
+    /** Constructed but not initialized */
+    NOTINITED(0, "NOTINITED"),
 
-  private volatile boolean stopped = false;
-  private Path baseDirPath;
+    /** Initialized but not started or stopped */
+    INITED(1, "INITED"),
 
-  private ContainerId containerId;
+    /** inited and not running */
+    STARTED(2, "STARTED"),
 
-  // for Fetcher
-  private ExecutorService fetchLauncher;
+    /** started and not running */
+    PENDING(3, "PENDING"),
 
-  // A thread to receive each assigned query unit and execute the query unit
-  private Thread taskLauncher;
+    /** started and not pending and not stopped  */
+    RUNNING(4, "RUNNING"),
+
+    /** stopped. No further state transitions are permitted */
+    STOPPED(5, "STOPPED");
+
+    /**
+     * An integer value for use in array lookup and JMX interfaces.
+     * Although {@link Enum#ordinal()} could do this, explicitly
+     * identify the numbers gives more stability guarantees over time.
+     */
+    private final int value;
+
+    /**
+     * A name of the state that can be used in messages
+     */
+    private final String statename;
+
+    private STATE(int value, String name) {
+      this.value = value;
+      this.statename = name;
+    }
+
+    /**
+     * Get the integer value of a state
+     * @return the numeric value of the state
+     */
+    public int getValue() {
+      return value;
+    }
+
+    /**
+     * Get the name of a state
+     * @return the state's name
+     */
+    @Override
+    public String toString() {
+      return statename;
+    }
+  }
+
+  private static final int MAX_GET_TASK_RETRY = 100;
+  private final AtomicBoolean stop = new AtomicBoolean();
+  private final TaskRunnerId taskRunnerId;
+
+  // Cluster Management
+  //private TajoWorkerProtocol.TajoWorkerProtocolService.Interface master;
 
   // Contains the object references related for TaskRunner
   private ExecutionBlockContext executionBlockContext;
 
+  private long startTime;
   private long finishTime;
 
   private TaskRunnerHistory history;
+  private STATE state;
+  private Task task = null;
 
-  public TaskRunner(ExecutionBlockContext executionBlockContext, String containerId) {
-    super(TaskRunner.class.getName());
-
-    ThreadFactoryBuilder builder = new ThreadFactoryBuilder();
-    ThreadFactory fetcherFactory = builder.setNameFormat("Fetcher executor #%d").build();
-    this.systemConf = executionBlockContext.getConf();
-    this.fetchLauncher = Executors.newFixedThreadPool(
-        systemConf.getIntVar(ConfVars.SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM), fetcherFactory);
-    try {
-      this.containerId = ConverterUtils.toContainerId(containerId);
-      this.executionBlockContext = executionBlockContext;
-      this.history = executionBlockContext.createTaskRunnerHistory(this);
-      this.history.setState(getServiceState());
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
-    }
+  public TaskRunner(ExecutionBlockContext context,
+                    TaskRunnerId taskRunnerId) {
+    setState(STATE.NOTINITED);
+    this.taskRunnerId = taskRunnerId;
+    this.executionBlockContext = context;
+    this.history = context.getTaskRunnerHistory(taskRunnerId);
+    this.history.setState(getState());
   }
 
-  // TODO this is expensive. we should change to unique id
-  public String getId() {
-    return getId(getContext().getExecutionBlockId(), containerId);
+  public STATE getState(){
+    return state;
   }
 
-  public ContainerId getContainerId(){
-    return containerId;
+  public void setState(STATE state){
+    this.state = state;
   }
 
-  public static String getId(ExecutionBlockId executionBlockId, ContainerId containerId) {
-    return executionBlockId + "," + containerId;
+  public TaskRunnerId getId() {
+    return taskRunnerId;
   }
 
-  public TaskRunnerHistory getHistory(){
-    return history;
+  public void init() {
+    setState(STATE.INITED);
+    this.history.setState(getState());
   }
 
-  public Path getTaskBaseDir(){
-    return baseDirPath;
-  }
-
-  public ExecutorService getFetchLauncher() {
-    return fetchLauncher;
-  }
-
-  @Override
-  public void init(Configuration conf) {
-    this.systemConf = (TajoConf)conf;
-
-    try {
-      // the base dir for an output dir
-      baseDirPath = getContext().createBaseDir();
-      LOG.info("TaskRunner basedir is created (" + baseDirPath +")");
-    } catch (Throwable t) {
-      t.printStackTrace();
-      LOG.error(t);
-    }
-    super.init(conf);
-    this.history.setState(getServiceState());
-  }
-
-  @Override
-  public void start() {
-    super.start();
-    history.setStartTime(getStartTime());
-    this.history.setState(getServiceState());
-    run();
-  }
-
-  @Override
   public void stop() {
-    if(isStopped()) {
+    // If this flag become true, TaskRunner will be terminated.
+    if(stop.getAndSet(true)) {
       return;
+    }
+
+    if(task != null && task.isRunning()){
+      task.abort();
     }
     this.finishTime = System.currentTimeMillis();
     this.history.setFinishTime(finishTime);
-    // If this flag become true, taskLauncher will be terminated.
-    this.stopped = true;
 
-    fetchLauncher.shutdown();
-    fetchLauncher = null;
 
-    LOG.info("Stop TaskRunner: " + getId());
-    synchronized (this) {
-      notifyAll();
-    }
-    super.stop();
-    this.history.setState(getServiceState());
+    //notify to TaskRunnerManager
+    getContext().stopTask(getId());  // TODO remove?
+    LOG.info("Stop TaskRunner: " + getContext().getExecutionBlockId());
+    setState(STATE.STOPPED);
+    this.history.setState(getState());
   }
 
+  public long getStartTime() {
+    return startTime;
+  }
   public long getFinishTime() {
     return finishTime;
   }
@@ -176,126 +184,117 @@ public class TaskRunner extends AbstractService {
     qmClientService.fatalError(null, builder.build(), NullCallback.get());
   }
 
+  /*A thread to receive each assigned query unit and execute the query unit*/
+  @Override
   public void run() {
-    LOG.info("TaskRunner startup");
+    setState(STATE.STARTED);
+    getContext().runningTasksNum.incrementAndGet();
+    startTime = System.currentTimeMillis();
+    this.history.setStartTime(startTime);
+    this.history.setState(getState());
+    LOG.info("TaskRunner state:" + getState());
+
+    CallFuture<QueryUnitRequestProto> callFuture = null;
+    QueryUnitRequestProto taskRequest = null;
+    QueryMasterProtocolService.Interface qmClientService;
+
+
     try {
+      qmClientService = getContext().getQueryMasterStub();
+      setState(STATE.PENDING);
 
-      taskLauncher = new Thread(new Runnable() {
+      int retryCount = 0;
+      while (!stop.get() && !Thread.interrupted()) {
+        if (callFuture == null) {
+          callFuture = new CallFuture<QueryUnitRequestProto>();
+          LOG.info("Request GetTask: " + getId());
+          GetTaskRequestProto request = GetTaskRequestProto.newBuilder()
+              .setExecutionBlockId(getContext().getExecutionBlockId().getProto())
+              .setContainerId(taskRunnerId.getProto())
+              .setWorkerId(getContext().getWorkerContext().getConnectionInfo().getId())
+              .build();
 
-        @Override
-        public void run() {
-          int receivedNum = 0;
-          CallFuture<QueryUnitRequestProto> callFuture = null;
-          QueryUnitRequestProto taskRequest = null;
+          qmClientService.getTask(callFuture.getController(), request, callFuture);
+        }
+        try {
+          // wait for an assigning task for 3 seconds
+          taskRequest = callFuture.get(3, TimeUnit.SECONDS);
+          break;
+        } catch (InterruptedException e) {
+          if (isStopped()) {
+            break;
+          }
+        } catch (TimeoutException te) {
+          if (isStopped()) {
+            break;
+          }
 
-          while(!stopped) {
-            QueryMasterProtocolService.Interface qmClientService;
+          if(callFuture.getController().failed()){
+            LOG.error(callFuture.getController().errorText());
+            break;
+          }
+
+          if(retryCount > MAX_GET_TASK_RETRY){
+            // yield to other taskrunner. most case, a netty stub has been disconnect
+            break;
+          }
+          // if there has been no assigning task for a given period,
+          // TaskRunner will retry to request an assigning task.
+          retryCount++;
+          LOG.info("Retry(" + retryCount + ") assigning task:" + getId() + " state:" + getState());
+          continue;
+        }
+      }
+
+
+      if (!isStopped() && taskRequest != null) {
+        // QueryMaster can send the terminal signal to TaskRunner.
+        // If TaskRunner receives the terminal signal, TaskRunner will be terminated
+        // immediately.
+        if (taskRequest.getShouldDie()) {
+          LOG.info("Received ShouldDie flag:" + getId());
+          stop();
+        } else {
+          getContext().getWorkerContext().getWorkerSystemMetrics().counter("query", "task").inc();
+
+          QueryUnitAttemptId taskAttemptId = new QueryUnitAttemptId(taskRequest.getId());
+          if (getContext().containsTask(taskAttemptId)) {
+            LOG.error("Duplicate Task Attempt: " + taskAttemptId);
+            fatalError(qmClientService, taskAttemptId, "Duplicate Task Attempt: " + taskAttemptId);
+          } else {
+            LOG.info("Initializing: " + taskAttemptId);
+            setState(STATE.RUNNING);
             try {
-              qmClientService = getContext().getQueryMasterStub();
-            } catch (ConnectTimeoutException ce) {
-              // NettyClientBase throws ConnectTimeoutException if connection was failed
-              stop();
-              getContext().stopTaskRunner(getId());
-              LOG.error("Connecting to QueryMaster was failed.", ce);
-              break;
+              task = new Task(taskRunnerId, executionBlockContext,
+                  new QueryUnitRequestImpl(taskRequest));
+              getContext().putTask(taskAttemptId, task);
+
+              task.init();
+              if (task.hasFetchPhase()) {
+                task.fetch(); // The fetch is performed in an asynchronous way.
+              }
+              // task.run() is a blocking call.
+              task.run();
             } catch (Throwable t) {
-              LOG.fatal("Unable to handle exception: " + t.getMessage(), t);
-              stop();
-              getContext().stopTaskRunner(getId());
-              break;
-            }
-
-            try {
-              if (callFuture == null) {
-                callFuture = new CallFuture<QueryUnitRequestProto>();
-                LOG.info("Request GetTask: " + getId());
-                GetTaskRequestProto request = GetTaskRequestProto.newBuilder()
-                    .setExecutionBlockId(getExecutionBlockId().getProto())
-                    .setContainerId(((ContainerIdPBImpl) containerId).getProto())
-                    .setWorkerId(getContext().getWorkerContext().getConnectionInfo().getId())
-                    .build();
-
-                qmClientService.getTask(callFuture.getController(), request, callFuture);
-              }
-              try {
-                // wait for an assigning task for 3 seconds
-                taskRequest = callFuture.get(3, TimeUnit.SECONDS);
-              } catch (InterruptedException e) {
-                if(stopped) {
-                  break;
-                }
-              } catch (TimeoutException te) {
-                if(stopped) {
-                  break;
-                }
-
-                if(callFuture.getController().failed()){
-                  LOG.error(callFuture.getController().errorText());
-                  break;
-                }
-                // if there has been no assigning task for a given period,
-                // TaskRunner will retry to request an assigning task.
-                if (LOG.isDebugEnabled()) {
-                  LOG.info("Retry assigning task:" + getId());
-                }
-                continue;
-              }
-
-              if (taskRequest != null) {
-                // QueryMaster can send the terminal signal to TaskRunner.
-                // If TaskRunner receives the terminal signal, TaskRunner will be terminated
-                // immediately.
-                if (taskRequest.getShouldDie()) {
-                  LOG.info("Received ShouldDie flag:" + getId());
-                  stop();
-                  //notify to TaskRunnerManager
-                  getContext().stopTaskRunner(getId());
-                } else {
-                  getContext().getWorkerContext().getWorkerSystemMetrics().counter("query", "task").inc();
-                  LOG.info("Accumulated Received Task: " + (++receivedNum));
-
-                  QueryUnitAttemptId taskAttemptId = new QueryUnitAttemptId(taskRequest.getId());
-                  if (getContext().getTasks().containsKey(taskAttemptId)) {
-                    LOG.error("Duplicate Task Attempt: " + taskAttemptId);
-                    fatalError(qmClientService, taskAttemptId, "Duplicate Task Attempt: " + taskAttemptId);
-                    continue;
-                  }
-
-                  LOG.info("Initializing: " + taskAttemptId);
-                  Task task;
-                  try {
-                    task = new Task(getId(), getTaskBaseDir(), taskAttemptId, executionBlockContext,
-                        new QueryUnitRequestImpl(taskRequest));
-                    getContext().getTasks().put(taskAttemptId, task);
-
-                    task.init();
-                    if (task.hasFetchPhase()) {
-                      task.fetch(); // The fetch is performed in an asynchronous way.
-                    }
-                    // task.run() is a blocking call.
-                    task.run();
-                  } catch (Throwable t) {
-                    LOG.error(t.getMessage(), t);
-                    fatalError(qmClientService, taskAttemptId, t.getMessage());
-                  } finally {
-                    callFuture = null;
-                    taskRequest = null;
-                  }
-                }
+              LOG.error(t.getMessage(), t);
+              fatalError(qmClientService, taskAttemptId, t.getMessage());
+            } finally {
+              if (task != null && task.getStatus() != TaskAttemptState.TA_SUCCEEDED) {
+                task.abort();
               } else {
-                stop();
-                //notify to TaskRunnerManager
-                getContext().stopTaskRunner(getId());
+                LOG.info("complete task runner:" + getId());
               }
-            } catch (Throwable t) {
-              LOG.fatal(t.getMessage(), t);
             }
           }
         }
-      });
-      taskLauncher.start();
+      }
+
     } catch (Throwable t) {
-      LOG.fatal("Unhandled exception. Starting shutdown.", t);
+      LOG.fatal("Unhandled exception. TaskRunner shutting down.", t);
+    } finally {
+      stop();
+      getContext().runningTasksNum.decrementAndGet();
+      getContext().releaseTaskRunnerId(taskRunnerId);
     }
   }
 
@@ -303,10 +302,10 @@ public class TaskRunner extends AbstractService {
    * @return true if a stop has been requested.
    */
   public boolean isStopped() {
-    return this.stopped;
+    return this.stop.get();
   }
 
-  public ExecutionBlockId getExecutionBlockId() {
-    return getContext().getExecutionBlockId();
+  public TaskRunnerHistory getHistory() {
+    return history;
   }
 }

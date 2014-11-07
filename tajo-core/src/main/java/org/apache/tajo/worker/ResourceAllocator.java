@@ -18,12 +18,12 @@
 
 package org.apache.tajo.worker;
 
-import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.proto.YarnProtos;
+import org.apache.tajo.ExecutionBlockId;
+import org.apache.tajo.QueryUnitAttemptId;
 
 public interface ResourceAllocator {
-  public void allocateTaskWorker();
-  public ContainerId makeContainerId(YarnProtos.ContainerIdProto containerId);
+  public void releaseWorkerResource(ExecutionBlockId executionBlockId, int workerId, int resources);
+  public void killTaskAttempt(int workerId, QueryUnitAttemptId taskAttemptId);
   public int calculateNumRequestContainers(TajoWorker.WorkerContext workerContext,
-                                           int numTasks, int memoryMBPerTask);
+                                           int numTasks, int memoryMBPerTask, boolean isLeaf);
 }

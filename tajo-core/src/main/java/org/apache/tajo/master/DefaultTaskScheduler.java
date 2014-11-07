@@ -26,14 +26,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.util.RackResolver;
-import org.apache.tajo.ExecutionBlockId;
-import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.engine.planner.global.ExecutionBlock;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.query.QueryUnitRequest;
 import org.apache.tajo.engine.query.QueryUnitRequestImpl;
-import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.QueryUnitAttemptScheduleEvent.QueryUnitAttemptScheduleContext;
@@ -112,22 +109,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     super.start();
   }
 
-  private static final QueryUnitAttemptId NULL_ATTEMPT_ID;
-  public static final TajoWorkerProtocol.QueryUnitRequestProto stopTaskRunnerReq;
-  static {
-    ExecutionBlockId nullSubQuery = QueryIdFactory.newExecutionBlockId(QueryIdFactory.NULL_QUERY_ID, 0);
-    NULL_ATTEMPT_ID = QueryIdFactory.newQueryUnitAttemptId(QueryIdFactory.newQueryUnitId(nullSubQuery, 0), 0);
-
-    TajoWorkerProtocol.QueryUnitRequestProto.Builder builder =
-        TajoWorkerProtocol.QueryUnitRequestProto.newBuilder();
-    builder.setId(NULL_ATTEMPT_ID.getProto());
-    builder.setShouldDie(true);
-    builder.setOutputTable("");
-    builder.setSerializedData("");
-    builder.setClusteredOutput(false);
-    stopTaskRunnerReq = builder.build();
-  }
-
   @Override
   public void stop() {
     if(stopEventHandling.getAndSet(true)){
@@ -143,10 +124,17 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     // Return all of request callbacks instantly.
     for (TaskRequestEvent req : taskRequests.taskRequestQueue) {
       req.getCallback().run(stopTaskRunnerReq);
+      context.getMasterContext().getResourceAllocator()
+          .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
     }
 
     LOG.info("Task Scheduler stopped");
     super.stop();
+  }
+
+  @Override
+  public Set<String> getLeafTaskHosts(){
+    return hosts;
   }
 
   private FileFragment[] fragmentsForNonLeafTask;
@@ -168,9 +156,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           taskRequestEvents.clear();
         }
       }
-    }
 
-    if (taskRequests.size() > 0) {
       if (scheduledRequests.nonLeafTaskNum() > 0) {
         LOG.debug("Try to schedule tasks with taskRequestEvents: " +
             taskRequests.size() + ", NonLeafTask Schedule Request: " +
@@ -178,6 +164,17 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         taskRequests.getTaskRequests(taskRequestEvents,
             scheduledRequests.nonLeafTaskNum());
         scheduledRequests.assignToNonLeafTasks(taskRequestEvents);
+        taskRequestEvents.clear();
+      }
+
+      if(scheduledRequests.nonLeafTaskNum() + scheduledRequests.leafTaskNum() == 0) {
+        // Return all of request callbacks instantly.
+        taskRequests.taskRequestQueue.drainTo(taskRequestEvents);
+        for (TaskRequestEvent req : taskRequestEvents) {
+          req.getCallback().run(stopTaskRunnerReq);
+          context.getMasterContext().getResourceAllocator()
+              .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
+        }
         taskRequestEvents.clear();
       }
     }
@@ -230,6 +227,10 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         subQuery.getEventHandler().handle(new TaskEvent(task.getId(), TaskEventType.T_SCHEDULE));
       } else if (event instanceof QueryUnitAttemptScheduleEvent) {
         QueryUnitAttemptScheduleEvent castEvent = (QueryUnitAttemptScheduleEvent) event;
+        if(castEvent.getQueryUnitAttempt().getQueryUnit().getRetryCount() > 0 ){
+          scheduledObjectNum++;
+        }
+
         if (context.isLeafQuery()) {
           scheduledRequests.addLeafTask(castEvent);
         } else {
@@ -279,6 +280,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
 
       if(stopEventHandling.get()) {
         event.getCallback().run(stopTaskRunnerReq);
+        context.getMasterContext().getResourceAllocator()
+            .releaseWorkerResource(event.getExecutionBlockId(), event.getWorkerId(), 1);
         return;
       }
       int qSize = taskRequestQueue.size();
@@ -750,15 +753,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           taskRequest = remoteTaskRequests.pollFirst();
         }
 
-        // checking if this container is still alive.
-        // If not, ignore the task request and stop the task runner
-        ContainerProxy container = context.getMasterContext().getResourceAllocator()
-            .getContainer(taskRequest.getContainerId());
-        if(container == null) {
-          taskRequest.getCallback().run(stopTaskRunnerReq);
-          continue;
-        }
-
         // getting the hostname of requested node
         WorkerConnectionInfo connectionInfo =
             context.getMasterContext().getResourceAllocator().getWorkerConnectionInfo(taskRequest.getWorkerId());
@@ -797,12 +791,14 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
               hostVolumeMapping.increaseConcurrency(containerId, HostVolumeMapping.REMOTE);
             }
             // this part is remote concurrency management of a tail tasks
-            int tailLimit = Math.max(remainingScheduledObjectNum() / (leafTaskHostMapping.size() * 2), 1);
+            int tailLimit = Math.max(remainingScheduledObjectNum() / (leafTaskHostMapping.size()), 2);
 
             if(hostVolumeMapping.getRemoteConcurrency() > tailLimit){
               //release container
               hostVolumeMapping.decreaseConcurrency(containerId);
               taskRequest.getCallback().run(stopTaskRunnerReq);
+              context.getMasterContext().getResourceAllocator()
+                  .releaseWorkerResource(taskRequest.getExecutionBlockId(), taskRequest.getWorkerId(), 1);
               continue;
             }
           }
@@ -843,7 +839,9 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           }
 
           context.getMasterContext().getEventHandler().handle(new TaskAttemptAssignedEvent(attemptId,
-              taskRequest.getContainerId(), connectionInfo));
+              taskRequest.getWorkerId(),
+              taskRequest.getContainerId(),
+              connectionInfo));
           assignedRequest.add(attemptId);
 
           scheduledObjectNum--;
@@ -851,6 +849,14 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         } else {
           throw new RuntimeException("Illegal State!!!!!!!!!!!!!!!!!!!!!");
         }
+      }
+
+      // Return additional requests instantly.
+      remoteTaskRequests.addAll(taskRequests);
+      for (TaskRequestEvent req : remoteTaskRequests) {
+        req.getCallback().run(stopTaskRunnerReq);
+        context.getMasterContext().getResourceAllocator()
+            .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
       }
     }
 
@@ -907,13 +913,23 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
             }
           }
 
-          WorkerConnectionInfo connectionInfo = context.getMasterContext().getResourceAllocator().
-              getWorkerConnectionInfo(taskRequest.getWorkerId());
+          WorkerConnectionInfo connectionInfo = context.getMasterContext().getResourceAllocator().getWorkerConnectionInfo(
+              taskRequest.getWorkerId());
           context.getMasterContext().getEventHandler().handle(new TaskAttemptAssignedEvent(attemptId,
-              taskRequest.getContainerId(), connectionInfo));
+              taskRequest.getWorkerId(),
+              taskRequest.getContainerId(),
+              connectionInfo));
           taskRequest.getCallback().run(taskAssign.getProto());
           totalAssigned++;
           scheduledObjectNum--;
+        } else {
+
+          // Return additional requests instantly.
+          for (TaskRequestEvent req : taskRequests) {
+            req.getCallback().run(stopTaskRunnerReq);
+            context.getMasterContext().getResourceAllocator()
+                .releaseWorkerResource(req.getExecutionBlockId(), req.getWorkerId(), 1);
+          }
         }
       }
     }

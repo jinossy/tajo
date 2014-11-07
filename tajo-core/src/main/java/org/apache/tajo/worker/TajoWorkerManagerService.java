@@ -116,11 +116,13 @@ public class TajoWorkerManagerService extends CompositeService
     workerContext.getWorkerSystemMetrics().counter("query", "executedExecutionBlocksNum").inc();
 
     try {
+      //params[6] = request.getQueryOutputPath();
+      ExecutionBlockId executionBlockId = new ExecutionBlockId(request.getExecutionBlockId());
       workerContext.getTaskRunnerManager().getEventHandler().handle(new TaskRunnerStartEvent(
           new WorkerConnectionInfo(request.getQueryMaster())
           , new ExecutionBlockId(request.getExecutionBlockId())
-          , request.getContainerId()
-          , new QueryContext(workerContext.getConf(), request.getQueryContext()),
+          , request.getTasks(),
+          new QueryContext(workerContext.getConf(), request.getQueryContext()),
           request.getPlanJson()
       ));
       done.run(TajoWorker.TRUE_PROTO);

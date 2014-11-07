@@ -32,7 +32,9 @@ import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.QueryUnitId;
+import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.ipc.TajoWorkerProtocol.FailureIntermediateProto;
 import org.apache.tajo.ipc.TajoWorkerProtocol.IntermediateEntryProto;
 import org.apache.tajo.master.FragmentPair;
@@ -53,7 +55,6 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import static org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
 import static org.apache.tajo.ipc.TajoWorkerProtocol.ShuffleFileOutput;
 
 public class QueryUnit implements EventHandler<TaskEvent> {
@@ -67,7 +68,7 @@ public class QueryUnit implements EventHandler<TaskEvent> {
 	private LogicalNode plan = null;
 	private List<ScanNode> scan;
 	
-	private Map<String, Set<FragmentProto>> fragMap;
+	private Map<String, Set<CatalogProtos.FragmentProto>> fragMap;
 	private Map<String, Set<FetchImpl>> fetchMap;
 
   private int totalFragmentNum;
@@ -176,10 +177,13 @@ public class QueryUnit implements EventHandler<TaskEvent> {
   private final Lock readLock;
   private final Lock writeLock;
   private QueryUnitAttemptScheduleContext scheduleContext;
+  private QueryMasterTask.QueryMasterTaskContext queryMasterTaskContext;
 
-	public QueryUnit(Configuration conf, QueryUnitAttemptScheduleContext scheduleContext,
-                   QueryUnitId id, boolean isLeafTask, EventHandler eventHandler) {
+	public QueryUnit(TajoConf conf, QueryMasterTask.QueryMasterTaskContext queryMasterTaskContext,
+                   QueryUnitAttemptScheduleContext scheduleContext, QueryUnitId id,
+                   boolean isLeafTask, EventHandler eventHandler) {
     this.systemConf = conf;
+    this.queryMasterTaskContext = queryMasterTaskContext;
 		this.taskId = id;
     this.eventHandler = eventHandler;
     this.isLeafTask = isLeafTask;
@@ -200,6 +204,10 @@ public class QueryUnit implements EventHandler<TaskEvent> {
     stateMachine = stateMachineFactory.make(this);
     totalFragmentNum = 0;
 	}
+
+  public QueryMasterTask.QueryMasterTaskContext getQueryMasterTaskContext(){
+    return queryMasterTaskContext;
+  }
 
   public boolean isLeafTask() {
     return this.isLeafTask;
@@ -246,11 +254,11 @@ public class QueryUnit implements EventHandler<TaskEvent> {
   }
 
   public void addFragment(FileFragment fragment, boolean useDataLocation) {
-    Set<FragmentProto> fragmentProtos;
+    Set<CatalogProtos.FragmentProto> fragmentProtos;
     if (fragMap.containsKey(fragment.getTableName())) {
       fragmentProtos = fragMap.get(fragment.getTableName());
     } else {
-      fragmentProtos = new HashSet<FragmentProto>();
+      fragmentProtos = new HashSet<CatalogProtos.FragmentProto>();
       fragMap.put(fragment.getTableName(), fragmentProtos);
     }
     fragmentProtos.add(fragment.getProto());
@@ -299,9 +307,9 @@ public class QueryUnit implements EventHandler<TaskEvent> {
 	  this.fetchMap.putAll(fetches);
 	}
 
-  public Collection<FragmentProto> getAllFragments() {
-    Set<FragmentProto> fragmentProtos = new HashSet<FragmentProto>();
-    for (Set<FragmentProto> eachFragmentSet : fragMap.values()) {
+  public Collection<CatalogProtos.FragmentProto> getAllFragments() {
+    Set<CatalogProtos.FragmentProto> fragmentProtos = new HashSet<CatalogProtos.FragmentProto>();
+    for (Set<CatalogProtos.FragmentProto> eachFragmentSet : fragMap.values()) {
       fragmentProtos.addAll(eachFragmentSet);
     }
     return fragmentProtos;
@@ -339,9 +347,9 @@ public class QueryUnit implements EventHandler<TaskEvent> {
 	public String toString() {
     StringBuilder builder = new StringBuilder();
     builder.append(plan.getType() + " \n");
-		for (Entry<String, Set<FragmentProto>> e : fragMap.entrySet()) {
+		for (Entry<String, Set<CatalogProtos.FragmentProto>> e : fragMap.entrySet()) {
 		  builder.append(e.getKey()).append(" : ");
-      for (FragmentProto fragment : e.getValue()) {
+      for (CatalogProtos.FragmentProto fragment : e.getValue()) {
         builder.append(fragment).append(", ");
       }
 		}

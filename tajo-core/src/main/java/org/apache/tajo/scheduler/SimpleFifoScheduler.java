@@ -22,23 +22,18 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.master.querymaster.QueryInProgress;
-import org.apache.tajo.master.querymaster.QueryJobManager;
 
-import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedList;
 
-public class SimpleFifoScheduler implements Scheduler {
+public class SimpleFifoScheduler extends AbstractScheduler {
   private static final Log LOG = LogFactory.getLog(SimpleFifoScheduler.class.getName());
   private LinkedList<QuerySchedulingInfo> pool = new LinkedList<QuerySchedulingInfo>();
-  private final Thread queryProcessor;
-  private static AtomicBoolean stopped = new AtomicBoolean();
-  private QueryJobManager manager;
   private Comparator<QuerySchedulingInfo> COMPARATOR = new SchedulingAlgorithms.FifoComparator();
 
-  public SimpleFifoScheduler(QueryJobManager manager) {
-    this.manager = manager;
-    this.queryProcessor = new Thread(new QueryProcessor());
-    this.queryProcessor.setName("Query Processor");
+  public SimpleFifoScheduler() {
   }
 
   @Override
@@ -48,28 +43,23 @@ public class SimpleFifoScheduler implements Scheduler {
 
   @Override
   public String getName() {
-    return manager.getName();
+    return queryJobManager.getName();
   }
 
   @Override
-  public boolean addQuery(QueryInProgress queryInProgress) {
-    int qSize = pool.size();
-    if (qSize != 0 && qSize % 100 == 0) {
-      LOG.info("Size of Fifo queue is " + qSize);
+  public int getRunningQueries(String queueName) {
+    return queryJobManager.getRunningQueries().size();
+  }
+
+  @Override
+  public void notifyQueryStop(QueryId queryId) {
+    synchronized (pool) {
+      pool.remove(getQueryByQueryId(queryId));
     }
-
-    QuerySchedulingInfo querySchedulingInfo = new QuerySchedulingInfo(queryInProgress.getQueryId(), 1, queryInProgress.getStartTime());
-    boolean result = pool.add(querySchedulingInfo);
-    if (getRunningQueries().size() == 0) wakeupProcessor();
-    return result;
+    wakeupProcessor();
   }
 
-  @Override
-  public boolean removeQuery(QueryId queryId) {
-    return pool.remove(getQueryByQueryId(queryId));
-  }
-
-  public QuerySchedulingInfo getQueryByQueryId(QueryId queryId) {
+  private QuerySchedulingInfo getQueryByQueryId(QueryId queryId) {
     for (QuerySchedulingInfo querySchedulingInfo : pool) {
       if (querySchedulingInfo.getQueryId().equals(queryId)) {
         return querySchedulingInfo;
@@ -78,70 +68,89 @@ public class SimpleFifoScheduler implements Scheduler {
     return null;
   }
 
+  protected void addQueryToQueue(QuerySchedulingInfo querySchedulingInfo) throws Exception {
+    synchronized (pool) {
+      int qSize = pool.size();
+      if (qSize != 0 && qSize % 100 == 0) {
+        LOG.info("Size of Fifo queue is " + qSize);
+      }
+
+      boolean result = pool.add(querySchedulingInfo);
+      if (!result) {
+        throw new Exception("Can't add to queue");
+      }
+    }
+  }
+
   @Override
-  public List<QueryInProgress> getRunningQueries() {
-    return new ArrayList<QueryInProgress>(manager.getRunningQueries());
-  }
-
   public void start() {
-    queryProcessor.start();
+    super.start();
   }
 
+  @Override
   public void stop() {
-    if (stopped.getAndSet(true)) {
-      return;
-    }
+    super.stop();
     pool.clear();
-    synchronized (queryProcessor) {
-      queryProcessor.interrupt();
-    }
   }
 
-  private QuerySchedulingInfo pollScheduledQuery() {
-    if (pool.size() > 1) {
-      Collections.sort(pool, COMPARATOR);
-    }
-    return pool.poll();
-  }
-
-  private void wakeupProcessor() {
-    synchronized (queryProcessor) {
-      queryProcessor.notifyAll();
-    }
-  }
-
-  private final class QueryProcessor implements Runnable {
-    @Override
-    public void run() {
-
-      QuerySchedulingInfo query;
-
-      while (!stopped.get() && !Thread.currentThread().isInterrupted()) {
-        query = null;
-        if (getRunningQueries().size() == 0) {
-          query = pollScheduledQuery();
+  @Override
+  protected QuerySchedulingInfo[] getScheduledQueries() {
+    synchronized (pool) {
+      if (queryJobManager.getRunningQueries().size() == 0) {
+        if (pool.size() > 1) {
+          Collections.sort(pool, COMPARATOR);
         }
+        QuerySchedulingInfo querySchedulingInfo = pool.poll();
 
-        if (query != null) {
-          try {
-            manager.startQueryJob(query.getQueryId());
-          } catch (Throwable t) {
-            LOG.fatal("Exception during query startup:", t);
-            manager.stopQuery(query.getQueryId());
-          }
+        if (querySchedulingInfo != null) {
+          return new QuerySchedulingInfo[]{querySchedulingInfo};
+        } else {
+          return null;
         }
+      } else {
+        return null;
+      }
+    }
+  }
 
-        synchronized (queryProcessor) {
-          try {
-            queryProcessor.wait(500);
-          } catch (InterruptedException e) {
-            if (stopped.get()) {
-              break;
-            }
-            LOG.warn("Exception during shutdown: ", e);
-          }
+  @Override
+  public String getStatusHtml() {
+    StringBuilder sb = new StringBuilder();
+
+    Collection<QueryInProgress> runningQueries = queryJobManager.getRunningQueries();
+
+    String runningQueryList = "";
+    String prefix = "";
+
+    if (runningQueries != null) {
+      for (QueryInProgress eachQuery: runningQueries) {
+        runningQueryList += prefix + eachQuery.getQueryId();
+        prefix = "<br/>";
+      }
+    }
+
+    String waitingQueryList = "";
+    prefix = "";
+    synchronized (pool) {
+      if (runningQueries != null) {
+        for (QuerySchedulingInfo eachQuery : pool) {
+          waitingQueryList += prefix + eachQuery.getQueryId() +
+              "<input id=\"btnSubmit\" type=\"submit\" value=\"Remove\" onClick=\"javascript:killQuery('" + eachQuery.getQueryId() + "');\">";
+          prefix = "<br/>";
         }
       }
     }
+
+    sb.append("<table border=\"1\" width=\"100%\" class=\"border_table\">");
+    sb.append("<tr><th width='200'>Queue</th><th width='100'>Min Slot</th><th width='100'>Max Slot</th><th>Running Query</th><th>Waiting Queries</th></tr>");
+    sb.append("<tr>");
+    sb.append("<td>").append(DEFAULT_QUEUE_NAME).append("</td>");
+    sb.append("<td>-</td>");
+    sb.append("<td>-</td>");
+    sb.append("<td>").append(runningQueryList).append("</td>");
+    sb.append("<td>").append(waitingQueryList).append("</td>");
+    sb.append("</tr>");
+    sb.append("</table>");
+    return sb.toString();
   }
 }

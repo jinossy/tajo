@@ -21,13 +21,12 @@ package org.apache.tajo.master.rm;
 import com.google.common.collect.Maps;
 import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.tajo.QueryId;
+import org.apache.tajo.ipc.TajoMasterProtocol;
 
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-
-import static org.apache.hadoop.yarn.proto.YarnProtos.ContainerIdProto;
 
 /**
  * It's a worker resource manager context. It contains all context data about TajoWorkerResourceManager.
@@ -43,13 +42,11 @@ public class TajoRMContext {
   private final ConcurrentMap<Integer, Worker> inactiveWorkers = Maps.newConcurrentMap();
 
   /** map between queryIds and query master ContainerId */
-  private final ConcurrentMap<QueryId, ContainerIdProto> qmContainerMap = Maps.newConcurrentMap();
+  private final ConcurrentMap<QueryId, TajoMasterProtocol.AllocatedWorkerResourceProto> qmContainerMap = Maps.newConcurrentMap();
 
   private final Set<Integer> liveQueryMasterWorkerResources =
       Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
 
-  private final Set<QueryId> stoppedQueryIds =
-      Collections.newSetFromMap(new ConcurrentHashMap<QueryId, Boolean>());
 
   public TajoRMContext(Dispatcher dispatcher) {
     this.rmDispatcher = dispatcher;
@@ -77,15 +74,11 @@ public class TajoRMContext {
    *
    * @return The Map for query master containers
    */
-  public ConcurrentMap<QueryId, ContainerIdProto> getQueryMasterContainer() {
+  public ConcurrentMap<QueryId, TajoMasterProtocol.AllocatedWorkerResourceProto> getQueryMasterResource() {
     return qmContainerMap;
   }
 
   public Set<Integer> getQueryMasterWorker() {
     return liveQueryMasterWorkerResources;
-  }
-
-  public Set<QueryId> getStoppedQueryIds() {
-    return stoppedQueryIds;
   }
 }

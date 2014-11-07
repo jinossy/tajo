@@ -19,26 +19,37 @@
 package org.apache.tajo.master.event;
 
 import org.apache.hadoop.yarn.event.AbstractEvent;
-import org.apache.tajo.QueryUnitAttemptId;
+import org.apache.tajo.ExecutionBlockId;
 
-/**
- * This event is sent to a running TaskAttempt on a worker.
- */
-public class LocalTaskEvent extends AbstractEvent<LocalTaskEventType> {
-  private final QueryUnitAttemptId taskAttemptId;
-  private final int workerId;
+public class WorkerResourceRequestEvent extends AbstractEvent<WorkerResourceRequestEvent.EventType> {
 
-  public LocalTaskEvent(QueryUnitAttemptId taskAttemptId, int workerId, LocalTaskEventType eventType) {
-    super(eventType);
-    this.taskAttemptId = taskAttemptId;
-    this.workerId = workerId;
+  public enum EventType {
+    CONTAINER_RELEASE
   }
 
-  public QueryUnitAttemptId getTaskAttemptId() {
-    return taskAttemptId;
+  private final int workerId;
+  private final ExecutionBlockId executionBlockId;
+  private final int resourceSize;
+
+  public WorkerResourceRequestEvent(WorkerResourceRequestEvent.EventType eventType,
+                                    ExecutionBlockId executionBlockId,
+                                    int workerId,
+                                    int resourceSize) {
+    super(eventType);
+    this.workerId = workerId;
+    this.executionBlockId = executionBlockId;
+    this.resourceSize = resourceSize;
   }
 
   public int getWorkerId() {
     return workerId;
+  }
+
+  public ExecutionBlockId getExecutionBlockId() {
+    return executionBlockId;
+  }
+
+  public int getResourceSize() {
+    return resourceSize;
   }
 }

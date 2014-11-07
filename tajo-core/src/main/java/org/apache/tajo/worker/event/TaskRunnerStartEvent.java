@@ -25,28 +25,28 @@ import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 public class TaskRunnerStartEvent extends TaskRunnerEvent {
 
   private final QueryContext queryContext;
-  private final WorkerConnectionInfo queryMaster;
-  private final String containerId;
   private final String plan;
+  private final int tasks;
+  private final WorkerConnectionInfo queryMaster;
 
   public TaskRunnerStartEvent(WorkerConnectionInfo queryMaster,
                               ExecutionBlockId executionBlockId,
-                              String containerId,
+                              int tasks,
                               QueryContext context,
                               String plan) {
     super(EventType.START, executionBlockId);
     this.queryMaster = queryMaster;
-    this.containerId = containerId;
+    this.tasks = tasks;
     this.queryContext = context;
     this.plan = plan;
   }
 
-  public WorkerConnectionInfo getQueryMaster() {
+  public WorkerConnectionInfo getQueryMaster(){
     return queryMaster;
   }
 
-  public String getContainerId() {
-    return containerId;
+  public int getTasks() {
+    return tasks;
   }
 
   public QueryContext getQueryContext() {

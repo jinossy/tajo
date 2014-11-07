@@ -20,9 +20,6 @@ package org.apache.tajo.worker;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.Maps;
-import org.apache.hadoop.service.Service;
-import org.apache.hadoop.yarn.api.records.ContainerId;
-import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.common.ProtoObject;
@@ -38,22 +35,22 @@ import static org.apache.tajo.ipc.TajoWorkerProtocol.TaskRunnerHistoryProto;
  */
 public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
 
-  private Service.STATE state;
-  private ContainerId containerId;
+  private TaskRunner.STATE state;
+  private TaskRunnerId taskRunnerId;
   private long startTime;
   private long finishTime;
   private ExecutionBlockId executionBlockId;
   private Map<QueryUnitAttemptId, TaskHistory> taskHistoryMap = null;
 
-  public TaskRunnerHistory(ContainerId containerId, ExecutionBlockId executionBlockId) {
+  public TaskRunnerHistory(TaskRunnerId taskRunnerId, ExecutionBlockId executionBlockId) {
     init();
-    this.containerId = containerId;
+    this.taskRunnerId = taskRunnerId;
     this.executionBlockId = executionBlockId;
   }
 
   public TaskRunnerHistory(TaskRunnerHistoryProto proto) {
-    this.state = Service.STATE.valueOf(proto.getState());
-    this.containerId = ConverterUtils.toContainerId(proto.getContainerId());
+    this.state = TaskRunner.STATE.valueOf(proto.getState());
+    this.taskRunnerId = new TaskRunnerId(proto.getTaskRunnerId());
     this.startTime = proto.getStartTime();
     this.finishTime = proto.getFinishTime();
     this.executionBlockId = new ExecutionBlockId(proto.getExecutionBlockId());
@@ -74,7 +71,7 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(containerId, executionBlockId, state, startTime,
+    return Objects.hashCode(taskRunnerId, executionBlockId, state, startTime,
         finishTime, taskHistoryMap.size());
   }
 
@@ -82,7 +79,12 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
   public boolean equals(Object o) {
     if (o instanceof TaskRunnerHistory) {
       TaskRunnerHistory other = (TaskRunnerHistory) o;
-      return getProto().equals(other.getProto());
+      boolean result = getProto().equals(other.getProto());
+      if (!result) {
+        System.out.println("Origin TaskRunnerHistory:" + getProto().toString());
+        System.out.println("Target TaskRunnerHistory:" + other.getProto().toString());
+      }
+      return result;
     }
     return false;
   }
@@ -90,7 +92,7 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
   @Override
   public TaskRunnerHistoryProto getProto() {
     TaskRunnerHistoryProto.Builder builder = TaskRunnerHistoryProto.newBuilder();
-    builder.setContainerId(containerId.toString());
+    builder.setTaskRunnerId(taskRunnerId.getProto());
     builder.setState(state.toString());
     builder.setExecutionBlockId(executionBlockId.getProto());
     builder.setStartTime(startTime);
@@ -121,20 +123,20 @@ public class TaskRunnerHistory implements ProtoObject<TaskRunnerHistoryProto> {
     return executionBlockId;
   }
 
-  public Service.STATE getState() {
+  public TaskRunner.STATE getState() {
     return state;
   }
 
-  public void setState(Service.STATE state) {
+  public void setState(TaskRunner.STATE state) {
     this.state = state;
   }
 
-  public ContainerId getContainerId() {
-    return containerId;
+  public TaskRunnerId getTaskRunnerId() {
+    return taskRunnerId;
   }
 
-  public void setContainerId(ContainerId containerId) {
-    this.containerId = containerId;
+  public void setTaskRunnerId(TaskRunnerId taskRunnerId) {
+    this.taskRunnerId = taskRunnerId;
   }
 
   public TaskHistory getTaskHistory(QueryUnitAttemptId queryUnitAttemptId) {

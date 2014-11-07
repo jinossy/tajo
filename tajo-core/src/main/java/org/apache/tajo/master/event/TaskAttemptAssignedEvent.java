@@ -23,12 +23,14 @@ import org.apache.tajo.QueryUnitAttemptId;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 
 public class TaskAttemptAssignedEvent extends TaskAttemptEvent {
+  private final int workerId;
   private final ContainerId cId;
   private final WorkerConnectionInfo workerConnectionInfo;
 
-  public TaskAttemptAssignedEvent(QueryUnitAttemptId id, ContainerId cId,
+  public TaskAttemptAssignedEvent(QueryUnitAttemptId id, int workerId, ContainerId cId,
                                   WorkerConnectionInfo connectionInfo) {
     super(id, TaskAttemptEventType.TA_ASSIGNED);
+    this.workerId = workerId;
     this.cId = cId;
     this.workerConnectionInfo = connectionInfo;
   }
@@ -39,5 +41,9 @@ public class TaskAttemptAssignedEvent extends TaskAttemptEvent {
 
   public WorkerConnectionInfo getWorkerConnectionInfo(){
     return workerConnectionInfo;
+  }
+  
+  public int getWorkerId() {
+    return workerId;
   }
 }

@@ -23,7 +23,6 @@ import com.google.protobuf.RpcController;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.service.AbstractService;
-import org.apache.hadoop.yarn.proto.YarnProtos;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.TajoIdProtos;
 import org.apache.tajo.conf.TajoConf;
@@ -39,7 +38,6 @@ import org.apache.tajo.util.NetUtils;
 
 import java.net.InetSocketAddress;
 import java.util.Collection;
-import java.util.List;
 
 public class TajoMasterService extends AbstractService {
   private final static Log LOG = LogFactory.getLog(TajoMasterService.class);
@@ -119,19 +117,18 @@ public class TajoMasterService extends AbstractService {
     @Override
     public void allocateWorkerResources(
         RpcController controller,
-        TajoMasterProtocol.WorkerResourceAllocationRequest request,
+        TajoMasterProtocol.WorkerResourcesRequestProto request,
         RpcCallback<TajoMasterProtocol.WorkerResourceAllocationResponse> done) {
       context.getResourceManager().allocateWorkerResources(request, done);
     }
 
     @Override
     public void releaseWorkerResource(RpcController controller,
-                                           TajoMasterProtocol.WorkerResourceReleaseRequest request,
+                                           TajoMasterProtocol.WorkerResourceReleaseProto request,
                                            RpcCallback<PrimitiveProtos.BoolProto> done) {
-      List<YarnProtos.ContainerIdProto> containerIds = request.getContainerIdsList();
 
-      for(YarnProtos.ContainerIdProto eachContainer: containerIds) {
-        context.getResourceManager().releaseWorkerResource(eachContainer);
+      for(TajoMasterProtocol.AllocatedWorkerResourceProto resource: request.getResourcesList()) {
+        context.getResourceManager().releaseWorkerResource(resource);
       }
       done.run(BOOL_TRUE);
     }
@@ -145,10 +142,10 @@ public class TajoMasterService extends AbstractService {
 
     @Override
     public void getAllWorkerResource(RpcController controller, PrimitiveProtos.NullProto request,
-                                     RpcCallback<TajoMasterProtocol.WorkerResourcesRequest> done) {
+                                     RpcCallback<TajoMasterProtocol.WorkerResourcesProto> done) {
 
-      TajoMasterProtocol.WorkerResourcesRequest.Builder builder =
-          TajoMasterProtocol.WorkerResourcesRequest.newBuilder();
+      TajoMasterProtocol.WorkerResourcesProto.Builder builder =
+          TajoMasterProtocol.WorkerResourcesProto.newBuilder();
       Collection<Worker> workers = context.getResourceManager().getWorkers().values();
 
       for(Worker worker: workers) {
@@ -164,6 +161,14 @@ public class TajoMasterService extends AbstractService {
         builder.addWorkerResources(workerResource);
       }
       done.run(builder.build());
+    }
+
+    @Override
+    public void getRunningQueries(RpcController controller, PrimitiveProtos.StringProto request,
+                                     RpcCallback<PrimitiveProtos.IntProto> done) {
+
+      int runningSize = context.getQueryJobManager().getScheduler().getRunningQueries(request.getValue());
+      done.run(PrimitiveProtos.IntProto.newBuilder().setValue(runningSize).build());
     }
   }
 }

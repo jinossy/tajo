@@ -50,7 +50,6 @@ import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.GlobalEngine;
 import org.apache.tajo.master.TajoAsyncDispatcher;
-import org.apache.tajo.master.TajoContainerProxy;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.rm.TajoWorkerResourceManager;
 import org.apache.tajo.master.session.Session;
@@ -185,6 +184,8 @@ public class QueryMasterTask extends CompositeService {
       return;
     }
 
+    super.stop();
+
     LOG.info("Stopping QueryMasterTask:" + queryId);
 
     try {
@@ -309,10 +310,7 @@ public class QueryMasterTask extends CompositeService {
   private class LocalTaskEventHandler implements EventHandler<LocalTaskEvent> {
     @Override
     public void handle(LocalTaskEvent event) {
-      TajoContainerProxy proxy = (TajoContainerProxy) resourceAllocator.getContainers().get(event.getContainerId());
-      if (proxy != null) {
-        proxy.killTaskAttempt(event.getTaskAttemptId());
-      }
+      resourceAllocator.killTaskAttempt(event.getWorkerId(), event.getTaskAttemptId());
     }
   }
 

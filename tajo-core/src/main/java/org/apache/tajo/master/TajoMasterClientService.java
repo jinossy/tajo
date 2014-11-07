@@ -230,7 +230,11 @@ public class TajoMasterClientService extends AbstractService {
         throws ServiceException {
       try {
         String sessionId = request.getId();
-        return ProtoUtil.convertString(context.getSessionManager().getSession(sessionId).getCurrentDatabase());
+        Session session = context.getSessionManager().getSession(sessionId);
+        if (session == null) {
+          throw new ServiceException("No session for: " + sessionId);
+        }
+        return ProtoUtil.convertString(session.getCurrentDatabase());
       } catch (Throwable t) {
         throw new ServiceException(t);
       }

@@ -16,25 +16,30 @@
  * limitations under the License.
  */
 
-package org.apache.tajo.master.rm;
+package org.apache.tajo.worker;
 
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ContainerId;
 import org.apache.hadoop.yarn.api.records.impl.pb.ApplicationAttemptIdPBImpl;
 import org.apache.hadoop.yarn.proto.YarnProtos;
+import org.apache.hadoop.yarn.util.ConverterUtils;
 
-public class TajoWorkerContainerId extends ContainerId {
+public class TaskRunnerId extends ContainerId {
   ApplicationAttemptId applicationAttemptId;
   int id;
 
-  public TajoWorkerContainerId(ApplicationAttemptId applicationAttemptId, int id) {
+  public TaskRunnerId(ApplicationAttemptId applicationAttemptId, int id) {
     this.applicationAttemptId = applicationAttemptId;
     this.id = id;
   }
 
-  public TajoWorkerContainerId(YarnProtos.ContainerIdProto proto) {
+  public TaskRunnerId(YarnProtos.ContainerIdProto proto) {
     this.applicationAttemptId = new ApplicationAttemptIdPBImpl(proto.getAppAttemptId());
     this.id = proto.getId();
+  }
+
+  public TaskRunnerId(ContainerId containerId) {
+    this(getContainerIdProto(containerId));
   }
 
   @Override
@@ -76,8 +81,8 @@ public class TajoWorkerContainerId extends ContainerId {
   }
 
   public static YarnProtos.ContainerIdProto getContainerIdProto(ContainerId containerId) {
-    if(containerId instanceof TajoWorkerContainerId) {
-      return ((TajoWorkerContainerId)containerId).getProto();
+    if(containerId instanceof TaskRunnerId) {
+      return ((TaskRunnerId)containerId).getProto();
     } else {
       YarnProtos.ApplicationIdProto appIdProto = YarnProtos.ApplicationIdProto.newBuilder()
           .setClusterTimestamp(containerId.getApplicationAttemptId().getApplicationId().getClusterTimestamp())
@@ -95,6 +100,10 @@ public class TajoWorkerContainerId extends ContainerId {
           .setId(containerId.getId())
           .build();
     }
+  }
+
+  public static TaskRunnerId getTaskRunnerIdByString(String containerId) {
+    return new TaskRunnerId(ConverterUtils.toContainerId(containerId));
   }
 
   @Override

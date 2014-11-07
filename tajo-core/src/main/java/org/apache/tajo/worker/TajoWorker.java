@@ -262,7 +262,7 @@ public class TajoWorker extends CompositeService {
     workerSystemMetrics.register("querymaster", "runningQueries", new Gauge<Integer>() {
       @Override
       public Integer getValue() {
-        if(queryMasterManagerService != null) {
+        if (queryMasterManagerService != null) {
           return queryMasterManagerService.getQueryMaster().getQueryMasterTasks().size();
         } else {
           return 0;
@@ -273,7 +273,7 @@ public class TajoWorker extends CompositeService {
     workerSystemMetrics.register("task", "runningTasks", new Gauge<Integer>() {
       @Override
       public Integer getValue() {
-        if(taskRunnerManager != null) {
+        if (taskRunnerManager != null) {
           return taskRunnerManager.getNumTasks();
         } else {
           return 0;

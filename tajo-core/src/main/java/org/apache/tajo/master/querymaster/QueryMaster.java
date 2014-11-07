@@ -253,12 +253,12 @@ public class QueryMaster extends CompositeService implements EventHandler {
 
       TajoMasterProtocol.TajoMasterProtocolService masterService = rpc.getStub();
 
-      CallFuture<TajoMasterProtocol.WorkerResourcesRequest> callBack =
-          new CallFuture<TajoMasterProtocol.WorkerResourcesRequest>();
+      CallFuture<TajoMasterProtocol.WorkerResourcesProto> callBack =
+          new CallFuture<TajoMasterProtocol.WorkerResourcesProto>();
       masterService.getAllWorkerResource(callBack.getController(),
           PrimitiveProtos.NullProto.getDefaultInstance(), callBack);
 
-      TajoMasterProtocol.WorkerResourcesRequest workerResourcesRequest = callBack.get(2, TimeUnit.SECONDS);
+      TajoMasterProtocol.WorkerResourcesProto workerResourcesRequest = callBack.get(2, TimeUnit.SECONDS);
       return workerResourcesRequest.getWorkerResourcesList();
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);

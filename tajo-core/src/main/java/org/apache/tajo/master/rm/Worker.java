@@ -22,6 +22,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.state.*;
+import org.apache.tajo.ipc.TajoMasterProtocol;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 
 import java.util.EnumSet;
@@ -151,6 +152,17 @@ public class Worker implements EventHandler<WorkerEvent>, Comparable<Worker> {
    */
   public WorkerResource getResource() {
     return this.resource;
+  }
+
+  /**
+   *
+   * @return the WorkerResource proto
+   */
+  public TajoMasterProtocol.WorkerResourceProto createWorkerResourceProto() {
+    return TajoMasterProtocol.WorkerResourceProto.newBuilder()
+        .setConnectionInfo(connectionInfo.getProto())
+        .setDiskSlots(getResource().getDiskSlots())
+        .setMemoryMB(getResource().getMemoryMB()).build();
   }
 
   @Override

@@ -61,7 +61,7 @@ public class JSPUtil {
       public int compare(TaskRunnerHistory h1, TaskRunnerHistory h2) {
         int value = h1.getExecutionBlockId().compareTo(h2.getExecutionBlockId());
         if(value == 0){
-          return h1.getContainerId().compareTo(h2.getContainerId());
+          return h1.getTaskRunnerId().compareTo(h2.getTaskRunnerId());
         }
         return value;
       }

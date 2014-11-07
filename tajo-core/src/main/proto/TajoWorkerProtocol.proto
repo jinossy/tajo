@@ -54,6 +54,7 @@ message TaskCompletionReport {
   optional TableStatsProto inputStats = 3;
   optional TableStatsProto resultStats = 4;
   repeated ShuffleFileOutput shuffleFileOutputs = 5;
+  required hadoop.yarn.ContainerIdProto containerId = 6;
 }
 
 message TaskFatalErrorReport {
@@ -192,12 +193,11 @@ message DataChannelProto {
 message RunExecutionBlockRequestProto {
     required ExecutionBlockIdProto executionBlockId = 1;
     required WorkerConnectionInfoProto queryMaster = 2;
-    required string nodeId = 3;
-    required string containerId = 4;
-    optional string queryOutputPath = 5;
-
-    required KeyValueSetProto queryContext = 6;
-    required string planJson = 7;
+    required int32 tasks = 3;
+    optional string queryOutputPath = 4;
+    
+    required KeyValueSetProto queryContext = 5;
+    required string planJson = 6;
 }
 
 message ExecutionBlockListProto {
@@ -350,7 +350,7 @@ message TaskHistoryProto {
 message TaskRunnerHistoryProto {
   required ExecutionBlockIdProto executionBlockId = 1;
   required string state = 2;
-  required string containerId = 3;
+  required hadoop.yarn.ContainerIdProto taskRunnerId = 3;
   optional int64 startTime = 4;
   optional int64 finishTime = 5;
   repeated TaskHistoryProto taskHistories = 6;

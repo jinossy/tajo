@@ -373,6 +373,10 @@ public class TajoConf extends Configuration {
 
     // ResultSet ---------------------------------------------------------
     $RESULT_SET_FETCH_ROWNUM("tajo.resultset.fetch.rownum", 200),
+
+    //JOB_SCHEDULER
+    JOB_SCHEDULER_CLASS("tajo.job.scheduler.class", "org.apache.tajo.scheduler.SimpleFifoScheduler"),
+    JOB_QUEUE_NAMES("tajo.job.queue.names", "default")
     ;
 
     public final String varname;

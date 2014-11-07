@@ -38,6 +38,7 @@ import org.apache.tajo.rpc.AsyncRpcServer;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.util.NetUtils;
 import org.apache.tajo.worker.TajoWorker;
+import org.apache.tajo.worker.TaskRunnerId;
 
 import java.net.InetSocketAddress;
 
@@ -130,10 +131,9 @@ public class QueryMasterManagerService extends CompositeService
       if(queryMasterTask == null || queryMasterTask.isStopped()) {
         done.run(LazyTaskScheduler.stopTaskRunnerReq);
       } else {
-        ContainerId cid =
-            queryMasterTask.getQueryTaskContext().getResourceAllocator().makeContainerId(request.getContainerId());
-        LOG.debug("getTask:" + cid + ", ebId:" + ebId);
-        queryMasterTask.handleTaskRequestEvent(new TaskRequestEvent(request.getWorkerId(), cid, ebId, done));
+        ContainerId cId = new TaskRunnerId(request.getContainerId());
+        LOG.debug("getTask:" + cId + ", ebId:" + ebId);
+        queryMasterTask.handleTaskRequestEvent(new TaskRequestEvent(request.getWorkerId(), cId, ebId, done));
       }
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);

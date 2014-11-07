@@ -18,19 +18,18 @@
 
 package org.apache.tajo.master;
 
-import org.apache.hadoop.yarn.api.records.Container;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.engine.query.QueryContext;
 
-import java.util.Collection;
+import java.util.Map;
 
 public class LaunchTaskRunnersEvent extends TaskRunnerGroupEvent {
   private final QueryContext queryContext;
   private final String planJson;
 
   public LaunchTaskRunnersEvent(ExecutionBlockId executionBlockId,
-                                Collection<Container> containers, QueryContext queryContext, String planJson) {
-    super(EventType.CONTAINER_REMOTE_LAUNCH, executionBlockId, containers);
+                                Map<Integer, Integer> allocatedResources, QueryContext queryContext, String planJson) {
+    super(EventType.CONTAINER_REMOTE_LAUNCH, executionBlockId, allocatedResources);
     this.queryContext = queryContext;
     this.planJson = planJson;
   }
