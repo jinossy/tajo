@@ -21,6 +21,7 @@ package org.apache.tajo.worker;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -40,6 +41,7 @@ import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.json.CoreGsonHelper;
+import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.engine.planner.physical.PhysicalExec;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.engine.query.QueryUnitRequest;
@@ -507,9 +509,9 @@ public class Task {
   }
 
   public void cleanupTask() {
-    executionBlockContext.addTaskHistory(taskRunnerId, getId(), createTaskHistory());
+    TaskHistory taskHistory = createTaskHistory();
+    executionBlockContext.addTaskHistory(taskRunnerId, getId(), taskHistory);
     executionBlockContext.removeTask(getId());
-    executionBlockContext = null;
 
     fetcherRunners.clear();
     fetcherRunners = null;
@@ -521,6 +523,8 @@ public class Task {
     } catch (IOException e) {
       LOG.fatal(e.getMessage(), e);
     }
+
+    executionBlockContext.getWorkerContext().getTaskHistoryWriter().appendHistory(taskHistory);
   }
 
   public TaskHistory createTaskHistory() {

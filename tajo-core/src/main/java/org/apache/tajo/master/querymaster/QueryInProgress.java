@@ -145,6 +145,8 @@ public class QueryInProgress extends CompositeService {
     if(queryMasterRpc != null) {
       RpcConnectionPool.getPool((TajoConf)getConfig()).closeConnection(queryMasterRpc);
     }
+
+    masterContext.getHistoryWriter().appendHistory(queryInfo);
     super.stop();
   }
 
@@ -177,6 +179,7 @@ public class QueryInProgress extends CompositeService {
       queryInfo.setQueryMaster(resource.getWorker().getConnectionInfo().getHost());
       queryInfo.setQueryMasterPort(resource.getWorker().getConnectionInfo().getQueryMasterPort());
       queryInfo.setQueryMasterclientPort(resource.getWorker().getConnectionInfo().getClientPort());
+      queryInfo.setQueryMasterInfoPort(resource.getWorker().getConnectionInfo().getHttpInfoPort());
 
       getEventHandler().handle(new QueryJobEvent(QueryJobEvent.Type.QUERY_MASTER_START, queryInfo));
 
