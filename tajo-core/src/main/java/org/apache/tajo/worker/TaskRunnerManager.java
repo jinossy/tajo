@@ -43,7 +43,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class TaskRunnerManager extends CompositeService implements EventHandler<TaskRunnerEvent> {
@@ -209,13 +208,13 @@ public class TaskRunnerManager extends CompositeService implements EventHandler<
       if(executionBlockContext != null){
         TupleCache.getInstance().removeBroadcastCache(event.getExecutionBlockId());
         executionBlockContext.reportExecutionBlock(event.getExecutionBlockId());
-        executionBlockContext.stop();
         try {
           workerContext.getHashShuffleAppenderManager().close(event.getExecutionBlockId());
         } catch (IOException e) {
           LOG.fatal(e.getMessage(), e);
           throw new RuntimeException(e);
         }
+        executionBlockContext.stop();
       }
       LOG.info("Stopped execution block:" + event.getExecutionBlockId());
     }

@@ -513,7 +513,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   }
 
   class WorkerResourceAllocator extends Thread {
-    final int delay = 100;
+    final int delay = 50;
     final int updateInterval = 1000;
     private AtomicBoolean stop = new AtomicBoolean(false);
     final TajoResourceAllocator allocator;
@@ -775,7 +775,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     public void run() {
       while (!stop.get() && !Thread.currentThread().isInterrupted()) {
         List<TajoMasterProtocol.AllocatedWorkerResourceProto> targets = Lists.newArrayList();
-        Queues.drainUninterruptibly(queue, targets, workerInfoMap.size(), 100, TimeUnit.MILLISECONDS);
+        Queues.drainUninterruptibly(queue, targets, workerInfoMap.size(), 50, TimeUnit.MILLISECONDS);
 
         if (targets.size() > 0) {
           releaseWorkerResourceRequest(queryId, targets);

@@ -213,7 +213,7 @@ public class ExecutionBlockContext {
     resource.release();
     try {
       for(ExecutorService executorService : fetcherExecutorMap.values()){
-        executorService.shutdown();
+        executorService.shutdownNow();
       }
       fetcherExecutorMap.clear();
       releaseShuffleChannelFactory();
