@@ -20,6 +20,7 @@ package org.apache.tajo.worker;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Queues;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -46,7 +47,10 @@ import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.NullCallback;
 import org.apache.tajo.rpc.RpcConnectionPool;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
-import org.apache.tajo.scheduler.*;
+import org.apache.tajo.scheduler.AbstractScheduler;
+import org.apache.tajo.scheduler.FairScheduler;
+import org.apache.tajo.scheduler.Scheduler;
+import org.apache.tajo.scheduler.SchedulingAlgorithms;
 import org.apache.tajo.util.HAServiceUtil;
 
 import java.net.InetSocketAddress;
@@ -63,7 +67,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   private TajoConf tajoConf;
   private QueryMasterTask.QueryMasterTaskContext queryTaskContext;
   private final ExecutorService executorService;
-  private final ExecutorService releaseService;
 
   /**
    * A key is a worker unique id, and a value is allocated worker resources.
@@ -75,14 +78,13 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
 
 
   private WorkerResourceAllocator allocatorThread;
+  private ResourceDeAllocator deAllocator;
+
   private static ConcurrentMap<String, AbstractScheduler.QueueProperty> queuePropertyMap = Maps.newConcurrentMap();
 
   public TajoResourceAllocator(QueryMasterTask.QueryMasterTaskContext queryTaskContext) {
     this.queryTaskContext = queryTaskContext;
     this.executorService = Executors.newFixedThreadPool(
-        queryTaskContext.getConf().getIntVar(TajoConf.ConfVars.YARN_RM_TASKRUNNER_LAUNCH_PARALLEL_NUM));
-
-    this.releaseService = Executors.newFixedThreadPool(
         queryTaskContext.getConf().getIntVar(TajoConf.ConfVars.YARN_RM_TASKRUNNER_LAUNCH_PARALLEL_NUM));
   }
 
@@ -122,6 +124,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
 
     loadSchedulerProperties(tajoConf);
     allocatorThread = new WorkerResourceAllocator(this);
+    deAllocator = new ResourceDeAllocator();
     super.init(conf);
   }
 
@@ -139,7 +142,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     allocatedResourceMap.clear();
     allocatedSize.set(0);
     executorService.shutdownNow();
-    releaseService.shutdownNow();
+    deAllocator.shutdown();
     super.serviceStop();
     LOG.info("Tajo Resource Allocator stopped");
   }
@@ -147,6 +150,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
   @Override
   public void start() {
     allocatorThread.start();
+    deAllocator.start();
     super.start();
   }
 
@@ -200,7 +204,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
 
   public void stopExecutionBlock(final ExecutionBlockId executionBlockId) {
     for (final int workerId : workerInfoMap.keySet()) {
-      releaseService.submit(new Runnable() {
+      executorService.submit(new Runnable() {
         @Override
         public void run() {
           releaseWorkerResource(queryTaskContext.getQueryId(), workerId);
@@ -221,8 +225,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
    */
   @Override
   public void releaseWorkerResource(final ExecutionBlockId executionBlockId, final int workerId, final int resources) {
-    final List<TajoMasterProtocol.AllocatedWorkerResourceProto> requestList = Lists.newArrayList();
-
     ConcurrentLinkedQueue<TajoMasterProtocol.AllocatedWorkerResourceProto>
         allocatedWorkerResources = allocatedResourceMap.get(workerId);
     if (allocatedWorkerResources == null) return;
@@ -230,7 +232,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     synchronized (allocatedWorkerResources) {
       if (allocatedWorkerResources.size() == resources) {
         allocatedResourceMap.remove(workerId);
-        requestList.addAll(allocatedWorkerResources);
+        deAllocator.releseResources(allocatedWorkerResources);
         allocatedWorkerResources.clear();
       } else {
         for (int i = 0; i < resources; i++) {
@@ -239,32 +241,17 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
           if (allocatedWorkerResourceProto == null) {
             break;
           }
-          requestList.add(allocatedWorkerResourceProto);
+          deAllocator.releseResource(allocatedWorkerResourceProto);
         }
-      }
-
-      if (requestList.size() == 0) {
-        allocatedResourceMap.remove(workerId);
-        return;
       }
     }
-
-    releaseService.submit(new Runnable() {
-      @Override
-      public void run() {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Release Worker: " + workerId + ", EBId : " + executionBlockId + ", Resources: " + requestList);
-        }
-        releaseWorkerResourceRequest(executionBlockId.getQueryId(), requestList);
-      }
-    });
   }
 
   private void releaseWorkerResource(final QueryId queryId, final int workerId) {
     final ConcurrentLinkedQueue<TajoMasterProtocol.AllocatedWorkerResourceProto> resources = allocatedResourceMap.remove(workerId);
     if (resources != null && resources.size() > 0) {
       final List<TajoMasterProtocol.AllocatedWorkerResourceProto> requestList = Lists.newArrayList(resources);
-      releaseService.submit(new Runnable() {
+      executorService.submit(new Runnable() {
         @Override
         public void run() {
           if (LOG.isDebugEnabled()) {
@@ -362,12 +349,6 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
       );
     } catch (Throwable e) {
       LOG.error(e.getMessage(), e);
-    }
-
-    if(allocatedSize.get() < workerInfoMap.size()) {
-      synchronized (allocatorThread) {
-        allocatorThread.notifyAll();
-      }
     }
   }
 
@@ -592,6 +573,8 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
             queuePropertyMap.get(queryTaskContext.getQueryContext().get(Scheduler.QUERY_QUEUE_KEY, Scheduler.DEFAULT_QUEUE_NAME));
 
         queue.put(new WorkerResourceRequest(event, workerIds, queueProperty));
+
+        deAllocator.startDeAllocator(queryTaskContext.getQueryId());
       } catch (InterruptedException e) {
         if (!stop.get()) {
           LOG.warn("ContainerAllocator thread interrupted");
@@ -760,6 +743,42 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
             queryTaskContext.getEventHandler().handle(new SubQueryContainerAllocationEvent(executionBlockId, tasksLaunchMap));
           }
           launchTaskRunners(request.event, tasksLaunchMap);
+        }
+      }
+    }
+  }
+
+  class ResourceDeAllocator extends Thread {
+    private AtomicBoolean stop = new AtomicBoolean(false);
+    final BlockingQueue<TajoMasterProtocol.AllocatedWorkerResourceProto> queue = Queues.newLinkedBlockingQueue();
+    private QueryId queryId;
+
+    public void startDeAllocator(QueryId queryId) {
+      this.queryId = queryId;
+    }
+
+    public void releseResource(TajoMasterProtocol.AllocatedWorkerResourceProto resourceProto) {
+      queue.add(resourceProto);
+    }
+
+    public void releseResources(Collection<TajoMasterProtocol.AllocatedWorkerResourceProto> resourceProtos) {
+      queue.addAll(resourceProtos);
+    }
+
+    public synchronized void shutdown() {
+      if (stop.getAndSet(true)) {
+        return;
+      }
+    }
+
+    @Override
+    public void run() {
+      while (!stop.get() && !Thread.currentThread().isInterrupted()) {
+        List<TajoMasterProtocol.AllocatedWorkerResourceProto> targets = Lists.newArrayList();
+        Queues.drainUninterruptibly(queue, targets, workerInfoMap.size(), 100, TimeUnit.MILLISECONDS);
+
+        if (targets.size() > 0) {
+          releaseWorkerResourceRequest(queryId, targets);
         }
       }
     }
