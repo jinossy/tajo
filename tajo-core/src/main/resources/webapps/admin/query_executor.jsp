@@ -96,7 +96,7 @@ function runQuery() {
   $.ajax({
     type: "POST",
     url: "query_exec",
-    data: { action: "runQuery", query: query, limitSize:SIZE_LIMIT, database: sbox.options[sbox.selectedIndex].text }
+    data: { action: "runQuery", query: query, prevQuery: queryRunnerId, limitSize:SIZE_LIMIT, database: sbox.options[sbox.selectedIndex].text }
   })
   .done(function(msg) {
     var resultJson = $.parseJSON(msg);

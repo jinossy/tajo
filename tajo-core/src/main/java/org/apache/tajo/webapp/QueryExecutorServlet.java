@@ -105,6 +105,14 @@ public class QueryExecutorServlet extends HttpServlet {
           errorResponse(response, "No query parameter");
           return;
         }
+        String prevQueryRunnerId = request.getParameter("prevQuery");
+        if (prevQueryRunnerId != null) {
+          synchronized (queryRunners) {
+            QueryRunner runner = queryRunners.remove(prevQueryRunnerId);
+            if (runner != null) runner.setStop();
+          }
+        }
+
         String queryRunnerId = null;
         while(true) {
           synchronized(queryRunners) {
