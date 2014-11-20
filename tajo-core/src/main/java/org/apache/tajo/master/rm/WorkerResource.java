@@ -41,6 +41,7 @@ public class WorkerResource {
 
   private float diskSlots;
   private int cpuCoreSlots;
+  @Deprecated
   private int memoryMB;
 
   private float usedDiskSlots;
@@ -79,6 +80,7 @@ public class WorkerResource {
     this.cpuCoreSlots = cpuCoreSlots;
   }
 
+  @Deprecated
   public int getMemoryMB() {
     try {
       rlock.lock();
@@ -88,6 +90,7 @@ public class WorkerResource {
     }
   }
 
+  @Deprecated
   public void setMemoryMB(int memoryMB) {
     try {
       wlock.lock();

@@ -188,7 +188,7 @@ public class TajoResourceTracker extends AbstractService implements TajoResource
     workerResource.setTaskRunnerMode(taskRunnerMode);
 
     if(request.getServerStatus() != null) {
-      workerResource.setMemoryMB(request.getServerStatus().getMemoryResourceMB());
+      workerResource.setMemoryMB((int) request.getServerStatus().getJvmHeap().getMaxHeap() / (1024 * 1024));
       workerResource.setCpuCoreSlots(request.getServerStatus().getSystem().getAvailableProcessors());
       workerResource.setDiskSlots(request.getServerStatus().getDiskSlots());
       workerResource.setNumRunningTasks(request.getServerStatus().getRunningTaskNum());
