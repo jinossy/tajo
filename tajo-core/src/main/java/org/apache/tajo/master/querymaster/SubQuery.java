@@ -1011,7 +1011,7 @@ public class SubQuery implements EventHandler<SubQueryEvent> {
       ExecutionBlock execBlock = subQuery.getBlock();
 
       //TODO consider disk slot
-      int requiredMemoryMBPerTask = 512;
+      int requiredMemoryMBPerTask = subQuery.getContext().getConf().getIntVar(ConfVars.TASK_DEFAULT_MEMORY);
 
       int numRequest = subQuery.getContext().getResourceAllocator().calculateNumRequestContainers(
           subQuery.getContext().getQueryMasterContext().getWorkerContext(),

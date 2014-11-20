@@ -53,6 +53,10 @@ public class TestFifoScheduler {
 
   @Test
   public final void testKillScheduledQuery() throws Exception {
+    if(!conf.getVar(TajoConf.ConfVars.JOB_SCHEDULER_CLASS).equals(SimpleFifoScheduler.class.getCanonicalName())){
+      return;
+    }
+
     ClientProtos.SubmitQueryResponse res = client.executeQuery("select sleep(1) from lineitem");
     ClientProtos.SubmitQueryResponse res2 = client.executeQuery("select sleep(1) from lineitem");
     QueryId queryId = new QueryId(res.getQueryId());
@@ -67,6 +71,10 @@ public class TestFifoScheduler {
 
   @Test
   public final void testForwardedQuery() throws Exception {
+    if(!conf.getVar(TajoConf.ConfVars.JOB_SCHEDULER_CLASS).equals(SimpleFifoScheduler.class.getCanonicalName())){
+      return;
+    }
+
     ClientProtos.SubmitQueryResponse res = client.executeQuery("select sleep(1) from lineitem");
     ClientProtos.SubmitQueryResponse res2 = client.executeQuery("select * from lineitem limit 1");
     assertTrue(res.getIsForwarded());
@@ -85,6 +93,10 @@ public class TestFifoScheduler {
 
   @Test
   public final void testScheduledQuery() throws Exception {
+    if(!conf.getVar(TajoConf.ConfVars.JOB_SCHEDULER_CLASS).equals(SimpleFifoScheduler.class.getCanonicalName())){
+      return;
+    }
+
     ClientProtos.SubmitQueryResponse res = client.executeQuery("select sleep(1) from lineitem");
     ClientProtos.SubmitQueryResponse res2 = client.executeQuery("select sleep(1) from lineitem");
     ClientProtos.SubmitQueryResponse res3 = client.executeQuery("select sleep(1) from lineitem");

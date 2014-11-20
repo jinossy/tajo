@@ -512,6 +512,7 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
     return workerIds;
   }
 
+  static int reservedQueryMasterSlot = 1;
   class WorkerResourceAllocator extends Thread {
     final int delay = 50;
     final int updateInterval = 1000;
@@ -645,8 +646,9 @@ public class TajoResourceAllocator extends AbstractResourceAllocator {
             request.runningInQueue = runningSize > 0 ? runningSize : 1;
             LOG.debug(String.format("runningInQueue: %d, MaxCapacity: %d", request.runningInQueue, request.queueProperty.getMaxCapacity()));
           }
+
           int demandSize = (int) Math.floor(request.queueProperty.getMaxCapacity() / request.runningInQueue);
-          int share = request.queueProperty.getMinCapacity() * (request.runningInQueue - 1);
+          int share = (request.queueProperty.getMinCapacity() - reservedQueryMasterSlot) * (request.runningInQueue - 1);
           int availableSize = request.queueProperty.getMaxCapacity() - share;
           demandSize = Math.max(availableSize, demandSize);
 
