@@ -406,17 +406,14 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       int volumeId = getLowestVolumeId();
       TaskAttemptId taskAttemptId = null;
 
-      increaseConcurrency(volumeId);
       if (unassignedTaskForEachVolume.size() >  0) {
+        increaseConcurrency(volumeId);
         int retry = unassignedTaskForEachVolume.size();
         do {
           //clean and get a remaining local task
           taskAttemptId = getAndRemove(volumeId);
           if(!unassignedTaskForEachVolume.containsKey(volumeId)) {
             decreaseConcurrency(volumeId);
-            if (volumeId > REMOTE) {
-              diskVolumeLoads.remove(volumeId);
-            }
           }
 
           if (taskAttemptId == null) {
@@ -432,7 +429,9 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         this.remainTasksNum.set(0);
       }
 
-      lastAssignedVolumeId.put(taskAttemptId, volumeId);
+      if(taskAttemptId != null) {
+        lastAssignedVolumeId.put(taskAttemptId, volumeId);
+      }
       return taskAttemptId;
     }
 
@@ -446,9 +445,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           int volumeId = getLowestVolumeId();
           taskAttemptId = getAndRemove(volumeId);
           if (taskAttemptId == null) {
-            if (volumeId > REMOTE) {
-              diskVolumeLoads.remove(volumeId);
-            }
             retry--;
           } else {
             break;
@@ -537,10 +533,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         Integer concurrency = diskVolumeLoads.get(volumeId);
         if(concurrency > 0){
           diskVolumeLoads.put(volumeId, concurrency - 1);
-        } else {
-          if (volumeId > REMOTE) {
-            diskVolumeLoads.remove(volumeId);
-          }
         }
       }
     }
@@ -599,6 +591,9 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       for (DataLocation location : locations) {
         HostVolumeMapping volumeMapping = scheduledRequests.leafTaskHostMapping.get(location.getHost());
         volumeMapping.addTaskAttempt(location.getVolumeId(), taskAttempt);
+        if (volumeMapping.lastAssignedVolumeId.containsKey(taskAttempt.getId())) {
+          volumeMapping.decreaseConcurrency(volumeMapping.lastAssignedVolumeId.remove(taskAttempt.getId()));
+        }
       }
 
       scheduledRequests.leafTasks.add(taskAttempt.getId());
