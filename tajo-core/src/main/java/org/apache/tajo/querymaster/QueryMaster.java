@@ -46,6 +46,7 @@ import org.apache.tajo.rpc.*;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.service.ServiceTracker;
 import org.apache.tajo.util.TUtil;
+import org.apache.tajo.util.history.History;
 import org.apache.tajo.util.history.HistoryWriter.WriterFuture;
 import org.apache.tajo.util.history.HistoryWriter.WriterHolder;
 import org.apache.tajo.util.history.QueryHistory;
@@ -311,27 +312,30 @@ public class QueryMaster extends CompositeService implements EventHandler {
       } catch (Exception e) {
         LOG.error(e.getMessage(), e);
       }
-      Query query = queryMasterTask.getQuery();
+      final Query query = queryMasterTask.getQuery();
       if (query != null) {
-        QueryHistory queryHisory = query.getQueryHistory();
-        if (queryHisory != null) {
-          try {
-            WriterFuture<WriterHolder> writerFuture = new WriterFuture<WriterHolder>(queryHisory) {
-              @Override
-              public void done(WriterHolder writerHolder) {
-                super.done(writerHolder);
+        try {
+          WriterFuture<WriterHolder> writerFuture = new WriterFuture<WriterHolder>(null) {
+            @Override
+            public History getHistory() {
+              return query.getQueryHistory();
+            }
 
-                //remove memory cache, if history file writer is done
-                synchronized (finishedQueryMasterTasksCache) {
-                  finishedQueryMasterTasksCache.remove(queryId);
-                }
+            @Override
+            public void done(WriterHolder writerHolder) {
+              super.done(writerHolder);
+
+              //remove memory cache, if history file writer is done
+              synchronized (finishedQueryMasterTasksCache) {
+                finishedQueryMasterTasksCache.remove(queryId);
               }
-            };
-            query.context.getQueryMasterContext().getWorkerContext().
-                getTaskHistoryWriter().appendHistory(writerFuture);
-          } catch (Throwable e) {
-            LOG.warn(e, e);
-          }
+            }
+          };
+          query.context.getQueryMasterContext().getWorkerContext().
+              getTaskHistoryWriter().appendHistory(writerFuture);
+
+        } catch (Throwable e) {
+          LOG.warn(e, e);
         }
       }
     }

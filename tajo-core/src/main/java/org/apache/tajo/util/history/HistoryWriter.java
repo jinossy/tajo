@@ -560,7 +560,7 @@ public class HistoryWriter extends AbstractService {
       this.history = history;
     }
 
-    private History getHistory() {
+    public History getHistory() {
       return history;
     }
 
