@@ -24,5 +24,5 @@ import org.apache.tajo.plan.expr.EvalNode;
 
 @Prioritized
 public interface EvalTreeOptimizationRule {
-  public EvalNode optimize(LogicalPlanner.PlanContext context, EvalNode tree);
+  EvalNode optimize(LogicalPlanner.PlanContext context, EvalNode tree);
 }

@@ -19,12 +19,18 @@
 package org.apache.tajo.plan.logical;
 
 import com.google.gson.annotations.Expose;
+
+import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
 import org.apache.tajo.plan.PlanString;
 import org.apache.tajo.util.TUtil;
 
+import java.net.URI;
+
 public class StoreTableNode extends PersistentStoreNode implements Cloneable {
   @Expose protected String tableName;
+  @Expose protected URI uri;
+  @Expose protected Schema tableSchema;
   @Expose private PartitionMethodDesc partitionDesc;
 
   public StoreTableNode(int pid) {
@@ -56,6 +62,30 @@ public class StoreTableNode extends PersistentStoreNode implements Cloneable {
     return this.tableName;
   }
 
+  public boolean hasUri() {
+    return this.uri != null;
+  }
+
+  public void setUri(URI uri) {
+    this.uri = uri;
+  }
+
+  public URI getUri() {
+    return this.uri;
+  }
+
+  public boolean hasTableSchema() {
+    return this.tableSchema != null;
+  }
+
+  public void setTableSchema(Schema schema) {
+    this.tableSchema = schema;
+  }
+
+  public Schema getTableSchema() {
+    return this.tableSchema;
+  }
+
   public boolean hasPartition() {
     return this.partitionDesc != null;
   }
@@ -78,12 +108,23 @@ public class StoreTableNode extends PersistentStoreNode implements Cloneable {
   }
   
   @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + ((partitionDesc == null) ? 0 : partitionDesc.hashCode());
+    result = prime * result + ((tableName == null) ? 0 : tableName.hashCode());
+    return result;
+  }
+
+  @Override
   public boolean equals(Object obj) {
     if (obj instanceof StoreTableNode) {
       StoreTableNode other = (StoreTableNode) obj;
       boolean eq = super.equals(other);
-      eq = eq && TUtil.checkEquals(this.tableName, other.tableName);
-      eq = eq && TUtil.checkEquals(partitionDesc, other.partitionDesc);
+      eq &= TUtil.checkEquals(this.tableName, other.tableName);
+      eq &= TUtil.checkEquals(uri, other.uri);
+      eq &= TUtil.checkEquals(tableSchema, other.tableSchema);
+      eq &= TUtil.checkEquals(partitionDesc, other.partitionDesc);
       return eq;
     } else {
       return false;
@@ -101,7 +142,7 @@ public class StoreTableNode extends PersistentStoreNode implements Cloneable {
   public String toString() {
     StringBuilder sb = new StringBuilder("Store Table (table=").append(tableName);
     if (storageType != null) {
-      sb.append(", storage="+ storageType.name());
+      sb.append(", storage="+ storageType);
     }
     sb.append(")");
     return sb.toString();

@@ -1,4 +1,4 @@
-package org.apache.tajo.storage; /**
+/**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -16,11 +16,17 @@ package org.apache.tajo.storage; /**
  * limitations under the License.
  */
 
+package org.apache.tajo.storage;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
+import org.apache.tajo.plan.logical.LogicalNode;
 import org.apache.tajo.storage.fragment.Fragment;
 
 import java.io.IOException;
@@ -68,6 +74,11 @@ public class NullScanner implements Scanner {
   }
 
   @Override
+  public void pushOperators(LogicalNode planPart) {
+    throw new TajoRuntimeException(new UnsupportedException());
+  }
+
+  @Override
   public boolean isProjectable() {
     return false;
   }
@@ -79,12 +90,17 @@ public class NullScanner implements Scanner {
 
   @Override
   public boolean isSelectable() {
-    return true;
+    return false;
   }
 
   @Override
-  public void setSearchCondition(Object expr) {
+  public void setFilter(EvalNode filter) {
+    throw new TajoRuntimeException(new UnsupportedException());
+  }
 
+  @Override
+  public void setLimit(long num) {
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override

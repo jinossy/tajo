@@ -52,8 +52,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
   private ShuffleFileWriteNode plan;
   private final TableMeta meta;
   private Partitioner partitioner;
-//  private final Path storeTablePath;
-  private Map<Integer, HashShuffleAppender> appenderMap = new HashMap<Integer, HashShuffleAppender>();
+  private Map<Integer, HashShuffleAppender> appenderMap = new HashMap<>();
   private final int numShuffleOutputs;
   private final int [] shuffleKeyIds;
   private HashShuffleAppenderManager hashShuffleAppenderManager;
@@ -97,7 +96,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
     HashShuffleAppender appender = appenderMap.get(partId);
     if (appender == null) {
       appender = hashShuffleAppenderManager.getAppender(context.getConf(),
-          context.getQueryId().getTaskId().getExecutionBlockId(), partId, meta, outSchema);
+          context.getTaskId().getTaskId().getExecutionBlockId(), partId, meta, outSchema);
       appenderMap.put(partId, appender);
     }
     return appender;
@@ -113,7 +112,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
       Tuple tuple;
       int partId;
       long numRows = 0;
-      while ((tuple = child.next()) != null) {
+      while (!context.isStopped() && (tuple = child.next()) != null) {
         numRows++;
 
         partId = partitioner.getPartition(tuple);
@@ -170,6 +169,9 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
       partitionTuples.clear();
 
       return null;
+    } catch (RuntimeException e) {
+      LOG.error(e.getMessage(), e);
+      throw new IOException(e);
     } catch (Throwable e) {
       LOG.error(e.getMessage(), e);
       throw new IOException(e);

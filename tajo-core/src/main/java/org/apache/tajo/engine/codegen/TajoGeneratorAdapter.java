@@ -22,7 +22,8 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.*;
-import org.apache.tajo.exception.InvalidCastException;
+import org.apache.tajo.exception.InvalidValueForCastException;
+import org.apache.tajo.exception.TajoRuntimeException;
 import org.apache.tajo.exception.UnsupportedException;
 import org.apache.tajo.org.objectweb.asm.Label;
 import org.apache.tajo.org.objectweb.asm.MethodVisitor;
@@ -184,7 +185,7 @@ class TajoGeneratorAdapter {
     } else if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
       methodvisitor.visitIntInsn(Opcodes.SIPUSH, value);
     } else {
-      methodvisitor.visitLdcInsn(new Integer(value));
+      methodvisitor.visitLdcInsn(Integer.valueOf(value));
     }
   }
 
@@ -192,7 +193,7 @@ class TajoGeneratorAdapter {
     if (value == 0L || value == 1L) {
       methodvisitor.visitInsn(Opcodes.LCONST_0 + (int) value);
     } else {
-      methodvisitor.visitLdcInsn(new Long(value));
+      methodvisitor.visitLdcInsn(Long.valueOf(value));
     }
   }
 
@@ -201,7 +202,7 @@ class TajoGeneratorAdapter {
     if (bits == 0L || bits == 0x3f800000 || bits == 0x40000000) { // 0..2
       methodvisitor.visitInsn(Opcodes.FCONST_0 + (int) value);
     } else {
-      methodvisitor.visitLdcInsn(new Float(value));
+      methodvisitor.visitLdcInsn(Float.valueOf(value));
     }
   }
 
@@ -470,7 +471,7 @@ class TajoGeneratorAdapter {
         case FLOAT8: methodvisitor.visitInsn(Opcodes.I2D); break;
         case TEXT:   emitStringValueOfChar(); break;
         default:
-          throw new InvalidCastException(srcType, targetType);
+          throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
         }
       } else {
         switch (targetRawType) {
@@ -482,7 +483,7 @@ class TajoGeneratorAdapter {
         case FLOAT4: emitParseFloat4(); break;
         case FLOAT8: emitParseFloat8(); break;
         case TEXT: break;
-        default: throw new InvalidCastException(srcType, targetType);
+        default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
         }
       }
       break;
@@ -499,7 +500,7 @@ class TajoGeneratorAdapter {
       case FLOAT4: methodvisitor.visitInsn(Opcodes.I2F); break;
       case FLOAT8: methodvisitor.visitInsn(Opcodes.I2D); break;
       case TEXT: emitStringValueOfInt4(); break;
-      default: throw new InvalidCastException(srcType, targetType);
+      default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
       }
       break;
     case INT8:
@@ -512,7 +513,7 @@ class TajoGeneratorAdapter {
       case FLOAT4: methodvisitor.visitInsn(Opcodes.L2F); break;
       case FLOAT8: methodvisitor.visitInsn(Opcodes.L2D); break;
       case TEXT: emitStringValueOfInt8(); break;
-      default: throw new InvalidCastException(srcType, targetType);
+      default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
       }
       break;
     case FLOAT4:
@@ -525,7 +526,7 @@ class TajoGeneratorAdapter {
       case FLOAT4: return;
       case FLOAT8: methodvisitor.visitInsn(Opcodes.F2D); break;
       case TEXT: emitStringValueOfFloat4(); break;
-      default: throw new InvalidCastException(srcType, targetType);
+      default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
       }
       break;
     case FLOAT8:
@@ -538,7 +539,7 @@ class TajoGeneratorAdapter {
       case FLOAT4: methodvisitor.visitInsn(Opcodes.D2F); break;
       case FLOAT8: return;
       case TEXT: emitStringValueOfFloat8(); break;
-      default: throw new InvalidCastException(srcType, targetType);
+      default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
       }
       break;
     case TEXT:
@@ -566,10 +567,10 @@ class TajoGeneratorAdapter {
             "toJulianTime", "(L" + Type.getInternalName(String.class) + ";)J");
         break;
       }
-      default: throw new InvalidCastException(srcType, targetType);
+      default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
       }
       break;
-    default: throw new InvalidCastException(srcType, targetType);
+    default: throw new TajoRuntimeException(new InvalidValueForCastException(srcType, targetType));
     }
   }
 
@@ -620,7 +621,7 @@ class TajoGeneratorAdapter {
       invokeVirtual(Datum.class, "asChars", String.class, new Class[]{});
       break;
     default:
-      throw new UnsupportedException("Unsupported type: " + type);
+      throw new TajoRuntimeException(new UnsupportedException("data type '" + type + "'"));
     }
 
     pushNullFlag(true);
@@ -818,7 +819,7 @@ class TajoGeneratorAdapter {
 
   private int nextVarId = 3;
 
-  private Map<String, Integer> localVariablesMap = new HashMap<String, Integer>();
+  private Map<String, Integer> localVariablesMap = new HashMap<>();
 
   public void astore(String name) {
     if (localVariablesMap.containsKey(name)) {
@@ -882,12 +883,6 @@ class TajoGeneratorAdapter {
 
   private int getCurVarIdAndIncrease() {
     int varId = nextVarId++;
-    return varId;
-  }
-
-  private int getCurVarIdAndIncrease(TajoDataTypes.DataType type) {
-    int varId = nextVarId;
-    nextVarId += getWordSize(type);
     return varId;
   }
 
@@ -1008,6 +1003,26 @@ class TajoGeneratorAdapter {
     @Override
     public int compareTo(SwitchCase o) {
       return index - o.index;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+
+      SwitchCase that = (SwitchCase) o;
+
+      if (index != that.index) return false;
+      if (thanResult != null ? !thanResult.equals(that.thanResult) : that.thanResult != null) return false;
+
+      return true;
+    }
+
+    @Override
+    public int hashCode() {
+      int result = index;
+      result = 31 * result + (thanResult != null ? thanResult.hashCode() : 0);
+      return result;
     }
   }
 }

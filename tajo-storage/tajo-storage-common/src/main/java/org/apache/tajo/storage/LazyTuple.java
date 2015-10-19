@@ -19,14 +19,18 @@
 package org.apache.tajo.storage;
 
 import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.IntervalDatum;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.datum.ProtobufDatum;
+import org.apache.tajo.exception.TajoRuntimeException;
 import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.util.datetime.TimeMeta;
 
 import java.util.Arrays;
 
+@Deprecated
 public class LazyTuple implements Tuple, Cloneable {
   private long offset;
   private Datum[] values;
@@ -36,7 +40,7 @@ public class LazyTuple implements Tuple, Cloneable {
   private SerializerDeserializer serializeDeserialize;
 
   public LazyTuple(Schema schema, byte[][] textBytes, long offset) {
-    this(schema, textBytes, offset, NullDatum.get().asTextBytes(), new TextSerializerDeserializer());
+    this(schema, textBytes, offset, NullDatum.get().asTextBytes(), new TextSerializerDeserializer(schema));
   }
 
   public LazyTuple(Schema schema, byte[][] textBytes, long offset, byte[] nullBytes, SerializerDeserializer serde) {
@@ -68,13 +72,19 @@ public class LazyTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public boolean isNull(int fieldid) {
-    return get(fieldid).isNull();
+  public boolean isBlank(int fieldid) {
+    return get(fieldid) == null;
   }
 
   @Override
-  public boolean isNotNull(int fieldid) {
-    return !isNull(fieldid);
+  public boolean isBlankOrNull(int fieldid) {
+    Datum datum = get(fieldid);
+    return datum == null || datum.isNull();
+  }
+
+  @Override
+  public void insertTuple(int fieldId, Tuple tuple) {
+    this.put(fieldId, tuple.asDatum(fieldId));
   }
 
   @Override
@@ -95,31 +105,33 @@ public class LazyTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public void put(int fieldId, Datum[] values) {
-    for (int i = fieldId, j = 0; j < values.length; i++, j++) {
-      this.values[i] = values[j];
-    }
-    this.textBytes = new byte[values.length][];
-  }
-
-  @Override
-  public void put(int fieldId, Tuple tuple) {
-    for (int i = fieldId, j = 0; j < tuple.size(); i++, j++) {
-      values[i] = tuple.get(j);
-      textBytes[i] = null;
-    }
-  }
-
-  @Override
   public void put(Datum[] values) {
-    System.arraycopy(values, 0, this.values, 0, size());
-    this.textBytes = new byte[values.length][];
+    System.arraycopy(values, 0, this.values, 0, this.values.length);
+  }
+
+  @Override
+  public Datum asDatum(int fieldId) {
+     return get(fieldId);
+  }
+
+  @Override
+  public TajoDataTypes.Type type(int fieldId) {
+    return get(fieldId).type();
+  }
+
+  @Override
+  public int size(int fieldId) {
+    return get(fieldId).size();
+  }
+
+  @Override
+  public void clearOffset() {
+    this.offset = -1;
   }
 
   //////////////////////////////////////////////////////
   // Getter
   //////////////////////////////////////////////////////
-  @Override
   public Datum get(int fieldId) {
     if (values[fieldId] != null)
       return values[fieldId];
@@ -127,7 +139,7 @@ public class LazyTuple implements Tuple, Cloneable {
       values[fieldId] = NullDatum.get();  // split error. (col : 3, separator: ',', row text: "a,")
     } else if (textBytes[fieldId] != null) {
       try {
-        values[fieldId] = serializeDeserialize.deserialize(schema.getColumn(fieldId),
+        values[fieldId] = serializeDeserialize.deserialize(fieldId,
             textBytes[fieldId], 0, textBytes[fieldId].length, nullBytes);
       } catch (Exception e) {
         values[fieldId] = NullDatum.get();
@@ -170,6 +182,11 @@ public class LazyTuple implements Tuple, Cloneable {
   }
 
   @Override
+  public byte[] getTextBytes(int fieldId) {
+    return get(fieldId).asTextBytes();
+  }
+
+  @Override
   public short getInt2(int fieldId) {
     return get(fieldId).asInt2();
   }
@@ -200,8 +217,13 @@ public class LazyTuple implements Tuple, Cloneable {
   }
 
   @Override
+  public TimeMeta getTimeDate(int fieldId) {
+    return get(fieldId).asTimeMeta();
+  }
+
+  @Override
   public ProtobufDatum getProtobufDatum(int fieldId) {
-    throw new UnsupportedException();
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
@@ -214,7 +236,9 @@ public class LazyTuple implements Tuple, Cloneable {
     return get(fieldId).asUnicodeChars();
   }
 
+  @Override
   public String toString() {
+    // todo this changes internal state, which causes funny result in GUI debugging
     boolean first = true;
     StringBuilder str = new StringBuilder();
     str.append("(");

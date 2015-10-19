@@ -17,7 +17,22 @@
   limitations under the License.
   -->
 <tns:store xmlns:tns="http://tajo.apache.org/catalogstore" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://tajo.apache.org/catalogstore ../DBMSSchemaDefinition.xsd ">
-	<tns:base version="2">
+  <!--
+      Catalog base version history
+      * 12 - 2015-09-28: Change the variable name storeType to dataFormat (TAJO-1663)
+      * 11 - 2015-09-23: Add contents length and file count for partition directory (TAJO-1493)
+      * 10 - 2015-09-22: Well support for self-describing data formats (TAJO-1832)
+      * 9 - 2015-09-12: Allow external catalog store for unit testing (TAJO-1813)
+      * 8 - 2015-09-02: Wrong table type problem in catalog (TAJO-1808)
+      * 7 - 2015-07-30: Add a column and index for partition keys (TAJO-1346)
+      * 6 - 2015-07-24: Merge the index branch into the master branch (TAJO-1300)
+      * 5 - 2015-06-15: Implement TablespaceManager to load Tablespaces (TAJO-1616)
+      * 4 - 2015-03-27: Partition Schema (TAJO-1284)
+      * 3 - 2015-03-12: Nested Schema (TAJO-1329)
+      * 2 - 2014-06-09: First versioning
+      * 1-  Before 2013-03-20
+    -->
+	<tns:base version="12">
 		<tns:objects>
 			<tns:Object order="0" type="table" name="META">
 				<tns:sql><![CDATA[CREATE TABLE META (VERSION INT NOT NULL)]]></tns:sql>
@@ -43,8 +58,8 @@
 				)]]>
 				</tns:sql>
 			</tns:Object>
-			<tns:Object order="3" type="index" name="IDX_DATABASE_DB_ID" dependsOn="DATABASES_">
-				<tns:sql><![CDATA[CREATE UNIQUE INDEX idx_database_db_id on DATABASES_ (DB_ID)]]></tns:sql>
+			<tns:Object order="3" type="index" name="IDX_DATABASE_DB_NAME" dependsOn="DATABASES_">
+				<tns:sql><![CDATA[CREATE UNIQUE INDEX idx_database_db_id on DATABASES_ (DB_NAME)]]></tns:sql>
 			</tns:Object>
 			<tns:Object order="4" type="table" name="TABLES">
 				<tns:sql><![CDATA[
@@ -54,7 +69,8 @@
   				TABLE_NAME VARCHAR(128) NOT NULL,
   				TABLE_TYPE VARCHAR(128) NOT NULL,
   				PATH VARCHAR(4096),
-  				STORE_TYPE CHAR(16),
+  				DATA_FORMAT CHAR(16),
+  				HAS_SELF_DESCRIBE_SCHEMA BOOLEAN,
   				CONSTRAINT TABLES_PK PRIMARY KEY (TID),
   				CONSTRAINT C_TABLE_ID_UNIQ UNIQUE (DB_ID, TABLE_NAME)
 				)]]>
@@ -72,22 +88,28 @@
   				TID INT NOT NULL REFERENCES TABLES (TID) ON DELETE CASCADE,
   				COLUMN_NAME VARCHAR(128) NOT NULL,
   				ORDINAL_POSITION INTEGER NOT NULL,
+  				NESTED_FIELD_NUM INTEGER NOT NULL,
   				DATA_TYPE CHAR(16),
   				TYPE_LENGTH INTEGER,
-  				CONSTRAINT COLUMNS_PK PRIMARY KEY (TID, COLUMN_NAME)
+  				CONSTRAINT COLUMNS_PK PRIMARY KEY (TID, ORDINAL_POSITION)
 				)]]>
 				</tns:sql>
+				<!--
+					The constraint for guaranteeing the unique column name should be added to COLUMNS table. However, it can
+					make this table's schema complicated due to nested fields. Fortunately, columns are always converted
+					into 'schema' which has a functionality of checking duplicated column names.
+				-->
 			</tns:Object>
 			<tns:Object order="8" type="index" name="IDX_FK_COLUMNS_TABLE_NAME" dependsOn="COLUMNS">
-				<tns:sql><![CDATA[CREATE UNIQUE INDEX idx_fk_columns_table_name on COLUMNS (TID, COLUMN_NAME)]]></tns:sql>
+				<tns:sql><![CDATA[CREATE UNIQUE INDEX idx_fk_columns_table_name on COLUMNS (TID, ORDINAL_POSITION)]]></tns:sql>
 			</tns:Object>
 			<tns:Object order="9" type="table" name="OPTIONS">
 				<tns:sql><![CDATA[
 				CREATE TABLE OPTIONS (
   				TID INT NOT NULL REFERENCES TABLES (TID) ON DELETE CASCADE,
   				KEY_ VARCHAR(255) NOT NULL,
-  				VALUE_ VARCHAR(255) NOT NULL,
-  				CONSTRAINT C_OPTIONS_UNIQUE UNIQUE (TID, KEY_, VALUE_)
+  				VALUE_ VARCHAR(4000) NOT NULL,
+  				CONSTRAINT OPTIONS_PKEY PRIMARY KEY (TID, KEY_)
 				)]]>
 				</tns:sql>
 			</tns:Object>
@@ -97,16 +119,22 @@
 			<tns:Object order="11" type="table" name="INDEXES">
 				<tns:sql><![CDATA[
 				CREATE TABLE INDEXES (
-  				DB_ID INT NOT NULL REFERENCES DATABASES_ (DB_ID) ON DELETE CASCADE,
-  				TID INT NOT NULL REFERENCES TABLES (TID) ON DELETE CASCADE,
-  				INDEX_NAME VARCHAR(128) NOT NULL,
-  				COLUMN_NAME VARCHAR(128) NOT NULL,
-  				DATA_TYPE VARCHAR(128) NOT NULL,
-  				INDEX_TYPE CHAR(32) NOT NULL,
-  				IS_UNIQUE BOOLEAN NOT NULL,
-  				IS_CLUSTERED BOOLEAN NOT NULL,
-  				IS_ASCENDING BOOLEAN NOT NULL,
-  				CONSTRAINT C_INDEXES_PK PRIMARY KEY (DB_ID, INDEX_NAME)
+					INDEX_ID INT NOT NULL GENERATED ALWAYS AS IDENTITY (START WITH 1, INCREMENT BY 1),
+					DB_ID INT NOT NULL REFERENCES DATABASES_ (DB_ID) ON DELETE CASCADE,
+					TID INT NOT NULL REFERENCES TABLES (TID) ON DELETE CASCADE,
+					INDEX_NAME VARCHAR(128) NOT NULL,
+					INDEX_TYPE CHAR(32) NOT NULL,
+					PATH VARCHAR(4096),
+					COLUMN_NAMES VARCHAR(255) NOT NULL, -- array of column names
+					DATA_TYPES VARCHAR(128) NOT NULL, -- array of column types
+					ORDERS VARCHAR(128) NOT NULL, -- array of column orders
+					NULL_ORDERS VARCHAR(128) NOT NULL, -- array of null orderings
+					IS_UNIQUE BOOLEAN NOT NULL,
+					IS_CLUSTERED BOOLEAN NOT NULL,
+					FOREIGN KEY (DB_ID) REFERENCES DATABASES_ (DB_ID) ON DELETE CASCADE,
+					FOREIGN KEY (TID) REFERENCES TABLES (TID) ON DELETE CASCADE,
+					CONSTRAINT INDEXES_PK PRIMARY KEY (INDEX_ID),
+					CONSTRAINT C_INDEXES_UNIQ UNIQUE (DB_ID, INDEX_NAME)
 				)]]>
 				</tns:sql>
 			</tns:Object>
@@ -114,7 +142,7 @@
 				<tns:sql><![CDATA[CREATE UNIQUE INDEX idx_indexes_pk ON INDEXES (DB_ID,index_name)]]></tns:sql>
 			</tns:Object>
 			<tns:Object order="13" type="index" name="IDX_INDEXES_COLUMNS" dependsOn="INDEXES">
-				<tns:sql><![CDATA[CREATE INDEX idx_indexes_columns ON INDEXES (DB_ID,column_name)]]></tns:sql>
+				<tns:sql><![CDATA[CREATE INDEX idx_col_names ON INDEXES (DB_ID,TID,column_names)]]></tns:sql>
 			</tns:Object>
 			<tns:Object order="14" type="table" name="STATS">
 				<tns:sql><![CDATA[
@@ -145,21 +173,33 @@
 			<tns:Object name="PARTITIONS" type="table" order="18">
 				<tns:sql><![CDATA[
 				CREATE TABLE PARTITIONS (
-  				PID INT NOT NULL GENERATED ALWAYS AS IDENTITY (START WITH 1, INCREMENT BY 1),
+  				PARTITION_ID INT NOT NULL GENERATED ALWAYS AS IDENTITY (START WITH 1, INCREMENT BY 1),
   				TID INT NOT NULL REFERENCES TABLES (TID) ON DELETE CASCADE,
-  				PARTITION_NAME VARCHAR(255),
-  				ORDINAL_POSITION INT NOT NULL,
-  				PARTITION_VALUE VARCHAR(1024),
+  				PARTITION_NAME VARCHAR(767),
   				PATH VARCHAR(1024),
-  				CONSTRAINT C_PARTITION_PK PRIMARY KEY (PID),
-  				CONSTRAINT C_PARTITION_UNIQUE UNIQUE (TID, PARTITION_NAME)
+  				NUM_BYTES BIGINT,
+  				CONSTRAINT C_PARTITIONS_PK PRIMARY KEY (PARTITION_ID),
+  				CONSTRAINT C_PARTITIONS_UNIQ UNIQUE (TID, PARTITION_NAME)
 				)]]>
 				</tns:sql>
 			</tns:Object>
-			<tns:Object name="IDX_PARTITIONS_TABLE_NAME" type="index" dependsOn="PARTITIONS" order="19">
-				<tns:sql><![CDATA[CREATE INDEX idx_partitions_table_name ON PARTITIONS(TID)]]></tns:sql>
+			<tns:Object name="PARTITIONS_IDX" type="index" dependsOn="PARTITIONS" order="19">
+				<tns:sql><![CDATA[CREATE INDEX PARTITIONS_IDX ON PARTITIONS(PARTITION_ID, TID, PARTITION_NAME)]]></tns:sql>
 			</tns:Object>
-		</tns:objects>
+      <tns:Object name="PARTITION_KEYS" type="table" order="20">
+        <tns:sql><![CDATA[
+				CREATE TABLE PARTITION_KEYS (
+  				PARTITION_ID INT NOT NULL REFERENCES PARTITIONS (PARTITION_ID) ON DELETE CASCADE,
+  				TID INT NOT NULL,
+  				COLUMN_NAME VARCHAR(128) NOT NULL,
+  				PARTITION_VALUE VARCHAR(255)
+				)]]>
+        </tns:sql>
+      </tns:Object>
+      <tns:Object name="PARTITION_KEYS_IDX" type="index" dependsOn="PARTITION_KEYS" order="21">
+        <tns:sql><![CDATA[CREATE INDEX PARTITION_KEYS_IDX ON PARTITION_KEYS(TID , COLUMN_NAME, PARTITION_VALUE)]]></tns:sql>
+      </tns:Object>
+    </tns:objects>
 	</tns:base>
 	<tns:existQueries>
 	  <tns:existQuery type="trigger">

@@ -18,21 +18,21 @@
 
 package org.apache.tajo.exception;
 
-public class UnsupportedException extends RuntimeException {
+import org.apache.tajo.error.Errors;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.ReturnState;
+
+public class UnsupportedException extends TajoException {
   private static final long serialVersionUID = 6702291354858193578L;
 
+  public UnsupportedException(ReturnState state) {
+    super(state);
+  }
+
   public UnsupportedException() {
+    super(Errors.ResultCode.FEATURE_NOT_SUPPORTED, ExceptionUtil.getExceptionPoint());
   }
 
-  public UnsupportedException(String message) {
-    super(message);
-  }
-
-  public UnsupportedException(Throwable cause) {
-    super(cause);
-  }
-
-  public UnsupportedException(String message, Throwable cause) {
-    super(message, cause);
+  public UnsupportedException(String featureName) {
+    super(Errors.ResultCode.FEATURE_NOT_SUPPORTED, featureName);
   }
 }

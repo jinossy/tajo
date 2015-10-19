@@ -19,16 +19,21 @@
 %>
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 <%@ page import="org.apache.tajo.master.TajoMaster" %>
-<%@ page import="org.apache.tajo.ha.HAService" %>
+<%@ page import="org.apache.tajo.service.ServiceTracker" %>
 <%@ page import="org.apache.tajo.webapp.StaticHttpServer" %>
+<%@ page import="java.net.InetSocketAddress" %>
 
 <%
   TajoMaster master = (TajoMaster) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
 
-  HAService haService = master.getContext().getHAService();
+  String[] masterName = master.getMasterName().split(":");
+  InetSocketAddress socketAddress = new InetSocketAddress(masterName[0], Integer.parseInt(masterName[1]));
+  String masterLabel = socketAddress.getAddress().getHostName()+ ":" + socketAddress.getPort();
+
+  ServiceTracker haService = master.getContext().getHAService();
   String activeLabel = "";
   if (haService != null) {
-      if (haService.isActiveStatus()) {
+      if (haService.isActiveMaster()) {
       activeLabel = "<font color='#1e90ff'>(active)</font>";
     } else {
       activeLabel = "<font color='#1e90ff'>(backup)</font>";
@@ -287,7 +292,7 @@ function getPage() {
 <body>
 <%@ include file="header.jsp"%>
 <div class='contents'>
-  <h2>Tajo Master: <%=master.getMasterName()%> <%=activeLabel%></h2>
+  <h2>Tajo Master: <%=masterLabel%> <%=activeLabel%></h2>
   <hr/>
   <h3>Query</h3>
   Database :  
@@ -295,7 +300,7 @@ function getPage() {
     <%
 	for (String databaseName : master.getCatalog().getAllDatabaseNames()) {
 	%>
-	  <option value="<%=databaseName%>"><%=databaseName%></option>
+	  <option value="<%=databaseName%>" <%= (databaseName.equals("default"))?"selected":"" %> ><%=databaseName%></option>
 	<%
 	}
 	%>
@@ -329,7 +334,7 @@ function getPage() {
   <hr/>
   <div id="queryResultTools"></div>
   <hr/>
-  <div style="display:none;"><form name="dataForm" id="dataForm" method="post" action="getCSV.jsp"><input type="hidden" id="csvData" name="csvData" value="" /></div>
+  <div style="display:none;"><form name="dataForm" id="dataForm" method="post" action="getCSV.jsp"><input type="hidden" id="csvData" name="csvData" value="" /></form></div>
 </div>
 </body>
 </html>

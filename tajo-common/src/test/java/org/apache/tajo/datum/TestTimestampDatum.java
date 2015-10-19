@@ -19,7 +19,7 @@
 package org.apache.tajo.datum;
 
 import org.apache.tajo.common.TajoDataTypes.Type;
-import org.apache.tajo.exception.InvalidCastException;
+import org.apache.tajo.exception.TajoRuntimeException;
 import org.apache.tajo.json.CommonGsonHelper;
 import org.apache.tajo.util.datetime.DateTimeUtil;
 import org.junit.BeforeClass;
@@ -50,7 +50,7 @@ public class TestTimestampDatum {
     assertEquals(Type.TIMESTAMP, d.type());
 	}
 
-	@Test(expected = InvalidCastException.class)
+	@Test(expected = TajoRuntimeException.class)
 	public final void testAsInt4() {
     Datum d = DatumFactory.createTimestmpDatumWithUnixTime(unixtime);
     d.asInt4();
@@ -63,13 +63,13 @@ public class TestTimestampDatum {
     assertEquals(DateTimeUtil.javaTimeToJulianTime(javaTime), d.asInt8());
 	}
 
-  @Test(expected = InvalidCastException.class)
+  @Test(expected = TajoRuntimeException.class)
 	public final void testAsFloat4() {
     Datum d = DatumFactory.createTimestmpDatumWithUnixTime(unixtime);
     d.asFloat4();
 	}
 
-  @Test(expected = InvalidCastException.class)
+  @Test(expected = TajoRuntimeException.class)
 	public final void testAsFloat8() {
     int instance = 1386577582;
     Datum d = DatumFactory.createTimestmpDatumWithUnixTime(instance);
@@ -86,6 +86,13 @@ public class TestTimestampDatum {
     copy = DatumFactory.createTimestamp(d.asChars());
     assertEquals(d, copy);
 	}
+
+  @Test
+  public void testAsText2() {
+    // TAJO-1366
+    TimestampDatum datum = DatumFactory.createTimestamp("Mon Nov 03 00:03:00 +0000 2014");
+    assertEquals("2014-11-03 00:03:00", datum.asChars());
+  }
 
 	@Test
   public final void testSize() {
@@ -113,7 +120,7 @@ public class TestTimestampDatum {
   public final void testTimeZone() {
     TimestampDatum datum = new TimestampDatum(DateTimeUtil.toJulianTimestamp(2014, 5, 1, 15, 20, 30, 0));
     assertEquals("2014-05-01 15:20:30", datum.asChars());
-    assertEquals("2014-05-02 00:20:30+09", datum.asChars(TimeZone.getTimeZone("GMT+9"), true));
+    assertEquals("2014-05-02 00:20:30+09", TimestampDatum.asChars(datum.asTimeMeta(), TimeZone.getTimeZone("GMT+9"), true));
   }
 
   @Test

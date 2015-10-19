@@ -20,7 +20,6 @@ package org.apache.tajo.engine.function.builtin;
 
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.common.TajoDataTypes;
-import org.apache.tajo.datum.Datum;
 import org.apache.tajo.plan.function.FunctionContext;
 import org.apache.tajo.engine.function.annotation.Description;
 import org.apache.tajo.engine.function.annotation.ParamTypes;
@@ -44,9 +43,8 @@ public class AvgFloat extends AvgDouble {
   @Override
   public void eval(FunctionContext ctx, Tuple params) {
     AvgContext avgCtx = (AvgContext) ctx;
-    Datum datum = params.get(0);
-    if (datum.isNotNull()) {
-      avgCtx.sum += datum.asFloat4();
+    if (!params.isBlankOrNull(0)) {
+      avgCtx.sum += params.getFloat4(0);
       avgCtx.count++;
     }
   }

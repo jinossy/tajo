@@ -18,22 +18,17 @@
 
 package org.apache.tajo.catalog;
 
-import org.apache.tajo.function.Function;
 import org.apache.tajo.catalog.json.CatalogGsonHelper;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionDescProto;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
 import org.apache.tajo.common.TajoDataTypes.Type;
-import org.apache.tajo.exception.InternalException;
-import org.apache.tajo.util.CommonTestingUtil;
-import org.apache.tajo.util.FileUtil;
+import org.apache.tajo.function.Function;
 import org.junit.Test;
 
-import java.io.File;
 import java.io.IOException;
 
 import static org.junit.Assert.*;
-import static org.junit.Assert.assertEquals;
 
 public class TestFunctionDesc {
   private static final String TEST_PATH = "target/test-data/TestFunctionDesc";
@@ -68,34 +63,15 @@ public class TestFunctionDesc {
     desc.setDetail("detail");
 
     assertEquals("sum", desc.getFunctionName());
-    assertEquals(TestSum.class, desc.getFuncClass());
+    assertEquals(TestSum.class, desc.getLegacyFuncClass());
     assertEquals(FunctionType.GENERAL, desc.getFuncType());
     assertEquals(Type.INT4, desc.getReturnType().getType());
     assertArrayEquals(CatalogUtil.newSimpleDataTypeArray(Type.INT4, Type.INT8),
         desc.getParamTypes());
-
-    CommonTestingUtil.getTestDir(TEST_PATH);
-    File save = new File(TEST_PATH + "/save.dat");
-    FileUtil.writeProto(save, desc.getProto());
-
-    FunctionDescProto proto = FunctionDescProto.getDefaultInstance();
-    proto = (FunctionDescProto) FileUtil.loadProto(save, proto);
-
-    FunctionDesc newDesc = new FunctionDesc(proto);
-
-    assertEquals("sum", newDesc.getFunctionName());
-    assertEquals(TestSum.class, newDesc.getFuncClass());
-    assertEquals(FunctionType.GENERAL, newDesc.getFuncType());
-    assertEquals(Type.INT4, newDesc.getReturnType().getType());
-
-    assertArrayEquals(CatalogUtil.newSimpleDataTypeArray(Type.INT4, Type.INT8),
-        newDesc.getParamTypes());
-
-    assertEquals(desc.getProto(), newDesc.getProto());
   }
   
   @Test
-  public void testToJson() throws InternalException {
+  public void testToJson() {
 	  FunctionDesc desc = new FunctionDesc("sum", TestSum.class, FunctionType.GENERAL,
         CatalogUtil.newSimpleDataType(Type.INT4),
         CatalogUtil.newSimpleDataTypeArray(Type.INT4, Type.INT8));
@@ -106,7 +82,7 @@ public class TestFunctionDesc {
   }
 
   @Test
-  public void testGetProto() throws InternalException, ClassNotFoundException {
+  public void testGetProto() throws ClassNotFoundException {
     FunctionDesc desc = new FunctionDesc("sum", TestSum.class, FunctionType.GENERAL,
         CatalogUtil.newSimpleDataType(Type.INT4),
         CatalogUtil.newSimpleDataTypeArray(Type.INT4, Type.INT8));

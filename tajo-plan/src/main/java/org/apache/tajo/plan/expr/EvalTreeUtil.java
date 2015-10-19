@@ -29,10 +29,10 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.Datum;
-import org.apache.tajo.exception.InternalException;
-import org.apache.tajo.plan.util.ExprFinder;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.plan.LogicalPlan;
 import org.apache.tajo.plan.Target;
+import org.apache.tajo.plan.util.ExprFinder;
 import org.apache.tajo.util.TUtil;
 
 import java.util.*;
@@ -46,7 +46,7 @@ public class EvalTreeUtil {
   public static int replace(EvalNode expr, EvalNode targetExpr, EvalNode tobeReplaced) {
     EvalReplaceVisitor replacer = new EvalReplaceVisitor(targetExpr, tobeReplaced);
     ReplaceContext context = new ReplaceContext();
-    replacer.visitChild(context, expr, new Stack<EvalNode>());
+    replacer.visit(context, expr, new Stack<>());
     return context.countOfReplaces;
   }
 
@@ -64,8 +64,8 @@ public class EvalTreeUtil {
     }
 
     @Override
-    public EvalNode visitChild(ReplaceContext context, EvalNode evalNode, Stack<EvalNode> stack) {
-      super.visitChild(context, evalNode, stack);
+    public EvalNode visit(ReplaceContext context, EvalNode evalNode, Stack<EvalNode> stack) {
+      super.visit(context, evalNode, stack);
 
       if (evalNode.equals(target)) {
         context.countOfReplaces++;
@@ -144,8 +144,7 @@ public class EvalTreeUtil {
     return finder.getColumnRefs();
   }
   
-  public static Schema getSchemaByTargets(Schema inputSchema, Target[] targets)
-      throws InternalException {
+  public static Schema getSchemaByTargets(Schema inputSchema, Target[] targets) {
     Schema schema = new Schema();
     for (Target target : targets) {
       schema.addColumn(
@@ -167,8 +166,7 @@ public class EvalTreeUtil {
     return sb.toString();
   }
   
-  public static DataType getDomainByExpr(Schema inputSchema, EvalNode expr)
-      throws InternalException {
+  public static DataType getDomainByExpr(Schema inputSchema, EvalNode expr) {
     switch (expr.getType()) {
     case AND:      
     case OR:
@@ -192,8 +190,7 @@ public class EvalTreeUtil {
 
       
     default:
-      throw new InternalException("Unknown expr type: " 
-          + expr.getType().toString());
+      throw new TajoInternalError("Unknown expr type: " + expr.getType().toString());
     }
   }
 
@@ -233,6 +230,9 @@ public class EvalTreeUtil {
       if (containColumnRef(expr, target)) {          
         exprSet.add(expr);
       }
+      break;
+    default:
+      break;
     }    
   }
   
@@ -318,7 +318,7 @@ public class EvalTreeUtil {
         } else if (leftSchema != null && rightSchema != null) {
           ensureColumnsOfDifferentTables = isJoinQualwithSchemas(leftSchema, rightSchema, leftColumn, rightColumn);
         } else {
-          ensureColumnsOfDifferentTables = isJoinQualWithOnlyColumns(block, leftColumn, rightColumn);
+          ensureColumnsOfDifferentTables = isJoinQualWithOnlyColumns(null, leftColumn, rightColumn);
         }
       }
 
@@ -344,7 +344,7 @@ public class EvalTreeUtil {
   }
 
   private static boolean isJoinQualWithOnlyColumns(@Nullable LogicalPlan.QueryBlock block,
-                                            Column left, Column right) {
+                                                   Column left, Column right) {
     String leftQualifier = CatalogUtil.extractQualifier(left.getQualifiedName());
     String rightQualifier = CatalogUtil.extractQualifier(right.getQualifiedName());
 
@@ -382,7 +382,7 @@ public class EvalTreeUtil {
     return !leftQualifier.equals(rightQualifier);
   }
 
-  static boolean isSingleColumn(EvalNode evalNode) {
+  public static boolean isSingleColumn(EvalNode evalNode) {
     return EvalTreeUtil.findUniqueColumns(evalNode).size() == 1;
   }
   
@@ -408,7 +408,7 @@ public class EvalTreeUtil {
   }
   
   public static class AllColumnRefFinder implements EvalNodeVisitor {
-    private List<Column> colList = new ArrayList<Column>();
+    private List<Column> colList = new ArrayList<>();
     private FieldEval field = null;
     
     @Override
@@ -486,16 +486,38 @@ public class EvalTreeUtil {
       return this.aggFucntions;
     }
   }
+  
+  public static Set<WindowFunctionEval> findWindowFunction(EvalNode expr) {
+    AllWindowFunctionFinder finder = new AllWindowFunctionFinder();
+    expr.postOrder(finder);
+    return finder.getWindowFunctionSet();
+  }
+  
+  public static class AllWindowFunctionFinder implements EvalNodeVisitor {
+    private Set<WindowFunctionEval> windowFunctions = Sets.newHashSet();
+
+    @Override
+    public void visit(EvalNode node) {
+      if (node.getType() == EvalType.WINDOW_FUNCTION) {
+        WindowFunctionEval field = (WindowFunctionEval) node;
+        windowFunctions.add(field);
+      }
+    }
+    
+    public Set<WindowFunctionEval> getWindowFunctionSet() {
+      return windowFunctions;
+    }
+  }
 
   public static <T extends EvalNode> Collection<T> findEvalsByType(EvalNode evalNode, EvalType type) {
     EvalFinder finder = new EvalFinder(type);
-    finder.visitChild(null, evalNode, new Stack<EvalNode>());
+    finder.visit(null, evalNode, new Stack<>());
     return (Collection<T>) finder.evalNodes;
   }
 
   public static <T extends EvalNode> Collection<T> findOuterJoinSensitiveEvals(EvalNode evalNode) {
     OuterJoinSensitiveEvalFinder finder = new OuterJoinSensitiveEvalFinder();
-    finder.visitChild(null, evalNode, new Stack<EvalNode>());
+    finder.visit(null, evalNode, new Stack<>());
     return (Collection<T>) finder.evalNodes;
   }
 
@@ -508,8 +530,8 @@ public class EvalTreeUtil {
     }
 
     @Override
-    public Object visitChild(Object context, EvalNode evalNode, Stack<EvalNode> stack) {
-      super.visitChild(context, evalNode, stack);
+    public Object visit(Object context, EvalNode evalNode, Stack<EvalNode> stack) {
+      super.visit(context, evalNode, stack);
 
       if (evalNode.type == targetType) {
         evalNodes.add(evalNode);
@@ -517,14 +539,18 @@ public class EvalTreeUtil {
 
       return evalNode;
     }
+
+    public List<EvalNode> getEvalNodes() {
+      return evalNodes;
+    }
   }
 
   public static class OuterJoinSensitiveEvalFinder extends BasicEvalNodeVisitor<Object, Object> {
     private List<EvalNode> evalNodes = TUtil.newList();
 
     @Override
-    public Object visitChild(Object context, EvalNode evalNode, Stack<EvalNode> stack) {
-      super.visitChild(context, evalNode, stack);
+    public Object visit(Object context, EvalNode evalNode, Stack<EvalNode> stack) {
+      super.visit(context, evalNode, stack);
 
       if (evalNode.type == EvalType.CASE) {
         evalNodes.add(evalNode);
@@ -545,7 +571,39 @@ public class EvalTreeUtil {
     return findUniqueColumns(evalNode).size() == 0 && findDistinctAggFunction(evalNode).size() == 0;
   }
 
-  public static Datum evaluateImmediately(EvalNode evalNode) {
-    return evalNode.eval(null, null);
+  public static Datum evaluateImmediately(EvalContext evalContext, EvalNode evalNode) {
+    evalNode.bind(evalContext, null);
+    return evalNode.eval(null);
+  }
+
+  /**
+   * Checks whether EvalNode consists of only partition columns and const values.
+   * The partition based simple query can be defined as 'select * from tb_name where col_name1="X" and col_name2="Y" [LIMIT Z]',
+   * whose WHERE clause consists of only partition-columns with constant values.
+   * Partition columns must be able to form a prefix of HDFS path like '/tb_name1/col_name1=X/col_name2=Y'.
+   *
+   * @param node The qualification node of a SELECTION node
+   * @param partSchema Partition expression schema
+   * @return True if the query is partition-column based simple query.
+   */
+  public static boolean checkIfPartitionSelection(EvalNode node, Schema partSchema) {
+    if (node != null && node instanceof BinaryEval) {
+      BinaryEval eval = (BinaryEval)node;
+      EvalNode left = eval.getLeftExpr();
+      EvalNode right = eval.getRightExpr();
+      EvalType type = eval.getType();
+
+      if (type == EvalType.EQUAL) {
+        if (left instanceof FieldEval && right instanceof ConstEval && partSchema.contains(((FieldEval) left).getColumnName())) {
+          return true;
+        } else if (left instanceof ConstEval && right instanceof FieldEval && partSchema.contains(((FieldEval) right).getColumnName())) {
+          return true;
+        }
+      } else if ((type == EvalType.AND || type == EvalType.OR)
+          && left instanceof BinaryEval && right instanceof BinaryEval) {
+        return checkIfPartitionSelection(left, partSchema) && checkIfPartitionSelection(right, partSchema);
+      }
+    }
+    return false;
   }
 }

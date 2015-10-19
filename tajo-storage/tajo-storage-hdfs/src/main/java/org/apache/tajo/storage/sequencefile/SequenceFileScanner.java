@@ -18,6 +18,7 @@
 
 package org.apache.tajo.storage.sequencefile;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
@@ -31,9 +32,15 @@ import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.fragment.Fragment;
-import org.apache.tajo.util.BytesUtils;
+import org.apache.tajo.storage.text.ByteBufLineReader;
+import org.apache.tajo.storage.text.DelimitedTextFile;
+import org.apache.tajo.storage.text.TextLineDeserializer;
+import org.apache.tajo.storage.text.TextLineParsingError;
 
 import java.io.IOException;
 
@@ -71,6 +78,11 @@ public class SequenceFileScanner extends FileScanner {
 
   private Writable EMPTY_KEY;
 
+  private TextLineDeserializer deserializer;
+  private ByteBuf byteBuf = BufferPool.directBuffer(ByteBufLineReader.DEFAULT_BUFFER);
+
+  private Tuple outTuple;
+
   public SequenceFileScanner(Configuration conf, Schema schema, TableMeta meta, Fragment fragment) throws IOException {
     super(conf, schema, meta, fragment);
   }
@@ -107,16 +119,20 @@ public class SequenceFileScanner extends FileScanner {
       targets = schema.toArray();
     }
 
+    outTuple = new VTuple(targets.length);
+    deserializer = DelimitedTextFile.getLineSerde(meta).createDeserializer(schema, meta, targets);
+    deserializer.init();
 
-    fieldIsNull = new boolean[schema.getColumns().size()];
-    fieldStart = new int[schema.getColumns().size()];
-    fieldLength = new int[schema.getColumns().size()];
+    fieldIsNull = new boolean[schema.getRootColumns().size()];
+    fieldStart = new int[schema.getRootColumns().size()];
+    fieldLength = new int[schema.getRootColumns().size()];
 
     prepareProjection(targets);
 
     try {
       String serdeClass = this.meta.getOption(StorageConstants.SEQUENCEFILE_SERDE, TextSerializerDeserializer.class.getName());
       serde = (SerializerDeserializer) Class.forName(serdeClass).newInstance();
+      serde.init(schema);
 
       if (serde instanceof BinarySerializerDeserializer) {
         hasBinarySerDe = true;
@@ -146,6 +162,8 @@ public class SequenceFileScanner extends FileScanner {
     }
   }
 
+  Text text = new Text();
+
   @Override
   public Tuple next() throws IOException {
     if (!more) return null;
@@ -160,23 +178,25 @@ public class SequenceFileScanner extends FileScanner {
     }
 
     if (more) {
-      Tuple tuple = null;
-      byte[][] cells;
-
       if (hasBinarySerDe) {
         BytesWritable bytesWritable = new BytesWritable();
         reader.getCurrentValue(bytesWritable);
-        tuple = makeTuple(bytesWritable);
+        makeTuple(bytesWritable);
         totalBytes += (long)bytesWritable.getBytes().length;
       } else {
-        Text text = new Text();
         reader.getCurrentValue(text);
-        cells = BytesUtils.splitPreserveAllTokens(text.getBytes(), delimiter, projectionMap);
-        totalBytes += (long)text.getBytes().length;
-        tuple = new LazyTuple(schema, cells, 0, nullChars, serde);
+
+        byteBuf.clear();
+        byteBuf.writeBytes(text.getBytes(), 0, text.getLength());
+
+        try {
+          deserializer.deserialize(byteBuf, outTuple);
+        } catch (TextLineParsingError e) {
+          throw new IOException(e);
+        }
       }
       currentIdx++;
-      return tuple;
+      return outTuple;
     } else {
       return null;
     }
@@ -196,8 +216,6 @@ public class SequenceFileScanner extends FileScanner {
    * So, tajo must make a tuple after parsing hive style BinarySerDe.
    */
   private Tuple makeTuple(BytesWritable value) throws IOException{
-    Tuple tuple = new VTuple(schema.getColumns().size());
-
     int start = 0;
     int length = value.getLength();
 
@@ -212,7 +230,7 @@ public class SequenceFileScanner extends FileScanner {
     int lastFieldByteEnd = start + 1;
 
     // Go through all bytes in the byte[]
-    for (int i = 0; i < schema.getColumns().size(); i++) {
+    for (int i = 0; i < schema.getRootColumns().size(); i++) {
       fieldIsNull[i] = true;
       if ((nullByte & (1 << (i % 8))) != 0) {
         fieldIsNull[i] = false;
@@ -224,8 +242,8 @@ public class SequenceFileScanner extends FileScanner {
 
         for (int j = 0; j < projectionMap.length; j++) {
           if (projectionMap[j] == i) {
-            Datum datum = serde.deserialize(schema.getColumn(i), bytes, fieldStart[i], fieldLength[i], nullChars);
-            tuple.put(i, datum);
+            Datum datum = serde.deserialize(i, bytes, fieldStart[i], fieldLength[i], nullChars);
+            outTuple.put(i, datum);
           }
         }
       }
@@ -243,7 +261,7 @@ public class SequenceFileScanner extends FileScanner {
       }
     }
 
-    return tuple;
+    return outTuple;
   }
 
   /**
@@ -317,6 +335,11 @@ public class SequenceFileScanner extends FileScanner {
       tableStats.setReadBytes(totalBytes);
       tableStats.setNumRows(currentIdx);
     }
+
+    outTuple = null;
+    if (this.byteBuf.refCnt() > 0) {
+      this.byteBuf.release();
+    }
   }
 
   @Override
@@ -326,7 +349,12 @@ public class SequenceFileScanner extends FileScanner {
 
   @Override
   public boolean isSelectable() {
-    return true;
+    return false;
+  }
+
+  @Override
+  public void setFilter(EvalNode filter) {
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override

@@ -38,8 +38,8 @@ public abstract class Min extends AggFunction<Datum> {
   @Override
   public void eval(FunctionContext ctx, Tuple params) {
     MinContext minCtx = (MinContext) ctx;
-    Datum datum = params.get(0);
-    if (datum.isNotNull()) {
+    if (!params.isBlankOrNull(0)) {
+      Datum datum = params.asDatum(0);
       if (minCtx.min == null || minCtx.min.compareTo(datum) > 0) {
         minCtx.min = datum;
       }
@@ -70,7 +70,7 @@ public abstract class Min extends AggFunction<Datum> {
     }
   }
 
-  private class MinContext implements FunctionContext {
+  private static class MinContext implements FunctionContext {
     Datum min = null;
   }
 }

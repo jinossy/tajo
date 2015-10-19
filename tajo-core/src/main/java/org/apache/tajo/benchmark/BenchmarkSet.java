@@ -18,37 +18,47 @@
 
 package org.apache.tajo.benchmark;
 
-import com.google.protobuf.ServiceException;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.tajo.catalog.CatalogConstants;
 import org.apache.tajo.catalog.Schema;
-import org.apache.tajo.catalog.store.MemStore;
+import org.apache.tajo.catalog.store.DerbyStore;
+import org.apache.tajo.client.DummyServiceTracker;
 import org.apache.tajo.client.TajoClient;
 import org.apache.tajo.client.TajoClientImpl;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.conf.TajoConf.ConfVars;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.service.ServiceTracker;
+import org.apache.tajo.service.ServiceTrackerFactory;
 import org.apache.tajo.util.FileUtil;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
 public abstract class BenchmarkSet {
   protected TajoClient tajo;
-  protected Map<String, Schema> schemas = new HashMap<String, Schema>();
-  protected Map<String, Schema> outSchemas = new HashMap<String, Schema>();
-  protected Map<String, String> queries = new HashMap<String, String>();
+  protected Map<String, Schema> schemas = new HashMap<>();
+  protected Map<String, Schema> outSchemas = new HashMap<>();
+  protected Map<String, String> queries = new HashMap<>();
   protected String dataDir;
 
-  public void init(TajoConf conf, String dataDir) throws IOException {
+  public void init(TajoConf conf, String dataDir) throws SQLException {
     this.dataDir = dataDir;
-    if (System.getProperty(ConfVars.WORKER_PEER_RPC_ADDRESS.varname) != null) {
-      tajo = new TajoClientImpl(NetUtils.createSocketAddr(
-          System.getProperty(ConfVars.WORKER_PEER_RPC_ADDRESS.varname)));
+
+    if (System.getProperty(ConfVars.TAJO_MASTER_CLIENT_RPC_ADDRESS.varname) != null) {
+
+      String addressStr = System.getProperty(ConfVars.TAJO_MASTER_CLIENT_RPC_ADDRESS.varname);
+      InetSocketAddress addr = NetUtils.createSocketAddr(addressStr);
+      ServiceTracker serviceTracker = new DummyServiceTracker(addr);
+      tajo = new TajoClientImpl(serviceTracker, null);
+
     } else {
-      conf.set(CatalogConstants.STORE_CLASS, MemStore.class.getCanonicalName());
-      tajo = new TajoClientImpl(conf);
+      conf.set(CatalogConstants.STORE_CLASS, DerbyStore.class.getCanonicalName());
+      tajo = new TajoClientImpl(ServiceTrackerFactory.get(conf));
     }
   }
 
@@ -81,7 +91,7 @@ public abstract class BenchmarkSet {
 
   public abstract void loadQueries() throws IOException;
 
-  public abstract void loadTables() throws ServiceException;
+  public abstract void loadTables() throws TajoException;
 
   public String [] getTableNames() {
     return schemas.keySet().toArray(new String[schemas.size()]);
@@ -103,7 +113,7 @@ public abstract class BenchmarkSet {
     return outSchemas.get(name);
   }
 
-  public void perform(String queryName) throws IOException, ServiceException {
+  public void perform(String queryName) throws SQLException {
     String query = getQuery(queryName);
     if (query == null) {
       throw new IllegalArgumentException("#{queryName} does not exists");

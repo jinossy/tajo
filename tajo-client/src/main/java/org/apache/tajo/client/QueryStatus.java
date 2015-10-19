@@ -36,13 +36,15 @@ public class QueryStatus {
 
   public QueryStatus(GetQueryStatusResponse proto) {
     queryId = new QueryId(proto.getQueryId());
-    state = proto.getState();
+    state = proto.getQueryState();
     progress = proto.getProgress();
     submitTime = proto.getSubmitTime();
     finishTime = proto.getFinishTime();
     hasResult = proto.getHasResult();
     if (proto.hasErrorMessage()) {
       errorText = proto.getErrorMessage();
+    } else {
+      errorText = "Internal error. Please check out log files in ${tajo_install_dir}/logs directory.";
     }
     if (proto.hasErrorTrace()) {
       errorTrace = proto.getErrorTrace();

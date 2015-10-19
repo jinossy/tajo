@@ -19,6 +19,7 @@
 package org.apache.tajo.querymaster;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -27,7 +28,6 @@ import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.SessionVars;
 import org.apache.tajo.algebra.JoinType;
 import org.apache.tajo.catalog.*;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.catalog.statistics.StatisticsUtil;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf.ConfVars;
@@ -37,25 +37,23 @@ import org.apache.tajo.engine.planner.UniformRangePartition;
 import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.engine.planner.global.DataChannel;
 import org.apache.tajo.engine.planner.global.ExecutionBlock;
-import org.apache.tajo.engine.planner.global.GlobalPlanner;
 import org.apache.tajo.engine.planner.global.MasterPlan;
+import org.apache.tajo.engine.planner.global.rewriter.rules.GlobalPlanRewriteUtil;
 import org.apache.tajo.engine.utils.TupleUtil;
-import org.apache.tajo.exception.InternalException;
-import org.apache.tajo.ipc.TajoWorkerProtocol.DistinctGroupbyEnforcer.MultipleAggregationStage;
-import org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty;
-import org.apache.tajo.querymaster.Task.IntermediateEntry;
-import org.apache.tajo.plan.logical.SortNode.SortPurpose;
-import org.apache.tajo.plan.util.PlannerUtil;
-import org.apache.tajo.plan.PlanningException;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.TajoInternalError;
+import org.apache.tajo.exception.UndefinedTableException;
 import org.apache.tajo.plan.logical.*;
-import org.apache.tajo.storage.FileStorageManager;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.RowStoreUtil;
-import org.apache.tajo.storage.TupleRange;
+import org.apache.tajo.plan.logical.SortNode.SortPurpose;
+import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.MultipleAggregationStage;
+import org.apache.tajo.plan.serder.PlanProto.EnforceProperty;
+import org.apache.tajo.plan.util.PlannerUtil;
+import org.apache.tajo.querymaster.Task.IntermediateEntry;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.storage.fragment.Fragment;
-import org.apache.tajo.util.Pair;
 import org.apache.tajo.unit.StorageUnit;
+import org.apache.tajo.util.Pair;
 import org.apache.tajo.util.TUtil;
 import org.apache.tajo.util.TajoIdUtils;
 import org.apache.tajo.worker.FetchImpl;
@@ -81,25 +79,19 @@ public class Repartitioner {
   private final static String UNKNOWN_HOST = "unknown";
 
   public static void scheduleFragmentsForJoinQuery(TaskSchedulerContext schedulerContext, Stage stage)
-      throws IOException {
-    MasterPlan masterPlan = stage.getMasterPlan();
+      throws IOException, TajoException {
     ExecutionBlock execBlock = stage.getBlock();
     QueryMasterTask.QueryMasterTaskContext masterContext = stage.getContext();
 
     ScanNode[] scans = execBlock.getScanNodes();
-
-    Path tablePath;
     Fragment[] fragments = new Fragment[scans.length];
     long[] stats = new long[scans.length];
 
     // initialize variables from the child operators
     for (int i = 0; i < scans.length; i++) {
-      TableDesc tableDesc = masterContext.getTableDescMap().get(scans[i].getCanonicalName());
-      if (tableDesc == null) { // if it is a real table stored on storage
-        FileStorageManager storageManager =
-            (FileStorageManager)StorageManager.getFileStorageManager(stage.getContext().getConf());
+      TableDesc tableDesc = masterContext.getTableDesc(scans[i]);
 
-        tablePath = storageManager.getTablePath(scans[i].getTableName());
+      if (tableDesc == null) { // if it is a real table stored on storage
         if (execBlock.getUnionScanMap() != null && !execBlock.getUnionScanMap().isEmpty()) {
           for (Map.Entry<ExecutionBlockId, ExecutionBlockId> unionScanEntry: execBlock.getUnionScanMap().entrySet()) {
             ExecutionBlockId originScanEbId = unionScanEntry.getKey();
@@ -109,25 +101,25 @@ public class Repartitioner {
           ExecutionBlockId scanEBId = TajoIdUtils.createExecutionBlockId(scans[i].getTableName());
           stats[i] = masterContext.getStage(scanEBId).getResultStats().getNumBytes();
         }
-        fragments[i] = new FileFragment(scans[i].getCanonicalName(), tablePath, 0, 0, new String[]{UNKNOWN_HOST});
+
+        // TODO - We should remove dummy fragment usages
+        fragments[i] = new FileFragment(scans[i].getCanonicalName(), new Path("/dummy"), 0, 0,
+            new String[]{UNKNOWN_HOST});
+
       } else {
-        try {
-          stats[i] = GlobalPlanner.computeDescendentVolume(scans[i]);
-        } catch (PlanningException e) {
-          throw new IOException(e);
-        }
 
-        StorageManager storageManager =
-            StorageManager.getStorageManager(stage.getContext().getConf(), tableDesc.getMeta().getStoreType());
+        stats[i] = GlobalPlanRewriteUtil.computeDescendentVolume(scans[i]);
 
-        // if table has no data, storageManager will return empty FileFragment.
+        // if table has no data, tablespace will return empty FileFragment.
         // So, we need to handle FileFragment by its size.
         // If we don't check its size, it can cause IndexOutOfBoundsException.
-        List<Fragment> fileFragments = storageManager.getSplits(scans[i].getCanonicalName(), tableDesc);
+        Tablespace space = TablespaceManager.get(tableDesc.getUri());
+        List<Fragment> fileFragments = space.getSplits(scans[i].getCanonicalName(), tableDesc, null);
         if (fileFragments.size() > 0) {
           fragments[i] = fileFragments.get(0);
         } else {
-          fragments[i] = new FileFragment(scans[i].getCanonicalName(), new Path(tableDesc.getPath()), 0, 0, new String[]{UNKNOWN_HOST});
+          fragments[i] = new FileFragment(scans[i].getCanonicalName(),
+              new Path(tableDesc.getUri()), 0, 0, new String[]{UNKNOWN_HOST});
         }
       }
     }
@@ -193,53 +185,24 @@ public class Repartitioner {
     }
 
     // Assigning either fragments or fetch urls to query units
-    boolean isAllBroadcastTable = true;
-    for (int i = 0; i < scans.length; i++) {
-      if (!execBlock.isBroadcastTable(scans[i].getCanonicalName())) {
-        isAllBroadcastTable = false;
-        break;
-      }
-    }
-
-
-    if (isAllBroadcastTable) { // if all relations of this EB are broadcasted
-      // set largest table to normal mode
-      long maxStats = Long.MIN_VALUE;
-      int maxStatsScanIdx = -1;
-      for (int i = 0; i < scans.length; i++) {
-        // finding largest table.
-        // If stats == 0, can't be base table.
-        if (stats[i] > 0 && stats[i] > maxStats) {
-          maxStats = stats[i];
-          maxStatsScanIdx = i;
-        }
-      }
-      if (maxStatsScanIdx == -1) {
-        maxStatsScanIdx = 0;
-      }
-      int baseScanIdx = maxStatsScanIdx;
-      scans[baseScanIdx].setBroadcastTable(false);
-      execBlock.removeBroadcastTable(scans[baseScanIdx].getCanonicalName());
-      LOG.info(String.format("[Distributed Join Strategy] : Broadcast Join with all tables, base_table=%s, base_volume=%d",
-          scans[baseScanIdx].getCanonicalName(), stats[baseScanIdx]));
-      scheduleLeafTasksWithBroadcastTable(schedulerContext, stage, baseScanIdx, fragments);
-    } else if (!execBlock.getBroadcastTables().isEmpty()) { // If some relations of this EB are broadcasted
+    if (execBlock.hasBroadcastRelation()) { // If some relations of this EB are broadcasted
       boolean hasNonLeafNode = false;
-      List<Integer> largeScanIndexList = new ArrayList<Integer>();
-      List<Integer> broadcastIndexList = new ArrayList<Integer>();
+      List<Integer> largeScanIndexList = new ArrayList<>();
+      List<Integer> broadcastIndexList = new ArrayList<>();
       String nonLeafScanNames = "";
       String namePrefix = "";
       long maxStats = Long.MIN_VALUE;
       int maxStatsScanIdx = -1;
+      StringBuilder nonLeafScanNamesBuilder = new StringBuilder();
       for (int i = 0; i < scans.length; i++) {
-        if (scans[i].getTableDesc().getMeta().getStoreType() == StoreType.RAW) {
+        if (scans[i].getTableDesc().getMeta().getDataFormat().equalsIgnoreCase("RAW")) {
           // Intermediate data scan
           hasNonLeafNode = true;
           largeScanIndexList.add(i);
-          nonLeafScanNames += namePrefix + scans[i].getCanonicalName();
+          nonLeafScanNamesBuilder.append(namePrefix).append(scans[i].getCanonicalName());
           namePrefix = ",";
         }
-        if (execBlock.isBroadcastTable(scans[i].getCanonicalName())) {
+        if (execBlock.isBroadcastRelation(scans[i])) {
           broadcastIndexList.add(i);
         } else {
           // finding largest table.
@@ -249,18 +212,19 @@ public class Repartitioner {
           }
         }
       }
+      nonLeafScanNames = nonLeafScanNamesBuilder.toString();
       if (maxStatsScanIdx == -1) {
         maxStatsScanIdx = 0;
       }
 
       if (!hasNonLeafNode) {
         if (largeScanIndexList.size() > 1) {
-          String largeTableNames = "";
+          StringBuilder largeTableNamesBuilder = new StringBuilder();
           for (Integer eachId : largeScanIndexList) {
-            largeTableNames += scans[eachId].getTableName() + ",";
+            largeTableNamesBuilder.append(scans[eachId].getTableName()).append(',');
           }
           throw new IOException("Broadcast join with leaf node should have only one large table, " +
-              "but " + largeScanIndexList.size() + ", tables=" + largeTableNames);
+              "but " + largeScanIndexList.size() + ", tables=" + largeTableNamesBuilder.toString());
         }
         int baseScanIdx = largeScanIndexList.isEmpty() ? maxStatsScanIdx : largeScanIndexList.get(0);
         LOG.info(String.format("[Distributed Join Strategy] : Broadcast Join, base_table=%s, base_volume=%d",
@@ -272,31 +236,31 @@ public class Repartitioner {
         }
 
         //select intermediate scan and stats
-        ScanNode[] intermediateScans = new ScanNode[largeScanIndexList.size()];
         long[] intermediateScanStats = new long[largeScanIndexList.size()];
         Fragment[] intermediateFragments = new Fragment[largeScanIndexList.size()];
         int index = 0;
         for (Integer eachIdx : largeScanIndexList) {
-          intermediateScans[index] = scans[eachIdx];
           intermediateScanStats[index] = stats[eachIdx];
           intermediateFragments[index++] = fragments[eachIdx];
         }
         Fragment[] broadcastFragments = new Fragment[broadcastIndexList.size()];
         ScanNode[] broadcastScans = new ScanNode[broadcastIndexList.size()];
+        long[] broadcastStats = new long[broadcastIndexList.size()];
         index = 0;
         for (Integer eachIdx : broadcastIndexList) {
           scans[eachIdx].setBroadcastTable(true);
           broadcastScans[index] = scans[eachIdx];
+          broadcastStats[index] = stats[eachIdx];
           broadcastFragments[index] = fragments[eachIdx];
           index++;
         }
         LOG.info(String.format("[Distributed Join Strategy] : Broadcast Join, join_node=%s", nonLeafScanNames));
         scheduleSymmetricRepartitionJoin(masterContext, schedulerContext, stage,
-            intermediateScans, intermediateScanStats, intermediateFragments, broadcastScans, broadcastFragments);
+            intermediateScanStats, intermediateFragments, broadcastScans, broadcastStats, broadcastFragments);
       }
     } else {
       LOG.info("[Distributed Join Strategy] : Symmetric Repartition Join");
-      scheduleSymmetricRepartitionJoin(masterContext, schedulerContext, stage, scans, stats, fragments, null, null);
+      scheduleSymmetricRepartitionJoin(masterContext, schedulerContext, stage, stats, fragments, null, null, null);
     }
   }
 
@@ -305,7 +269,6 @@ public class Repartitioner {
    * @param masterContext
    * @param schedulerContext
    * @param stage
-   * @param scans
    * @param stats
    * @param fragments
    * @throws IOException
@@ -313,17 +276,17 @@ public class Repartitioner {
   private static void scheduleSymmetricRepartitionJoin(QueryMasterTask.QueryMasterTaskContext masterContext,
                                                        TaskSchedulerContext schedulerContext,
                                                        Stage stage,
-                                                       ScanNode[] scans,
                                                        long[] stats,
                                                        Fragment[] fragments,
                                                        ScanNode[] broadcastScans,
-                                                       Fragment[] broadcastFragments) throws IOException {
+                                                       long[] broadcastStats,
+                                                       Fragment[] broadcastFragments) throws IOException, TajoException {
     MasterPlan masterPlan = stage.getMasterPlan();
     ExecutionBlock execBlock = stage.getBlock();
     // The hash map is modeling as follows:
     // <Part Id, <EbId, List<Intermediate Data>>>
     Map<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>> hashEntries =
-        new HashMap<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>>();
+            new HashMap<>();
 
     // Grouping IntermediateData by a partition key and a table name
     List<ExecutionBlock> childBlocks = masterPlan.getChilds(stage.getId());
@@ -352,7 +315,7 @@ public class Repartitioner {
             }
           } else {
             Map<ExecutionBlockId, List<IntermediateEntry>> tbNameToInterm =
-                new HashMap<ExecutionBlockId, List<IntermediateEntry>>();
+                    new HashMap<>();
             tbNameToInterm.put(scanEbId, TUtil.newList(intermediateEntry));
             hashEntries.put(intermediateEntry.getPartId(), tbNameToInterm);
           }
@@ -363,13 +326,13 @@ public class Repartitioner {
         if (hashEntries.containsKey(emptyPartitionId)) {
           Map<ExecutionBlockId, List<IntermediateEntry>> tbNameToInterm = hashEntries.get(emptyPartitionId);
           if (tbNameToInterm.containsKey(scanEbId))
-            tbNameToInterm.get(scanEbId).addAll(new ArrayList<IntermediateEntry>());
+            tbNameToInterm.get(scanEbId).addAll(new ArrayList<>());
           else
-            tbNameToInterm.put(scanEbId, new ArrayList<IntermediateEntry>());
+            tbNameToInterm.put(scanEbId, new ArrayList<>());
         } else {
           Map<ExecutionBlockId, List<IntermediateEntry>> tbNameToInterm =
-              new HashMap<ExecutionBlockId, List<IntermediateEntry>>();
-          tbNameToInterm.put(scanEbId, new ArrayList<IntermediateEntry>());
+                  new HashMap<>();
+          tbNameToInterm.put(scanEbId, new ArrayList<>());
           hashEntries.put(emptyPartitionId, tbNameToInterm);
         }
       }
@@ -378,18 +341,20 @@ public class Repartitioner {
     // hashEntries can be zero if there are no input data.
     // In the case, it will cause the zero divided exception.
     // it avoids this problem.
+    long leftStats = stats[0];
+    long rightStats = stats.length == 2 ? stats[1] : broadcastStats[0];
     int[] avgSize = new int[2];
-    avgSize[0] = hashEntries.size() == 0 ? 0 : (int) (stats[0] / hashEntries.size());
-    avgSize[1] = hashEntries.size() == 0 ? 0 : (int) (stats[1] / hashEntries.size());
+    avgSize[0] = hashEntries.size() == 0 ? 0 : (int) (leftStats / hashEntries.size());
+    avgSize[1] = hashEntries.size() == 0 ? 0 : (int) (stats.length == 2 ? (rightStats / hashEntries.size()) : rightStats);
     int bothFetchSize = avgSize[0] + avgSize[1];
 
     // Getting the desire number of join tasks according to the volumn
     // of a larger table
-    int largerIdx = stats[0] >= stats[1] ? 0 : 1;
+    long largerStat = leftStats >= rightStats ? leftStats : rightStats;
     int desireJoinTaskVolumn = stage.getMasterPlan().getContext().getInt(SessionVars.JOIN_TASK_INPUT_SIZE);
 
     // calculate the number of tasks according to the data size
-    int mb = (int) Math.ceil((double) stats[largerIdx] / 1048576);
+    int mb = (int) Math.ceil((double) largerStat / 1048576);
     LOG.info("Larger intermediate data is approximately " + mb + " MB");
     // determine the number of task per 64MB
     int maxTaskNum = (int) Math.ceil((double) mb / desireJoinTaskVolumn);
@@ -400,32 +365,37 @@ public class Repartitioner {
     int joinTaskNum = Math.min(maxTaskNum, hashEntries.size());
     LOG.info("The determined number of join tasks is " + joinTaskNum);
 
-    List<Fragment> rightFragments = new ArrayList<Fragment>();
-    rightFragments.add(fragments[1]);
+    List<Fragment> rightFragments = new ArrayList<>();
+    if (fragments.length == 2) {
+      rightFragments.add(fragments[1]);
+    }
 
     if (broadcastFragments != null) {
       //In this phase a ScanNode has a single fragment.
       //If there are more than one data files, that files should be added to fragments or partition path
+
       for (ScanNode eachScan: broadcastScans) {
+
         Path[] partitionScanPaths = null;
-        TableDesc tableDesc = masterContext.getTableDescMap().get(eachScan.getCanonicalName());
+        TableDesc tableDesc = masterContext.getTableDesc(eachScan);
+        Tablespace space = TablespaceManager.get(tableDesc.getUri());
+
         if (eachScan.getType() == NodeType.PARTITIONS_SCAN) {
-          FileStorageManager storageManager =
-              (FileStorageManager)StorageManager.getFileStorageManager(stage.getContext().getConf());
 
           PartitionedTableScanNode partitionScan = (PartitionedTableScanNode)eachScan;
           partitionScanPaths = partitionScan.getInputPaths();
           // set null to inputPaths in getFragmentsFromPartitionedTable()
-          getFragmentsFromPartitionedTable(storageManager, eachScan, tableDesc);
+          getFragmentsFromPartitionedTable((FileTablespace) space, eachScan, tableDesc);
           partitionScan.setInputPaths(partitionScanPaths);
+
         } else {
-          StorageManager storageManager = StorageManager.getStorageManager(stage.getContext().getConf(),
-              tableDesc.getMeta().getStoreType());
-          Collection<Fragment> scanFragments = storageManager.getSplits(eachScan.getCanonicalName(),
-              tableDesc, eachScan);
+
+          Collection<Fragment> scanFragments =
+              space.getSplits(eachScan.getCanonicalName(), tableDesc, eachScan.getQual());
           if (scanFragments != null) {
             rightFragments.addAll(scanFragments);
           }
+
         }
       }
     }
@@ -449,7 +419,7 @@ public class Repartitioner {
   public static Map<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>> mergeIntermediateByPullHost(
       Map<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>> hashEntries) {
     Map<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>> mergedHashEntries =
-        new HashMap<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>>();
+            new HashMap<>();
 
     for(Entry<Integer, Map<ExecutionBlockId, List<IntermediateEntry>>> entry: hashEntries.entrySet()) {
       Integer partId = entry.getKey();
@@ -462,7 +432,7 @@ public class Repartitioner {
         // EBID + PullHost -> IntermediateEntry
         // In the case of union partEntry.getKey() return's delegated EBID.
         // Intermediate entries are merged by real EBID.
-        Map<String, IntermediateEntry> ebMerged = new HashMap<String, IntermediateEntry>();
+        Map<String, IntermediateEntry> ebMerged = new HashMap<>();
 
         for (IntermediateEntry eachIntermediate: intermediateList) {
           String ebMergedKey = eachIntermediate.getEbId().toString() + eachIntermediate.getPullHost().getPullAddress();
@@ -475,11 +445,11 @@ public class Repartitioner {
           intermediateEntryPerPullHost.setVolume(intermediateEntryPerPullHost.getVolume() + eachIntermediate.getVolume());
         }
 
-        List<IntermediateEntry> ebIntermediateEntries = new ArrayList<IntermediateEntry>(ebMerged.values());
+        List<IntermediateEntry> ebIntermediateEntries = new ArrayList<>(ebMerged.values());
 
         Map<ExecutionBlockId, List<IntermediateEntry>> mergedPartEntries = mergedHashEntries.get(partId);
         if (mergedPartEntries == null) {
-          mergedPartEntries = new HashMap<ExecutionBlockId, List<IntermediateEntry>>();
+          mergedPartEntries = new HashMap<>();
           mergedHashEntries.put(partId, mergedPartEntries);
         }
         mergedPartEntries.put(ebId, ebIntermediateEntries);
@@ -491,19 +461,24 @@ public class Repartitioner {
   /**
    * It creates a number of fragments for all partitions.
    */
-  public static List<Fragment> getFragmentsFromPartitionedTable(FileStorageManager sm,
+  public static List<Fragment> getFragmentsFromPartitionedTable(Tablespace tsHandler,
                                                                           ScanNode scan,
                                                                           TableDesc table) throws IOException {
+    Preconditions.checkArgument(tsHandler instanceof FileTablespace, "tsHandler must be FileTablespace");
+    if (!(scan instanceof PartitionedTableScanNode)) {
+      throw new IllegalArgumentException("scan should be a PartitionedTableScanNode type.");
+    }
     List<Fragment> fragments = Lists.newArrayList();
     PartitionedTableScanNode partitionsScan = (PartitionedTableScanNode) scan;
-    fragments.addAll(sm.getSplits(
+    fragments.addAll(((FileTablespace) tsHandler).getSplits(
         scan.getCanonicalName(), table.getMeta(), table.getSchema(), partitionsScan.getInputPaths()));
     partitionsScan.setInputPaths(null);
     return fragments;
   }
 
   private static void scheduleLeafTasksWithBroadcastTable(TaskSchedulerContext schedulerContext, Stage stage,
-                                                          int baseScanId, Fragment[] fragments) throws IOException {
+                                                          int baseScanId, Fragment[] fragments)
+      throws IOException, TajoException {
     ExecutionBlock execBlock = stage.getBlock();
     ScanNode[] scans = execBlock.getScanNodes();
 
@@ -523,26 +498,24 @@ public class Repartitioner {
     //  -> SCAN
     //     . add all fragments to broadcastFragments
     Collection<Fragment> baseFragments = null;
-    List<Fragment> broadcastFragments = new ArrayList<Fragment>();
+    List<Fragment> broadcastFragments = new ArrayList<>();
     for (int i = 0; i < scans.length; i++) {
       ScanNode scan = scans[i];
-      TableDesc desc = stage.getContext().getTableDescMap().get(scan.getCanonicalName());
-      TableMeta meta = desc.getMeta();
+      TableDesc desc = stage.getContext().getTableDesc(scan);
 
       Collection<Fragment> scanFragments;
       Path[] partitionScanPaths = null;
+
+
+      Tablespace space = TablespaceManager.get(desc.getUri());
+
       if (scan.getType() == NodeType.PARTITIONS_SCAN) {
-        PartitionedTableScanNode partitionScan = (PartitionedTableScanNode)scan;
+        PartitionedTableScanNode partitionScan = (PartitionedTableScanNode) scan;
         partitionScanPaths = partitionScan.getInputPaths();
         // set null to inputPaths in getFragmentsFromPartitionedTable()
-        FileStorageManager storageManager =
-            (FileStorageManager)StorageManager.getFileStorageManager(stage.getContext().getConf());
-        scanFragments = getFragmentsFromPartitionedTable(storageManager, scan, desc);
+        scanFragments = getFragmentsFromPartitionedTable(space, scan, desc);
       } else {
-        StorageManager storageManager =
-            StorageManager.getStorageManager(stage.getContext().getConf(), desc.getMeta().getStoreType());
-
-        scanFragments = storageManager.getSplits(scan.getCanonicalName(), desc, scan);
+        scanFragments = space.getSplits(scan.getCanonicalName(), desc, scan.getQual());
       }
 
       if (scanFragments != null) {
@@ -570,7 +543,7 @@ public class Repartitioner {
 
   private static void addJoinShuffle(Stage stage, int partitionId,
                                      Map<ExecutionBlockId, List<IntermediateEntry>> grouppedPartitions) {
-    Map<String, List<FetchImpl>> fetches = new HashMap<String, List<FetchImpl>>();
+    Map<String, List<FetchImpl>> fetches = new HashMap<>();
     for (ExecutionBlock execBlock : stage.getMasterPlan().getChilds(stage.getId())) {
       if (grouppedPartitions.containsKey(execBlock.getId())) {
         Collection<FetchImpl> requests = mergeShuffleRequest(partitionId, HASH_SHUFFLE,
@@ -596,7 +569,7 @@ public class Repartitioner {
                                                           ShuffleType type,
                                                           List<IntermediateEntry> partitions) {
     // ebId + pullhost -> FetchImmpl
-    Map<String, FetchImpl> mergedPartitions = new HashMap<String, FetchImpl>();
+    Map<String, FetchImpl> mergedPartitions = new HashMap<>();
 
     for (IntermediateEntry partition : partitions) {
       String mergedKey = partition.getEbId().toString() + "," + partition.getPullHost();
@@ -624,13 +597,13 @@ public class Repartitioner {
     } else if (channel.getShuffleType() == RANGE_SHUFFLE) {
       scheduleRangeShuffledFetches(schedulerContext, masterPlan, stage, channel, maxNum);
     } else {
-      throw new InternalException("Cannot support partition type");
+      throw new TajoInternalError("Cannot support partition type");
     }
   }
 
   private static TableStats computeChildBlocksStats(QueryMasterTask.QueryMasterTaskContext context, MasterPlan masterPlan,
                                                     ExecutionBlockId parentBlockId) {
-    List<TableStats> tableStatses = new ArrayList<TableStats>();
+    List<TableStats> tableStatses = new ArrayList<>();
     List<ExecutionBlock> childBlocks = masterPlan.getChilds(parentBlockId);
     for (ExecutionBlock childBlock : childBlocks) {
       Stage childStage = context.getStage(childBlock.getId());
@@ -644,9 +617,6 @@ public class Repartitioner {
       throws IOException {
     ExecutionBlock execBlock = stage.getBlock();
     ScanNode scan = execBlock.getScanNodes()[0];
-    Path tablePath;
-    tablePath = ((FileStorageManager)StorageManager.getFileStorageManager(stage.getContext().getConf()))
-        .getTablePath(scan.getTableName());
 
     ExecutionBlock sampleChildBlock = masterPlan.getChild(stage.getId(), 0);
     SortNode sortNode = PlannerUtil.findTopNode(sampleChildBlock.getPlan(), NodeType.SORT);
@@ -666,18 +636,25 @@ public class Repartitioner {
     TupleRange mergedRange = TupleUtil.columnStatToRange(sortSpecs, sortSchema, totalStat.getColumnStats(), false);
 
     if (sortNode.getSortPurpose() == SortPurpose.STORAGE_SPECIFIED) {
-      StoreType storeType = PlannerUtil.getStoreType(masterPlan.getLogicalPlan());
+      String dataFormat = PlannerUtil.getDataFormat(masterPlan.getLogicalPlan());
       CatalogService catalog = stage.getContext().getQueryMasterContext().getWorkerContext().getCatalog();
       LogicalRootNode rootNode = masterPlan.getLogicalPlan().getRootBlock().getRoot();
-      TableDesc tableDesc = PlannerUtil.getTableDesc(catalog, rootNode.getChild());
-      if (tableDesc == null) {
+      TableDesc tableDesc = null;
+      try {
+        tableDesc = PlannerUtil.getTableDesc(catalog, rootNode.getChild());
+      } catch (UndefinedTableException e) {
         throw new IOException("Can't get table meta data from catalog: " +
             PlannerUtil.getStoreTableName(masterPlan.getLogicalPlan()));
       }
-      ranges = StorageManager.getStorageManager(stage.getContext().getConf(), storeType)
-          .getInsertSortRanges(stage.getContext().getQueryContext(), tableDesc,
-              sortNode.getInSchema(), sortSpecs,
-              mergedRange);
+
+      Tablespace space = TablespaceManager.getAnyByScheme(dataFormat).get();
+      ranges = space.getInsertSortRanges(
+          stage.getContext().getQueryContext(),
+          tableDesc,
+          sortNode.getInSchema(),
+          sortSpecs,
+          mergedRange);
+
       determinedTaskNum = ranges.length;
     } else {
       RangePartitionAlgorithm partitioner = new UniformRangePartition(mergedRange, sortSpecs);
@@ -696,9 +673,14 @@ public class Repartitioner {
       LOG.info(stage.getId() + ", Try to divide " + mergedRange + " into " + determinedTaskNum +
           " sub ranges (total units: " + determinedTaskNum + ")");
       ranges = partitioner.partition(determinedTaskNum);
-      if (ranges == null || ranges.length == 0) {
+      if (ranges == null) {
+        throw new NullPointerException("ranges is null on " + stage.getId() + " stage.");
+      }
+
+      if (ranges.length == 0) {
         LOG.warn(stage.getId() + " no range infos.");
       }
+
       TupleUtil.setMaxRangeIfNull(sortSpecs, sortSchema, totalStat.getColumnStats(), ranges);
       if (LOG.isDebugEnabled()) {
         if (ranges != null) {
@@ -709,10 +691,12 @@ public class Repartitioner {
       }
     }
 
-    FileFragment dummyFragment = new FileFragment(scan.getTableName(), tablePath, 0, 0, new String[]{UNKNOWN_HOST});
+    // TODO - We should remove dummy fragment.
+    FileFragment dummyFragment = new FileFragment(scan.getTableName(), new Path("/dummy"), 0, 0,
+        new String[]{UNKNOWN_HOST});
     Stage.scheduleFragment(stage, dummyFragment);
 
-    List<FetchImpl> fetches = new ArrayList<FetchImpl>();
+    List<FetchImpl> fetches = new ArrayList<>();
     List<ExecutionBlock> childBlocks = masterPlan.getChilds(stage.getId());
     for (ExecutionBlock childBlock : childBlocks) {
       Stage childExecSM = stage.getContext().getStage(childBlock.getId());
@@ -725,22 +709,17 @@ public class Repartitioner {
       }
     }
 
-    boolean ascendingFirstKey = sortSpecs[0].isAscending();
     SortedMap<TupleRange, Collection<FetchImpl>> map;
-    if (ascendingFirstKey) {
-      map = new TreeMap<TupleRange, Collection<FetchImpl>>();
-    } else {
-      map = new TreeMap<TupleRange, Collection<FetchImpl>>(new TupleRange.DescendingTupleRangeComparator());
-    }
+    map = new TreeMap<>();
 
     Set<FetchImpl> fetchSet;
     try {
       RowStoreUtil.RowStoreEncoder encoder = RowStoreUtil.createEncoder(sortSchema);
       for (int i = 0; i < ranges.length; i++) {
-        fetchSet = new HashSet<FetchImpl>();
+        fetchSet = new HashSet<>();
         for (FetchImpl fetch: fetches) {
           String rangeParam =
-              TupleUtil.rangeToQuery(ranges[i], ascendingFirstKey ? i == (ranges.length - 1) : i == 0, encoder);
+              TupleUtil.rangeToQuery(ranges[i], i == (ranges.length - 1) , encoder);
           FetchImpl copy = null;
           try {
             copy = fetch.clone();
@@ -767,7 +746,7 @@ public class Repartitioner {
     int i;
     Map<String, List<FetchImpl>>[] fetchesArray = new Map[num];
     for (i = 0; i < num; i++) {
-      fetchesArray[i] = new HashMap<String, List<FetchImpl>>();
+      fetchesArray[i] = new HashMap<>();
     }
     i = 0;
     for (Entry<?, Collection<FetchImpl>> entry : partitions.entrySet()) {
@@ -810,21 +789,18 @@ public class Repartitioner {
                                                  int maxNum) throws IOException {
     ExecutionBlock execBlock = stage.getBlock();
     ScanNode scan = execBlock.getScanNodes()[0];
-    Path tablePath;
-    tablePath = ((FileStorageManager)StorageManager.getFileStorageManager(stage.getContext().getConf()))
-        .getTablePath(scan.getTableName());
 
-    Fragment frag = new FileFragment(scan.getCanonicalName(), tablePath, 0, 0, new String[]{UNKNOWN_HOST});
-    List<Fragment> fragments = new ArrayList<Fragment>();
+    // TODO - We should remove dummy fragment usages
+    Fragment frag = new FileFragment(scan.getCanonicalName(), new Path("/dummy"), 0, 0, new String[]{UNKNOWN_HOST});
+    List<Fragment> fragments = new ArrayList<>();
     fragments.add(frag);
     Stage.scheduleFragments(stage, fragments);
 
-    Map<Integer, FetchGroupMeta> finalFetches = new HashMap<Integer, FetchGroupMeta>();
-    Map<ExecutionBlockId, List<IntermediateEntry>> intermediates = new HashMap<ExecutionBlockId,
-        List<IntermediateEntry>>();
+    Map<Integer, FetchGroupMeta> finalFetches = new HashMap<>();
+    Map<ExecutionBlockId, List<IntermediateEntry>> intermediates = new HashMap<>();
 
     for (ExecutionBlock block : masterPlan.getChilds(execBlock)) {
-      List<IntermediateEntry> partitions = new ArrayList<IntermediateEntry>();
+      List<IntermediateEntry> partitions = new ArrayList<>();
       partitions.addAll(stage.getContext().getStage(block.getId()).getHashShuffleIntermediateEntries());
 
       // In scattered hash shuffle, Collecting each IntermediateEntry
@@ -929,7 +905,7 @@ public class Repartitioner {
     Long [] assignedVolumes = new Long[num];
     // initialization
     for (int i = 0; i < num; i++) {
-      fetchesArray[i] = new HashMap<String, List<FetchImpl>>();
+      fetchesArray[i] = new HashMap<>();
       assignedVolumes[i] = 0l;
     }
 
@@ -939,8 +915,9 @@ public class Repartitioner {
     // algorithm.
     Iterator<FetchGroupMeta> iterator = fetchGroupMetaList.iterator();
 
-    int p = 0;
+    int p;
     while(iterator.hasNext()) {
+      p = 0;
       while (p < num && iterator.hasNext()) {
         FetchGroupMeta fetchGroupMeta = iterator.next();
         assignedVolumes[p] += fetchGroupMeta.getVolume();
@@ -950,13 +927,13 @@ public class Repartitioner {
       }
 
       p = num - 1;
-      while (p > 0 && iterator.hasNext()) {
+      while (p >= 0 && iterator.hasNext()) {
         FetchGroupMeta fetchGroupMeta = iterator.next();
         assignedVolumes[p] += fetchGroupMeta.getVolume();
         TUtil.putCollectionToNestedList(fetchesArray[p], tableName, fetchGroupMeta.fetchUrls);
 
         // While the current one is smaller than next one, it adds additional fetches to current one.
-        while(iterator.hasNext() && assignedVolumes[p - 1] > assignedVolumes[p]) {
+        while(iterator.hasNext() && (p > 0 && assignedVolumes[p - 1] > assignedVolumes[p])) {
           FetchGroupMeta additionalFetchGroup = iterator.next();
           assignedVolumes[p] += additionalFetchGroup.getVolume();
           TUtil.putCollectionToNestedList(fetchesArray[p], tableName, additionalFetchGroup.fetchUrls);
@@ -966,7 +943,7 @@ public class Repartitioner {
       }
     }
 
-    return new Pair<Long[], Map<String, List<FetchImpl>>[]>(assignedVolumes, fetchesArray);
+    return new Pair<>(assignedVolumes, fetchesArray);
   }
 
   public static void scheduleFetchesByEvenDistributedVolumes(Stage stage, Map<Integer, FetchGroupMeta> partitions,
@@ -988,20 +965,20 @@ public class Repartitioner {
   public static void scheduleScatteredHashShuffleFetches(TaskSchedulerContext schedulerContext,
        Stage stage, Map<ExecutionBlockId, List<IntermediateEntry>> intermediates,
        String tableName) {
-    long splitVolume = StorageUnit.MB *
-        stage.getMasterPlan().getContext().getLong(SessionVars.TABLE_PARTITION_PER_SHUFFLE_SIZE);
-    long pageSize = StorageUnit.MB * 
+    long splitVolume = (long)StorageUnit.MB *
+        stage.getMasterPlan().getContext().getInt(SessionVars.TABLE_PARTITION_PER_SHUFFLE_SIZE);
+    long pageSize = ((long)StorageUnit.MB) *
         stage.getContext().getConf().getIntVar(ConfVars.SHUFFLE_HASH_APPENDER_PAGE_VOLUME); // in bytes
     if (pageSize >= splitVolume) {
       throw new RuntimeException("tajo.dist-query.table-partition.task-volume-mb should be great than " +
           "tajo.shuffle.hash.appender.page.volumn-mb");
     }
-    List<List<FetchImpl>> fetches = new ArrayList<List<FetchImpl>>();
+    List<List<FetchImpl>> fetches = new ArrayList<>();
 
     long totalIntermediateSize = 0L;
     for (Entry<ExecutionBlockId, List<IntermediateEntry>> listEntry : intermediates.entrySet()) {
       // merge by PartitionId
-      Map<Integer, List<IntermediateEntry>> partitionIntermMap = new HashMap<Integer, List<IntermediateEntry>>();
+      Map<Integer, List<IntermediateEntry>> partitionIntermMap = new HashMap<>();
       for (IntermediateEntry eachInterm: listEntry.getValue()) {
         totalIntermediateSize += eachInterm.getVolume();
         int partId = eachInterm.getPartId();
@@ -1029,7 +1006,7 @@ public class Repartitioner {
     int i = 0;
     Map<String, List<FetchImpl>>[] fetchesArray = new Map[fetches.size()];
     for(List<FetchImpl> entry : fetches) {
-      fetchesArray[i] = new HashMap<String, List<FetchImpl>>();
+      fetchesArray[i] = new HashMap<>();
       fetchesArray[i].put(tableName, entry);
 
       Stage.scheduleFetches(stage, fetchesArray[i]);
@@ -1053,13 +1030,13 @@ public class Repartitioner {
   public static List<List<FetchImpl>> splitOrMergeIntermediates(
       ExecutionBlockId ebId, List<IntermediateEntry> entries, long splitVolume, long pageSize) {
     // Each List<FetchImpl> has splitVolume size.
-    List<List<FetchImpl>> fetches = new ArrayList<List<FetchImpl>>();
+    List<List<FetchImpl>> fetches = new ArrayList<>();
 
     Iterator<IntermediateEntry> iter = entries.iterator();
     if (!iter.hasNext()) {
       return null;
     }
-    List<FetchImpl> fetchListForSingleTask = new ArrayList<FetchImpl>();
+    List<FetchImpl> fetchListForSingleTask = new ArrayList<>();
     long fetchListVolume = 0;
 
     while (iter.hasNext()) {
@@ -1082,7 +1059,7 @@ public class Repartitioner {
           if (!fetchListForSingleTask.isEmpty()) {
             fetches.add(fetchListForSingleTask);
           }
-          fetchListForSingleTask = new ArrayList<FetchImpl>();
+          fetchListForSingleTask = new ArrayList<>();
           fetchListVolume = 0;
         }
         FetchImpl fetch = new FetchImpl(currentInterm.getPullHost(), SCATTERED_HASH_SHUFFLE,
@@ -1120,7 +1097,7 @@ public class Repartitioner {
       urlPrefix.append("&offset=").append(fetch.getOffset()).append("&length=").append(fetch.getLength());
     }
 
-    List<URI> fetchURLs = new ArrayList<URI>();
+    List<URI> fetchURLs = new ArrayList<>();
     if(includeParts) {
       if (fetch.getType() == HASH_SHUFFLE || fetch.getType() == SCATTERED_HASH_SHUFFLE) {
         fetchURLs.add(URI.create(urlPrefix.toString()));
@@ -1129,7 +1106,7 @@ public class Repartitioner {
         // the long request uri may cause HTTP Status Code - 414 Request-URI Too Long.
         // Refer to http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html#sec10.4.15
         // The below code transforms a long request to multiple requests.
-        List<String> taskIdsParams = new ArrayList<String>();
+        List<String> taskIdsParams = new ArrayList<>();
         StringBuilder taskIdListBuilder = new StringBuilder();
         List<Integer> taskIds = fetch.getTaskIds();
         List<Integer> attemptIds = fetch.getAttemptIds();
@@ -1178,7 +1155,7 @@ public class Repartitioner {
   }
 
   public static Map<Integer, List<IntermediateEntry>> hashByKey(List<IntermediateEntry> entries) {
-    Map<Integer, List<IntermediateEntry>> hashed = new HashMap<Integer, List<IntermediateEntry>>();
+    Map<Integer, List<IntermediateEntry>> hashed = new HashMap<>();
     for (IntermediateEntry entry : entries) {
       if (hashed.containsKey(entry.getPartId())) {
         hashed.get(entry.getPartId()).add(entry);
@@ -1191,7 +1168,7 @@ public class Repartitioner {
   }
 
   public static Map<Task.PullHost, List<IntermediateEntry>> hashByHost(List<IntermediateEntry> entries) {
-    Map<Task.PullHost, List<IntermediateEntry>> hashed = new HashMap<Task.PullHost, List<IntermediateEntry>>();
+    Map<Task.PullHost, List<IntermediateEntry>> hashed = new HashMap<>();
 
     Task.PullHost host;
     for (IntermediateEntry entry : entries) {

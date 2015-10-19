@@ -30,7 +30,6 @@ import org.apache.hadoop.util.NativeCodeLoader;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
@@ -54,12 +53,12 @@ public class TestCompressionStorages {
   private TajoConf conf;
   private static String TEST_PATH = "target/test-data/TestCompressionStorages";
 
-  private StoreType storeType;
+  private String dataFormat;
   private Path testDir;
   private FileSystem fs;
 
-  public TestCompressionStorages(StoreType type) throws IOException {
-    this.storeType = type;
+  public TestCompressionStorages(String type) throws IOException {
+    this.dataFormat = type;
     conf = new TajoConf();
 
     testDir = CommonTestingUtil.getTestDir(TEST_PATH);
@@ -69,53 +68,52 @@ public class TestCompressionStorages {
   @Parameterized.Parameters
   public static Collection<Object[]> generateParameters() {
     return Arrays.asList(new Object[][]{
-        {StoreType.CSV},
-        {StoreType.RCFILE},
-        {StoreType.SEQUENCEFILE},
-        {StoreType.TEXTFILE}
+        {"TEXT"},
+        {"RCFILE"},
+        {"SEQUENCEFILE"}
     });
   }
 
   @Test
   public void testDeflateCodecCompressionData() throws IOException {
-    storageCompressionTest(storeType, DeflateCodec.class);
+    storageCompressionTest(dataFormat, DeflateCodec.class);
   }
 
   @Test
   public void testGzipCodecCompressionData() throws IOException {
-    if (storeType == StoreType.RCFILE) {
+    if (dataFormat.equalsIgnoreCase("RCFILE")) {
       if( ZlibFactory.isNativeZlibLoaded(conf)) {
-        storageCompressionTest(storeType, GzipCodec.class);
+        storageCompressionTest(dataFormat, GzipCodec.class);
       }
-    } else if (storeType == StoreType.SEQUENCEFILE) {
+    } else if (dataFormat.equalsIgnoreCase("SEQUENCEFILE")) {
       if( ZlibFactory.isNativeZlibLoaded(conf)) {
-        storageCompressionTest(storeType, GzipCodec.class);
+        storageCompressionTest(dataFormat, GzipCodec.class);
       }
     } else {
-      storageCompressionTest(storeType, GzipCodec.class);
+      storageCompressionTest(dataFormat, GzipCodec.class);
     }
   }
 
   @Test
   public void testSnappyCodecCompressionData() throws IOException {
     if (SnappyCodec.isNativeCodeLoaded()) {
-      storageCompressionTest(storeType, SnappyCodec.class);
+      storageCompressionTest(dataFormat, SnappyCodec.class);
     }
   }
 
   @Test
   public void testLz4CodecCompressionData() throws IOException {
     if(NativeCodeLoader.isNativeCodeLoaded() && Lz4Codec.isNativeCodeLoaded())
-    storageCompressionTest(storeType, Lz4Codec.class);
+    storageCompressionTest(dataFormat, Lz4Codec.class);
   }
 
-  private void storageCompressionTest(StoreType storeType, Class<? extends CompressionCodec> codec) throws IOException {
+  private void storageCompressionTest(String dataFormat, Class<? extends CompressionCodec> codec) throws IOException {
     Schema schema = new Schema();
     schema.addColumn("id", Type.INT4);
     schema.addColumn("age", Type.FLOAT4);
     schema.addColumn("name", Type.TEXT);
 
-    TableMeta meta = CatalogUtil.newTableMeta(storeType);
+    TableMeta meta = CatalogUtil.newTableMeta(dataFormat);
     meta.putOption("compression.codec", codec.getCanonicalName());
     meta.putOption("compression.type", SequenceFile.CompressionType.BLOCK.name());
     meta.putOption("rcfile.serde", TextSerializerDeserializer.class.getName());
@@ -123,15 +121,13 @@ public class TestCompressionStorages {
 
     String fileName = "Compression_" + codec.getSimpleName();
     Path tablePath = new Path(testDir, fileName);
-    Appender appender = ((FileStorageManager)StorageManager.getFileStorageManager(conf)).getAppender(meta, schema, tablePath);
+    Appender appender = ((FileTablespace) TablespaceManager.getLocalFs()).getAppender(meta, schema, tablePath);
     appender.enableStats();
 
     appender.init();
 
     String extension = "";
-    if (appender instanceof CSVFile.CSVAppender) {
-      extension = ((CSVFile.CSVAppender) appender).getExtension();
-    } else if (appender instanceof DelimitedTextFile.DelimitedTextFileAppender) {
+    if (appender instanceof DelimitedTextFile.DelimitedTextFileAppender) {
       extension = ((DelimitedTextFile.DelimitedTextFileAppender) appender).getExtension();
     }
 
@@ -155,18 +151,10 @@ public class TestCompressionStorages {
     FileFragment[] tablets = new FileFragment[1];
     tablets[0] = new FileFragment(fileName, tablePath, 0, fileLen);
 
-    Scanner scanner = StorageManager.getFileStorageManager(conf).getScanner(meta, schema, tablets[0], schema);
-
-    if (StoreType.CSV == storeType) {
-      if (SplittableCompressionCodec.class.isAssignableFrom(codec)) {
-        assertTrue(scanner.isSplittable());
-      } else {
-        assertFalse(scanner.isSplittable());
-      }
-    }
+    Scanner scanner = TablespaceManager.getLocalFs().getScanner(meta, schema, tablets[0], schema);
     scanner.init();
 
-    if (storeType == StoreType.SEQUENCEFILE) {
+    if (dataFormat.equalsIgnoreCase("SEQUENCEFILE")) {
       assertTrue(scanner instanceof SequenceFileScanner);
       Writable key = ((SequenceFileScanner) scanner).getKey();
       assertEquals(key.getClass().getCanonicalName(), LongWritable.class.getCanonicalName());

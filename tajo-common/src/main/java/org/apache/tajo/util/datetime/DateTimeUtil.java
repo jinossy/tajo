@@ -40,6 +40,8 @@ public class DateTimeUtil {
   /** maximum possible number of fields in a date * string */
   private static int MAXDATEFIELDS = 25;
 
+  public final static int DAYS_FROM_JULIAN_TO_EPOCH = 2440588;
+
   public static boolean isJulianCalendar(int year, int month, int day) {
     return year <= 1752 && month <= 9 && day < 14;
   }
@@ -124,6 +126,12 @@ public class DateTimeUtil {
     julian += ((7834 * month) / 256) + day;
 
     return julian;
+  }
+
+  public static TimeMeta j2date(int julianDate) {
+    TimeMeta tm = new TimeMeta();
+    j2date(julianDate, tm);
+    return tm;
   }
 
   /**
@@ -623,7 +631,7 @@ public class DateTimeUtil {
       }
     } else if (cp.charAt(0) == '.') {
 		  /* always assume mm:ss.sss is MINUTE TO SECOND */
-      ParseFractionalSecond(cp, fsec);
+      parseFractionalSecond(cp, fsec);
       tm.secs = tm.minutes;
       tm.minutes = tm.hours;
       tm.hours = 0;
@@ -633,7 +641,7 @@ public class DateTimeUtil {
       if (cp.length() == 0){
         fsec.set(0);
       } else if (cp.charAt(0) == '.') {
-        ParseFractionalSecond(cp, fsec);
+        parseFractionalSecond(cp, fsec);
       } else{
         throw new IllegalArgumentException("BAD Format: " + str);
       }
@@ -889,7 +897,7 @@ public class DateTimeUtil {
    * @param cp
    * @param fsec
    */
-  public static void ParseFractionalSecond(StringBuilder cp, AtomicLong fsec) {
+  public static void parseFractionalSecond(StringBuilder cp, AtomicLong fsec) {
 	  /* Caller should always pass the start of the fraction part */
     double frac = strtod(cp.toString(), 1, cp);
     fsec.set(Math.round(frac * 1000000));
@@ -985,7 +993,7 @@ public class DateTimeUtil {
             fsec, is2digits);
         return;
       }
-      ParseFractionalSecond(cp, fsec);
+      parseFractionalSecond(cp, fsec);
     }
 
   	// Special case for day of year
@@ -1393,7 +1401,7 @@ public class DateTimeUtil {
                 tm.secs = val;
                 tmask.set(DateTimeConstants.DTK_M(TokenField.SECOND));
                 if (sb.charAt(0) == '.') {
-                  ParseFractionalSecond(sb, fsec);
+                  parseFractionalSecond(sb, fsec);
                   tmask.set(DateTimeConstants.DTK_ALL_SECS_M);
                 }
                 break;
@@ -1899,6 +1907,10 @@ public class DateTimeUtil {
   }
 
   public static String encodeDate(TimeMeta tm, DateStyle style) {
+    return encodeDate(tm.years, tm.monthOfYear, tm.dayOfMonth, style);
+  }
+
+  public static String encodeDate(int years, int monthOfYear, int dayOfMonth, DateStyle style) {
     StringBuilder sb = new StringBuilder();
     switch (style) {
       case ISO_DATES:
@@ -1907,8 +1919,8 @@ public class DateTimeUtil {
         // Compatible with Oracle/Ingres date formats
       default:
         sb.append(String.format("%04d-%02d-%02d",
-            (tm.years > 0) ? tm.years : -(tm.years - 1),
-            tm.monthOfYear, tm.dayOfMonth));
+            (years > 0) ? years : -(years - 1),
+            monthOfYear, dayOfMonth));
     }
 
     return sb.toString();
@@ -2160,13 +2172,17 @@ public class DateTimeUtil {
   }
 
   public static TimeMeta getUTCDateTime(Int8Datum int8Datum){
-    long usecs = int8Datum.asInt8()%DateTimeConstants.USECS_PER_MSEC;
-    long julianTimestamp = javaTimeToJulianTime(int8Datum.asInt8()/DateTimeConstants.USECS_PER_MSEC);
+    return getUTCDateTime(int8Datum.asInt8());
+  }
+
+  public static TimeMeta getUTCDateTime(long time) {
+    long usecs = time % DateTimeConstants.USECS_PER_MSEC;
+    long julianTimestamp = javaTimeToJulianTime(time / DateTimeConstants.USECS_PER_MSEC);
     TimeMeta tm = new TimeMeta();
-    
+
     julianTimestamp += usecs;
     toJulianTimeMeta(julianTimestamp, tm);
     return tm;
   }
-  
+
 }

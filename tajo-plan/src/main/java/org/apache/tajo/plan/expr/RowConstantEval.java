@@ -20,15 +20,17 @@ package org.apache.tajo.plan.expr;
 
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.catalog.CatalogUtil;
-import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.storage.Tuple;
+import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.util.TUtil;
+
+import java.util.Arrays;
 
 import static org.apache.tajo.common.TajoDataTypes.DataType;
 
-public class RowConstantEval extends EvalNode {
+public class RowConstantEval extends ValueSetEval {
   @Expose Datum [] values;
 
   public RowConstantEval(Datum [] values) {
@@ -42,27 +44,23 @@ public class RowConstantEval extends EvalNode {
   }
 
   @Override
-  public int childNum() {
-    return 0;
-  }
-
-  @Override
-  public EvalNode getChild(int idx) {
-    return null;
-  }
-
-  @Override
   public String getName() {
     return "ROW";
   }
 
   @Override
-  public Datum eval(Schema schema, Tuple tuple) {
+  @SuppressWarnings("unchecked")
+  public Datum eval(Tuple tuple) {
+    super.eval(tuple);
     return NullDatum.get();
   }
 
-  public Datum [] getValues() {
-    return values;
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + Arrays.hashCode(values);
+    return result;
   }
 
   @Override
@@ -76,15 +74,7 @@ public class RowConstantEval extends EvalNode {
   }
 
   public String toString() {
-    return TUtil.arrayToString(values);
-  }
-
-  public void preOrder(EvalNodeVisitor visitor) {
-    visitor.visit(this);
-  }
-
-  public void postOrder(EvalNodeVisitor visitor) {
-    visitor.visit(this);
+    return StringUtils.join(values);
   }
 
   @Override
@@ -95,5 +85,10 @@ public class RowConstantEval extends EvalNode {
       System.arraycopy(values, 0, rowConstantEval.values, 0, values.length);
     }
     return rowConstantEval;
+  }
+
+  @Override
+  public Datum[] getValues() {
+    return values;
   }
 }

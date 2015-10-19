@@ -30,14 +30,15 @@ import org.apache.hadoop.io.SequenceFile.Metadata;
 import org.apache.hadoop.io.compress.*;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.tajo.TaskAttemptId;
-import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.fragment.Fragment;
 
@@ -646,8 +647,12 @@ public class RCFile {
         valLenBuffer = new NonSyncByteArrayOutputStream();
       }
 
-      public int append(Column column, Datum datum) throws IOException {
-        int currentLen = serde.serialize(column, datum, columnValBuffer, nullChars);
+      public int append(NullDatum nill) {
+        return nullChars.length;
+      }
+
+      public int append(Tuple tuple, int i) throws IOException {
+        int currentLen = serde.serialize(i, tuple, columnValBuffer, nullChars);
         columnValueLength += currentLen;
         uncompressedColumnValueLength += currentLen;
 
@@ -722,19 +727,6 @@ public class RCFile {
     public void init() throws IOException {
       fs = path.getFileSystem(conf);
 
-      if (!fs.exists(path.getParent())) {
-        throw new FileNotFoundException(path.toString());
-      }
-
-      //determine the intermediate file type
-      String store = conf.get(TajoConf.ConfVars.SHUFFLE_FILE_FORMAT.varname,
-          TajoConf.ConfVars.SHUFFLE_FILE_FORMAT.defaultVal);
-      if (enabledStats && CatalogProtos.StoreType.RCFILE == CatalogProtos.StoreType.valueOf(store.toUpperCase())) {
-        isShuffle = true;
-      } else {
-        isShuffle = false;
-      }
-
       if (this.meta.containsOption(StorageConstants.COMPRESSION_CODEC)) {
         String codecClassname = this.meta.getOption(StorageConstants.COMPRESSION_CODEC);
         try {
@@ -765,6 +757,7 @@ public class RCFile {
           BinarySerializerDeserializer.class.getName());
       try {
         serde = (SerializerDeserializer) Class.forName(serdeClass).newInstance();
+        serde.init(schema);
       } catch (Exception e) {
         LOG.error(e.getMessage(), e);
         throw new IOException(e);
@@ -776,7 +769,7 @@ public class RCFile {
         columnBuffers[i] = new ColumnBuffer();
       }
 
-      init(conf, fs.create(path, true, 4096, (short) 3, fs.getDefaultBlockSize(), null), codec, metadata);
+      init(conf, fs.create(path, false, 4096, (short) 3, fs.getDefaultBlockSize(), null), codec, metadata);
       initializeFileHeader();
       writeFileHeader();
       finalizeFileHeader();
@@ -892,20 +885,15 @@ public class RCFile {
       int size = schema.size();
 
       for (int i = 0; i < size; i++) {
-        Datum datum = tuple.get(i);
-        int length = columnBuffers[i].append(schema.getColumn(i), datum);
+        int length = columnBuffers[i].append(tuple, i);
         columnBufferSize += length;
-        if (isShuffle) {
-          // it is to calculate min/max values, and it is only used for the intermediate file.
-          stats.analyzeField(i, datum);
-        }
       }
 
       if (size < columnNumber) {
         for (int i = size; i < columnNumber; i++) {
-          columnBuffers[i].append(schema.getColumn(i), NullDatum.get());
+          columnBuffers[i].append(NullDatum.get());
           if (isShuffle) {
-            stats.analyzeField(i, NullDatum.get());
+            stats.analyzeNull(i);
           }
         }
       }
@@ -1177,6 +1165,8 @@ public class RCFile {
     private byte[] nullChars;
     private SerializerDeserializer serde;
 
+    private Tuple outTuple;
+
     public RCFileScanner(Configuration conf, final Schema schema, final TableMeta meta,
                          final Fragment fragment) throws IOException {
       super(conf, schema, meta, fragment);
@@ -1208,6 +1198,8 @@ public class RCFile {
       if (targets == null) {
         targets = schema.toArray();
       }
+
+      outTuple = new VTuple(targets.length);
 
       targetColumnIndexes = new int[targets.length];
       for (int i = 0; i < targets.length; i++) {
@@ -1255,17 +1247,18 @@ public class RCFile {
 
       for (int i = 0; i < targetColumnIndexes.length; i++) {
         int tid = targetColumnIndexes[i];
+        SelectedColumn col = new SelectedColumn();
+        col.colIndex = tid;
         if (tid < columnNumber) {
           skippedColIDs[tid] = false;
-
-          SelectedColumn col = new SelectedColumn();
-          col.colIndex = tid;
           col.runLength = 0;
           col.prvLength = -1;
           col.rowReadIndex = 0;
-          selectedColumns[i] = col;
           colValLenBufferReadIn[i] = new NonSyncDataInputBuffer();
+        }  else {
+          col.isNulled = true;
         }
+        selectedColumns[i] = col;
       }
 
       currentKey = createKeyBuffer();
@@ -1376,6 +1369,7 @@ public class RCFile {
           serdeClass = this.meta.getOption(StorageConstants.RCFILE_SERDE, BinarySerializerDeserializer.class.getName());
         }
         serde = (SerializerDeserializer) Class.forName(serdeClass).newInstance();
+        serde.init(schema);
       } catch (Exception e) {
         LOG.error(e.getMessage(), e);
         throw new IOException(e);
@@ -1583,10 +1577,7 @@ public class RCFile {
 
       for (int selIx = 0; selIx < selectedColumns.length; selIx++) {
         SelectedColumn col = selectedColumns[selIx];
-        if (col == null) {
-          col = new SelectedColumn();
-          col.isNulled = true;
-          selectedColumns[selIx] = col;
+        if (col.isNulled) {
           continue;
         }
 
@@ -1637,13 +1628,14 @@ public class RCFile {
         return null;
       }
 
-      Tuple tuple = new VTuple(schema.size());
-      getCurrentRow(tuple);
-      return tuple;
+      getCurrentRow(outTuple);
+      return outTuple;
     }
 
     @Override
     public float getProgress() {
+      if(!inited) return super.getProgress();
+
       try {
         if(!more) {
           return 1.0f;
@@ -1707,16 +1699,16 @@ public class RCFile {
 
       for (int j = 0; j < selectedColumns.length; ++j) {
         SelectedColumn col = selectedColumns[j];
-        int i = col.colIndex;
+        int actualColumnIdx = col.colIndex;
 
         if (col.isNulled) {
-          tuple.put(i, NullDatum.get());
+          tuple.put(j, NullDatum.get());
         } else {
           colAdvanceRow(j, col);
 
-          Datum datum = serde.deserialize(schema.getColumn(i),
+          Datum datum = serde.deserialize(actualColumnIdx,
               currentValue.loadedColumnsValueBuffer[j].getData(), col.rowReadIndex, col.prvLength, nullChars);
-          tuple.put(i, datum);
+          tuple.put(j, datum);
           col.rowReadIndex += col.prvLength;
         }
       }
@@ -1782,6 +1774,11 @@ public class RCFile {
     @Override
     public boolean isSelectable() {
       return false;
+    }
+
+    @Override
+    public void setFilter(EvalNode filter) {
+      throw new TajoRuntimeException(new UnsupportedException());
     }
 
     @Override

@@ -26,7 +26,6 @@ import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.Int8Datum;
-import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.plan.function.AggFunction;
 import org.apache.tajo.plan.function.FunctionContext;
 import org.apache.tajo.engine.function.annotation.Description;
@@ -65,10 +64,12 @@ public class SumLongDistinct extends AggFunction<Datum> {
   @Override
   public void merge(FunctionContext context, Tuple params) {
     SumContext distinctContext = (SumContext) context;
-    Datum value = params.get(0);
-    if ((distinctContext.latest == null || (!distinctContext.latest.equals(value)) && !(value instanceof NullDatum))) {
-      distinctContext.latest = value;
-      distinctContext.sum += value.asInt8();
+    if (!params.isBlankOrNull(0)) {
+      Datum value = params.asDatum(0);
+      if (distinctContext.latest == null || !distinctContext.latest.equals(value)) {
+        distinctContext.latest = value;
+        distinctContext.sum += value.asInt8();
+      }
     }
   }
 
@@ -87,7 +88,7 @@ public class SumLongDistinct extends AggFunction<Datum> {
     return DatumFactory.createInt8(((SumContext) ctx).sum);
   }
 
-  private class SumContext implements FunctionContext {
+  private static class SumContext implements FunctionContext {
     long sum;
     Datum latest;
   }

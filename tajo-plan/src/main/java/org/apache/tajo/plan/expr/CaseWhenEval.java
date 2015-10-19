@@ -20,8 +20,8 @@ package org.apache.tajo.plan.expr;
 
 import com.google.common.collect.Lists;
 import com.google.gson.annotations.Expose;
+
 import org.apache.tajo.catalog.CatalogUtil;
-import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.common.TajoDataTypes.Type;
@@ -104,15 +104,18 @@ public class CaseWhenEval extends EvalNode implements GsonObject {
     return "?";
   }
 
-  public Datum eval(Schema schema, Tuple tuple) {
-    for (int i = 0; i < whens.size(); i++) {
-      if (whens.get(i).checkIfCondition(schema, tuple)) {
-        return whens.get(i).eval(schema, tuple);
+  @Override
+  @SuppressWarnings("unchecked")
+  public Datum eval(Tuple tuple) {
+    super.eval(tuple);
+    for (IfThenEval eval : whens) {
+      if (eval.checkIfCondition(tuple)) {
+        return eval.eval(tuple);
       }
     }
 
     if (elseResult != null) { // without else clause
-      return elseResult.eval(schema, tuple);
+      return elseResult.eval(tuple);
     }
 
     return NullDatum.get();
@@ -155,12 +158,21 @@ public class CaseWhenEval extends EvalNode implements GsonObject {
   @Override
   public Object clone() throws CloneNotSupportedException {
     CaseWhenEval caseWhenEval = (CaseWhenEval) super.clone();
-    caseWhenEval.whens = new ArrayList<IfThenEval>();
+    caseWhenEval.whens = new ArrayList<>();
     for (IfThenEval ifThenEval : whens) {
       caseWhenEval.whens.add((IfThenEval) ifThenEval.clone());
     }
     caseWhenEval.elseResult = elseResult;
     return caseWhenEval;
+  }
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + ((elseResult == null) ? 0 : elseResult.hashCode());
+    result = prime * result + ((whens == null) ? 0 : whens.hashCode());
+    return result;
   }
 
   @Override
@@ -215,12 +227,15 @@ public class CaseWhenEval extends EvalNode implements GsonObject {
       return "when?";
     }
 
-    public boolean checkIfCondition(Schema schema, Tuple tuple) {
-      return condition.eval(schema, tuple).isTrue();
+    public boolean checkIfCondition(Tuple tuple) {
+      return condition.eval(tuple).isTrue();
     }
 
-    public Datum eval(Schema schema, Tuple tuple) {
-      return result.eval(schema, tuple);
+    @Override
+    @SuppressWarnings("unchecked")
+    public Datum eval(Tuple tuple) {
+      super.eval(tuple);
+      return result.eval(tuple);
     }
 
     public void setCondition(EvalNode condition) {
@@ -240,9 +255,18 @@ public class CaseWhenEval extends EvalNode implements GsonObject {
     }
 
     @Override
-    public boolean equals(Object object) {
-      if (object instanceof IfThenEval) {
-        IfThenEval other = (IfThenEval) object;
+    public int hashCode() {
+      final int prime = 31;
+      int result = 1;
+      result = prime * result + ((condition == null) ? 0 : condition.hashCode());
+      result = prime * result + ((this.result == null) ? 0 : this.result.hashCode());
+      return result;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (obj instanceof IfThenEval) {
+        IfThenEval other = (IfThenEval) obj;
         return condition.equals(other.condition) && result.equals(other.result);
       } else {
         return false;

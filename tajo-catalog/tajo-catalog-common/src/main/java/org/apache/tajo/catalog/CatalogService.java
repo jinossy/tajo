@@ -19,49 +19,31 @@
 package org.apache.tajo.catalog;
 
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
-import org.apache.tajo.catalog.proto.CatalogProtos.ColumnProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.DatabaseProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.IndexProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.TableDescriptorProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.TableOptionProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.TablePartitionProto;
-import org.apache.tajo.catalog.proto.CatalogProtos.TableStatsProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.*;
 import org.apache.tajo.common.TajoDataTypes.DataType;
+import org.apache.tajo.exception.*;
 
 import java.util.Collection;
 import java.util.List;
 
-import static org.apache.tajo.catalog.proto.CatalogProtos.AlterTablespaceProto;
-import static org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
-import static org.apache.tajo.catalog.proto.CatalogProtos.TablespaceProto;
-import static org.apache.tajo.catalog.proto.CatalogProtos.UpdateTableStatsProto;
-
-
 public interface CatalogService {
 
   /**
-   *
    * @param tableSpaceName Tablespace name to be created
-   * @return True if tablespace is created successfully. Otherwise, it will return FALSE.
    */
-  Boolean createTablespace(String tableSpaceName, String uri);
+  void createTablespace(String tableSpaceName, String uri) throws DuplicateTablespaceException;
 
   /**
-   *
    * @param tableSpaceName Tablespace name to be created
-   * @return True if tablespace is created successfully. Otherwise, it will return FALSE.
    */
-  Boolean existTablespace(String tableSpaceName);
+  boolean existTablespace(String tableSpaceName);
 
   /**
-   *
    * @param tableSpaceName Tablespace name to be created
-   * @return True if tablespace is created successfully. Otherwise, it will return FALSE.
    */
-  Boolean dropTablespace(String tableSpaceName);
+  void dropTablespace(String tableSpaceName) throws UndefinedTablespaceException, InsufficientPrivilegeException;
 
   /**
-   *
    * @return All tablespace names
    */
   Collection<String> getAllTablespaceNames();
@@ -76,35 +58,30 @@ public interface CatalogService {
    * @param tablespaceName Tablespace name to get
    * @return Tablespace description
    */
-  TablespaceProto getTablespace(String tablespaceName);
+  TablespaceProto getTablespace(String tablespaceName) throws UndefinedTablespaceException;
 
   /**
-   *
    * @param alterTablespace AlterTablespace
-   * @return True if update is successfully.
    */
-  Boolean alterTablespace(AlterTablespaceProto alterTablespace);
+  void alterTablespace(AlterTablespaceProto alterTablespace)
+      throws UndefinedTablespaceException, InsufficientPrivilegeException;
 
   /**
-   *
    * @param databaseName Database name to be created
-   * @return True if database is created successfully. Otherwise, it will return FALSE.
    */
-  Boolean createDatabase(String databaseName, String tablespaceName);
+  void createDatabase(String databaseName, String tablespaceName) throws DuplicateDatabaseException;
 
   /**
-   *
    * @param databaseName Database name to be dropped
-   * @return True if database is dropped successfully. Otherwise, it will return FALSE.
    */
-  Boolean dropDatabase(String databaseName);
+  void dropDatabase(String databaseName) throws UndefinedDatabaseException, InsufficientPrivilegeException;
 
   /**
    *
    * @param databaseName Database name to be checked
    * @return True if database exists. Otherwise, it will return FALSE.
    */
-  Boolean existDatabase(String databaseName);
+  boolean existDatabase(String databaseName);
 
   /**
    *
@@ -122,17 +99,17 @@ public interface CatalogService {
    * @param tableName table name
    * @return a table description
    * @see TableDesc
-   * @throws Throwable
+   * @throws UndefinedTableException
    */
-  TableDesc getTableDesc(String databaseName, String tableName);
+  TableDesc getTableDesc(String databaseName, String tableName) throws UndefinedTableException;
 
   /**
    * Get a table description by name
    * @return a table description
    * @see TableDesc
-   * @throws Throwable
+   * @throws UndefinedTableException
    */
-  TableDesc getTableDesc(String qualifiedName);
+  TableDesc getTableDesc(String qualifiedName) throws UndefinedTableException;
 
   /**
    *
@@ -140,22 +117,17 @@ public interface CatalogService {
    */
   Collection<String> getAllTableNames(String databaseName);
   
-  /**
-   * 
-   */
   List<TableDescriptorProto> getAllTables();
   
   List<TableOptionProto> getAllTableOptions();
   
   List<TableStatsProto> getAllTableStats();
   
-  /**
-   * 
-   */
   List<ColumnProto> getAllColumns();
 
+  List<IndexDescProto> getAllIndexes();
+
   /**
-   *
    * @return All FunctionDescs
    */
   Collection<FunctionDesc> getFunctions();
@@ -163,62 +135,126 @@ public interface CatalogService {
   /**
    * Add a table via table description
    * @see TableDesc
-   * @throws Throwable
+   * @throws DuplicateTableException
    */
-  boolean createTable(TableDesc desc);
+  void createTable(TableDesc desc) throws
+      DuplicateTableException,
+      InsufficientPrivilegeException,
+      DuplicateDatabaseException,
+      UndefinedDatabaseException;
 
 
   /**
    * Drop a table by name
    *
    * @param tableName table name
-   * @throws Throwable
+   * @throws UndefinedTableException
+   * @throws InsufficientPrivilegeException
    */
-  boolean dropTable(String tableName);
+  void dropTable(String tableName) throws
+      UndefinedTableException,
+      InsufficientPrivilegeException,
+      UndefinedDatabaseException;
 
   boolean existsTable(String databaseName, String tableName);
 
   boolean existsTable(String tableName);
 
-  PartitionMethodDesc getPartitionMethod(String databaseName, String tableName);
+  PartitionMethodDesc getPartitionMethod(String databaseName, String tableName) throws
+      UndefinedPartitionMethodException,
+      UndefinedTableException,
+      UndefinedDatabaseException;
 
-  boolean existPartitionMethod(String databaseName, String tableName);
-  
+  boolean existPartitionMethod(String databaseName, String tableName) throws UndefinedTableException,
+      UndefinedDatabaseException;
+
+  boolean existPartitions(String databaseName, String tableName) throws
+    UndefinedDatabaseException, UndefinedTableException, UndefinedPartitionMethodException;
+
+  PartitionDescProto getPartition(String databaseName, String tableName, String partitionName)
+      throws UndefinedPartitionException, UndefinedPartitionMethodException, UndefinedDatabaseException,
+      UndefinedTableException;
+
+  List<PartitionDescProto> getPartitionsOfTable(String databaseName, String tableName) throws UndefinedDatabaseException,
+    UndefinedTableException, UndefinedPartitionMethodException;
+
+  List<PartitionDescProto> getPartitionsByAlgebra(PartitionsByAlgebraProto request) throws
+    UndefinedDatabaseException, UndefinedTableException, UndefinedPartitionMethodException,
+    UnsupportedException;
+
   List<TablePartitionProto> getAllPartitions();
 
-  boolean createIndex(IndexDesc index);
+  void addPartitions(String databaseName, String tableName, List<PartitionDescProto> partitions
+    , boolean ifNotExists) throws
+      UndefinedTableException,
+      DuplicatePartitionException,
+      UndefinedPartitionMethodException,
+      UndefinedDatabaseException;
+
+  void createIndex(IndexDesc index) throws DuplicateIndexException, UndefinedDatabaseException, UndefinedTableException;
 
   boolean existIndexByName(String databaseName, String indexName);
 
-  boolean existIndexByColumn(String databaseName, String tableName, String columnName);
+  boolean existIndexByColumns(String databaseName, String tableName, Column[] columns);
+
+  boolean existIndexByColumnNames(String databaseName, String tableName, String [] columnNames);
+
+  boolean existIndexesByTable(String databaseName, String tableName);
 
   IndexDesc getIndexByName(String databaseName, String indexName);
 
-  IndexDesc getIndexByColumn(String databaseName, String tableName, String columnName);
+  IndexDesc getIndexByColumns(String databaseName, String tableName, Column [] columns);
 
-  boolean dropIndex(String databaseName, String indexName);
-  
-  List<IndexProto> getAllIndexes();
+  IndexDesc getIndexByColumnNames(String databaseName, String tableName, String [] columnNames);
 
-  boolean createFunction(FunctionDesc funcDesc);
+  Collection<IndexDesc> getAllIndexesByTable(String databaseName, String tableName);
 
-  boolean dropFunction(String signature);
+  void dropIndex(String databaseName, String indexName) throws UndefinedIndexException, UndefinedDatabaseException;
 
-  FunctionDesc getFunction(String signature, DataType... paramTypes);
+  void createFunction(FunctionDesc funcDesc) throws DuplicateFunctionException;
 
-  FunctionDesc getFunction(String signature, FunctionType funcType, DataType... paramTypes);
+  void dropFunction(String signature) throws UndefinedFunctionException, InsufficientPrivilegeException;
+
+  FunctionDesc getFunction(String signature, DataType... paramTypes)
+      throws AmbiguousFunctionException, UndefinedFunctionException;
+
+  FunctionDesc getFunction(String signature, FunctionType funcType, DataType... paramTypes)
+      throws AmbiguousFunctionException, UndefinedFunctionException;
 
   boolean containFunction(String signature, DataType... paramTypes);
 
   boolean containFunction(String signature, FunctionType funcType, DataType... paramTypes);
 
   /**
-  * Add a table via table description
-  * @see AlterTableDesc
-  * @throws Throwable
-  */
-  boolean alterTable(AlterTableDesc desc);
+   * Add a table via table description
+   *
+   * @param desc
+   * @throws DuplicateColumnException
+   * @throws DuplicateTableException
+   * @throws InsufficientPrivilegeException
+   * @throws UndefinedColumnException
+   * @throws UndefinedTableException
+   * @throws DuplicateDatabaseException
+   * @throws DuplicatePartitionException
+   * @throws UndefinedDatabaseException
+   * @throws UndefinedPartitionMethodException
+   * @throws UndefinedPartitionException
+   * @throws NotImplementedException
+   *
+   * @see AlterTableDesc
+   */
+  void alterTable(AlterTableDesc desc)
+      throws DuplicateColumnException,
+      DuplicateTableException,
+      InsufficientPrivilegeException,
+      UndefinedColumnException,
+      UndefinedTableException,
+      DuplicateDatabaseException,
+      DuplicatePartitionException,
+      UndefinedDatabaseException,
+      UndefinedPartitionMethodException,
+      UndefinedPartitionException,
+       NotImplementedException;
 
-  boolean updateTableStats(UpdateTableStatsProto stats);
-
+  void updateTableStats(UpdateTableStatsProto stats) throws UndefinedTableException, InsufficientPrivilegeException;
 }

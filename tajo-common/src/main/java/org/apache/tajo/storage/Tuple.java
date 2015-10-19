@@ -18,62 +18,73 @@
 
 package org.apache.tajo.storage;
 
+import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
+import org.apache.tajo.util.datetime.TimeMeta;
 
 public interface Tuple extends Cloneable {
-  
-	public int size();
-	
-	public boolean contains(int fieldid);
 
-  public boolean isNull(int fieldid);
+  int size();
 
-  @SuppressWarnings("unused")
-  public boolean isNotNull(int fieldid);
-	
-	public void clear();
-	
-	public void put(int fieldId, Datum value);
+  boolean contains(int fieldid);
 
-  public void put(int fieldId, Datum[] values);
+  boolean isBlank(int fieldid);
 
-  public void put(int fieldId, Tuple tuple);
-	
-	public void put(Datum[] values);
-	
-	public Datum get(int fieldId);
-	
-	public void setOffset(long offset);
-	
-	public long getOffset();
+  boolean isBlankOrNull(int fieldid);
 
-	public boolean getBool(int fieldId);
+  void insertTuple(int fieldId, Tuple tuple);
 
-	public byte getByte(int fieldId);
+  void put(int fieldId, Datum value);
 
-  public char getChar(int fieldId);
-	
-	public byte [] getBytes(int fieldId);
-	
-	public short getInt2(int fieldId);
-	
-	public int getInt4(int fieldId);
-	
-	public long getInt8(int fieldId);
-	
-	public float getFloat4(int fieldId);
-	
-	public double getFloat8(int fieldId);
-	
-	public String getText(int fieldId);
+  void put(Datum[] values);
 
-  public Datum getProtobufDatum(int fieldId);
+  void clear();
 
-  public Datum getInterval(int fieldId);
+  Datum asDatum(int fieldId);
 
-  public char [] getUnicodeChars(int fieldId);
+  TajoDataTypes.Type type(int fieldId);
 
-  public Tuple clone() throws CloneNotSupportedException;
+  int size(int fieldId);
 
-  public Datum[] getValues();
+  void clearOffset();
+
+  void setOffset(long offset);
+
+  long getOffset();
+
+  boolean getBool(int fieldId);
+
+  byte getByte(int fieldId);
+
+  char getChar(int fieldId);
+
+  byte[] getBytes(int fieldId);
+
+  byte[] getTextBytes(int fieldId);
+
+  short getInt2(int fieldId);
+
+  int getInt4(int fieldId);
+
+  long getInt8(int fieldId);
+
+  float getFloat4(int fieldId);
+
+  double getFloat8(int fieldId);
+
+  String getText(int fieldId);
+
+  TimeMeta getTimeDate(int fieldId);
+
+  Datum getProtobufDatum(int fieldId);
+
+  Datum getInterval(int fieldId);
+
+  // todo remove this
+  char [] getUnicodeChars(int fieldId);
+
+  Tuple clone() throws CloneNotSupportedException;
+
+  // todo remove this
+  Datum[] getValues();
 }

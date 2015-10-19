@@ -19,14 +19,14 @@
 package org.apache.tajo.engine.planner.global;
 
 import com.google.common.base.Preconditions;
+import org.apache.tajo.BuiltinStorages;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SchemaUtil;
-import org.apache.tajo.util.TUtil;
+import org.apache.tajo.util.StringUtils;
 
-import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.*;
+import static org.apache.tajo.plan.serder.PlanProto.DataChannelProto;
 import static org.apache.tajo.plan.serder.PlanProto.ShuffleType;
 import static org.apache.tajo.plan.serder.PlanProto.TransmitType;
 
@@ -40,7 +40,7 @@ public class DataChannel {
 
   private Schema schema;
 
-  private StoreType storeType = StoreType.RAW;
+  private String dataFormat = BuiltinStorages.RAW;
 
   public DataChannel(ExecutionBlockId srcId, ExecutionBlockId targetId) {
     this.srcId = srcId;
@@ -82,8 +82,8 @@ public class DataChannel {
       this.numOutputs = proto.getNumOutputs();
     }
 
-    if (proto.hasStoreType()) {
-      this.storeType = proto.getStoreType();
+    if (proto.hasDataFormat()) {
+      this.dataFormat = proto.getDataFormat();
     }
   }
 
@@ -97,6 +97,10 @@ public class DataChannel {
 
   public ShuffleType getShuffleType() {
     return shuffleType;
+  }
+
+  public boolean needShuffle() {
+    return shuffleType != ShuffleType.NONE_SHUFFLE;
   }
 
   public TransmitType getTransmitType() {
@@ -140,16 +144,16 @@ public class DataChannel {
     return numOutputs;
   }
 
-  public boolean hasStoreType() {
-    return this.storeType != null;
+  public boolean hasDataFormat() {
+    return this.dataFormat != null;
   }
 
-  public void setStoreType(StoreType storeType) {
-    this.storeType = storeType;
+  public void setDataFormat(String dataFormat) {
+    this.dataFormat = dataFormat;
   }
 
-  public StoreType getStoreType() {
-    return storeType;
+  public String getDataFormat() {
+    return dataFormat;
   }
 
   public DataChannelProto getProto() {
@@ -172,8 +176,8 @@ public class DataChannel {
       builder.setNumOutputs(numOutputs);
     }
 
-    if(storeType != null){
-      builder.setStoreType(storeType);
+    if(dataFormat != null){
+      builder.setDataFormat(dataFormat);
     }
     return builder.build();
   }
@@ -193,7 +197,7 @@ public class DataChannel {
     sb.append(" (type=").append(shuffleType);
     if (hasShuffleKeys()) {
       sb.append(", key=");
-      sb.append(TUtil.arrayToString(shuffleKeys));
+      sb.append(StringUtils.join(shuffleKeys));
       sb.append(", num=").append(numOutputs);
     }
     sb.append(")");

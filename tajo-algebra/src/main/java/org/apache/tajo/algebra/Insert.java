@@ -32,14 +32,14 @@ public class Insert extends Expr {
   @Expose @SerializedName("TableName")
   private String tableName;
   @Expose @SerializedName("TargetColumns")
-  private String [] targetColumns;
+  private ColumnReferenceExpr [] targetColumns;
   @Expose @SerializedName("StorageType")
   private String storageType;
   @Expose @SerializedName("Location")
   private String location;
   @Expose @SerializedName("SubPlan")
   private Expr subquery;
-  @Expose @SerializedName("InsertParams")
+  @Expose @SerializedName("Properties")
   private Map<String, String> params;
 
   public Insert() {
@@ -70,11 +70,11 @@ public class Insert extends Expr {
     return targetColumns != null;
   }
 
-  public String [] getTargetColumns() {
+  public ColumnReferenceExpr [] getTargetColumns() {
     return targetColumns;
   }
 
-  public void setTargetColumns(String [] targets) {
+  public void setTargetColumns(ColumnReferenceExpr [] targets) {
     this.targetColumns = targets;
   }
 
@@ -98,7 +98,7 @@ public class Insert extends Expr {
     this.storageType = storageType;
   }
 
-  public String getStorageType() {
+  public String getDataFormat() {
     return storageType;
   }
 
@@ -151,7 +151,9 @@ public class Insert extends Expr {
     insert.storageType = storageType;
     insert.location = location;
     insert.subquery = (Expr) subquery.clone();
-    insert.params = new HashMap<String, String>(params);
+    if (params != null) {
+      insert.params = new HashMap<>(params);
+    }
     return insert;
   }
 }

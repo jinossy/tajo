@@ -1,1 +1,0 @@
-select max(point) as maximum, count(age) as unique_key from table1;

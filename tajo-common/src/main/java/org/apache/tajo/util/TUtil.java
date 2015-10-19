@@ -21,6 +21,8 @@ package org.apache.tajo.util;
 import com.google.common.base.Objects;
 
 import java.lang.reflect.Array;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -50,10 +52,10 @@ public class TUtil {
    * @return true if they are equal or all null
    */
   public static boolean checkEquals(Collection<?> s1, Collection<?> s2) {
-    if (s1 == null ^ s2 == null) {
-      return false;
-    } else if (s1 == null && s2 == null) {
+    if (s1 == null && s2 == null) {
       return true;
+    } else if (s1 == null || s2 == null) {
+      return false;
     } else {
       if (s1.size() == 0 && s2.size() == 0) {
         return true;
@@ -121,47 +123,47 @@ public class TUtil {
   }
 
   public static <T> Set<T> newHashSet() {
-    return new HashSet<T>();
+    return new HashSet<>();
   }
 
   public static <T> Set<T> newHashSet(T ...items) {
-    return new HashSet<T>(Arrays.asList(items));
+    return new HashSet<>(Arrays.asList(items));
   }
 
   public static <K,V> Map<K,V> newHashMap() {
-    return new HashMap<K, V>();
+    return new HashMap<>();
   }
 
   public static <K,V> Map<K,V> newHashMap(Map<K,V> map) {
-    return new HashMap<K, V>(map);
+    return new HashMap<>(map);
   }
 
   public static <K, V> Map<K,V> newHashMap(K k, V v) {
-    HashMap<K, V> newMap = new HashMap<K, V>();
+    HashMap<K, V> newMap = new HashMap<>();
     newMap.put(k, v);
     return newMap;
   }
 
   public static <K,V> Map<K,V> newLinkedHashMap() {
-    return new LinkedHashMap<K, V>();
+    return new LinkedHashMap<>();
   }
 
   public static <K, V> Map<K,V> newLinkedHashMap(K k, V v) {
-    HashMap<K, V> newMap = new LinkedHashMap<K, V>();
+    HashMap<K, V> newMap = new LinkedHashMap<>();
     newMap.put(k, v);
     return newMap;
   }
 
   public static <K,V> Map<K,V> newConcurrentHashMap() {
-    return new ConcurrentHashMap<K, V>();
+    return new ConcurrentHashMap<>();
   }
 
   public static <T> List<T> newList() {
-    return new ArrayList<T>();
+    return new ArrayList<>();
   }
 
   public static <T> List<T> newList(T...items) {
-    List<T> list = new ArrayList<T>();
+    List<T> list = new ArrayList<>();
     for (T t : items) {
       list.add(t);
     }
@@ -170,7 +172,7 @@ public class TUtil {
   }
 
   public static <T> List<T> newList(Collection<T> items) {
-    List<T> list = new ArrayList<T>();
+    List<T> list = new ArrayList<>();
     for (T t : items) {
       list.add(t);
     }
@@ -240,38 +242,6 @@ public class TUtil {
     }
   }
 
-  public static String collectionToString(Collection objects, String delimiter) {
-    boolean first = true;
-    StringBuilder sb = new StringBuilder();
-    for(Object object : objects) {
-      if (first) {
-        first = false;
-      } else {
-        sb.append(delimiter);
-      }
-
-      sb.append(object.toString());
-    }
-
-    return sb.toString();
-  }
-
-  public static String arrayToString(Object [] objects) {
-    boolean first = true;
-    StringBuilder sb = new StringBuilder();
-    for(Object object : objects) {
-      if (first) {
-        first = false;
-      } else {
-        sb.append(", ");
-      }
-
-      sb.append(object.toString());
-    }
-
-    return sb.toString();
-  }
-
   public static <T> T [] toArray(Collection<T> collection, Class<T> type) {
     T array = (T) Array.newInstance(type, collection.size());
     return collection.toArray((T[]) array);
@@ -298,5 +268,22 @@ public class TUtil {
     final StackTraceElement[] ste = Thread.currentThread().getStackTrace();
     StackTraceElement element = ste[2 + depth];
     return element.getClassName() + ":" + element.getMethodName() + "(" + element.getLineNumber() +")";
+  }
+
+  public static URI stringToURI(String str) {
+    try {
+      return new URI(str);
+    } catch (URISyntaxException e) {
+      throw new RuntimeException("Cannot convert " + str + " to the URI type", e);
+    }
+  }
+
+  public static <T> T checkTypeAndGet(Object instance, Class<T> type) {
+    if (!type.isInstance(instance)) {
+      throw new IllegalArgumentException(instance.getClass().getSimpleName()
+          + " must be a " + type.getSimpleName() + " type");
+
+    }
+    return (T) instance;
   }
 }

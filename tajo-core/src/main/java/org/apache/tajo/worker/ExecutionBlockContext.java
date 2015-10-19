@@ -28,61 +28,56 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.tajo.ExecutionBlockId;
-import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.TajoProtos;
+import org.apache.tajo.TaskAttemptId;
+import org.apache.tajo.TaskId;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.ipc.QueryMasterProtocol;
-import org.apache.tajo.master.cluster.WorkerConnectionInfo;
-import org.apache.tajo.rpc.NettyClientBase;
-import org.apache.tajo.rpc.NullCallback;
-import org.apache.tajo.rpc.RpcChannelFactory;
-import org.apache.tajo.rpc.RpcConnectionPool;
+import org.apache.tajo.plan.serder.PlanProto;
+import org.apache.tajo.pullserver.TajoPullServerService;
+import org.apache.tajo.rpc.*;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.storage.HashShuffleAppenderManager;
-import org.apache.tajo.storage.StorageUtil;
-import org.apache.tajo.util.NetUtils;
 import org.apache.tajo.util.Pair;
-import org.apache.tajo.worker.event.TaskRunnerStartEvent;
-import org.jboss.netty.channel.ConnectTimeoutException;
-import org.jboss.netty.channel.socket.ClientSocketChannelFactory;
-import org.jboss.netty.util.Timer;
+import org.apache.tajo.worker.event.ExecutionBlockErrorEvent;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.apache.tajo.ipc.TajoWorkerProtocol.*;
+import static org.apache.tajo.ResourceProtos.*;
+import static org.apache.tajo.ipc.QueryMasterProtocol.QueryMasterProtocolService.Interface;
 
 public class ExecutionBlockContext {
   /** class logger */
   private static final Log LOG = LogFactory.getLog(ExecutionBlockContext.class);
 
-  private TaskRunnerManager manager;
-  public AtomicInteger completedTasksNum = new AtomicInteger();
-  public AtomicInteger succeededTasksNum = new AtomicInteger();
-  public AtomicInteger killedTasksNum = new AtomicInteger();
-  public AtomicInteger failedTasksNum = new AtomicInteger();
+  protected AtomicInteger runningTasksNum = new AtomicInteger();
+  protected AtomicInteger completedTasksNum = new AtomicInteger();
+  protected AtomicInteger succeededTasksNum = new AtomicInteger();
+  protected AtomicInteger killedTasksNum = new AtomicInteger();
+  protected AtomicInteger failedTasksNum = new AtomicInteger();
 
-  private ClientSocketChannelFactory channelFactory;
-  // for temporal or intermediate files
   private FileSystem localFS;
   // for input files
   private FileSystem defaultFS;
   private ExecutionBlockId executionBlockId;
   private QueryContext queryContext;
+  private TajoWorker.WorkerContext workerContext;
   private String plan;
 
-  private ExecutionBlockSharedResource resource;
+  private final ExecutionBlockSharedResource resource;
 
   private TajoQueryEngine queryEngine;
-  private RpcConnectionPool connPool;
-  private InetSocketAddress qmMasterAddr;
-  private WorkerConnectionInfo queryMaster;
+  private RpcClientManager connManager;
+  private AsyncRpcClient queryMasterClient;
+  private QueryMasterProtocol.QueryMasterProtocolService.Interface stub;
   private TajoConf systemConf;
   // for the doAs block
   private UserGroupInformation taskOwner;
@@ -91,18 +86,19 @@ public class ExecutionBlockContext {
 
   private AtomicBoolean stop = new AtomicBoolean();
 
+  private PlanProto.ShuffleType shuffleType;
+
   // It keeps all of the query unit attempts while a TaskRunner is running.
   private final ConcurrentMap<TaskAttemptId, Task> tasks = Maps.newConcurrentMap();
 
-  private final ConcurrentMap<String, TaskRunnerHistory> histories = Maps.newConcurrentMap();
+  private final Map<TaskId, TaskHistory> taskHistories = Maps.newConcurrentMap();
 
-  public ExecutionBlockContext(TaskRunnerManager manager, TaskRunnerStartEvent event, WorkerConnectionInfo queryMaster)
-      throws Throwable {
-    this.manager = manager;
-    this.executionBlockId = event.getExecutionBlockId();
-    this.connPool = RpcConnectionPool.getPool();
-    this.queryMaster = queryMaster;
-    this.systemConf = manager.getTajoConf();
+  public ExecutionBlockContext(TajoWorker.WorkerContext workerContext, ExecutionBlockContextResponse request,
+                               AsyncRpcClient queryMasterClient)
+      throws IOException {
+    this.executionBlockId = new ExecutionBlockId(request.getExecutionBlockId());
+    this.connManager = RpcClientManager.getInstance();
+    this.systemConf = workerContext.getConf();
     this.reporter = new Reporter();
     this.defaultFS = TajoConf.getTajoRootDir(systemConf).getFileSystem(systemConf);
     this.localFS = FileSystem.getLocal(systemConf);
@@ -110,11 +106,12 @@ public class ExecutionBlockContext {
     // Setup QueryEngine according to the query plan
     // Here, we can setup row-based query engine or columnar query engine.
     this.queryEngine = new TajoQueryEngine(systemConf);
-    this.queryContext = event.getQueryContext();
-    this.plan = event.getPlan();
+    this.queryContext = new QueryContext(workerContext.getConf(), request.getQueryContext());
+    this.plan = request.getPlanJson();
     this.resource = new ExecutionBlockSharedResource();
-
-    init();
+    this.workerContext = workerContext;
+    this.shuffleType = request.getShuffleType();
+    this.queryMasterClient = queryMasterClient;
   }
 
   public void init() throws Throwable {
@@ -122,23 +119,26 @@ public class ExecutionBlockContext {
     LOG.info("Tajo Root Dir: " + systemConf.getVar(TajoConf.ConfVars.ROOT_DIR));
     LOG.info("Worker Local Dir: " + systemConf.getVar(TajoConf.ConfVars.WORKER_TEMPORAL_DIR));
 
-    this.qmMasterAddr = NetUtils.createSocketAddr(queryMaster.getHost(), queryMaster.getQueryMasterPort());
-    LOG.info("QueryMaster Address:" + qmMasterAddr);
 
     UserGroupInformation.setConfiguration(systemConf);
     // TODO - 'load credential' should be implemented
     // Getting taskOwner
-    UserGroupInformation taskOwner = UserGroupInformation.createRemoteUser(systemConf.getVar(TajoConf.ConfVars.USERNAME));
+    UserGroupInformation
+        taskOwner = UserGroupInformation.createRemoteUser(systemConf.getVar(TajoConf.ConfVars.USERNAME));
 
     // initialize DFS and LocalFileSystems
     this.taskOwner = taskOwner;
+    this.stub = queryMasterClient.getStub();
     this.reporter.startReporter();
-
     // resource intiailization
     try{
       this.resource.initialize(queryContext, plan);
     } catch (Throwable e) {
-      getQueryMasterStub().killQuery(null, executionBlockId.getQueryId().getProto(), NullCallback.get());
+      try {
+        getStub().killQuery(null, executionBlockId.getQueryId().getProto(), NullCallback.get());
+      } catch (Throwable t) {
+        LOG.error(t);
+      }
       throw e;
     }
   }
@@ -147,15 +147,16 @@ public class ExecutionBlockContext {
     return resource;
   }
 
-  public QueryMasterProtocol.QueryMasterProtocolService.Interface getQueryMasterStub()
-      throws NoSuchMethodException, ConnectTimeoutException, ClassNotFoundException {
-    NettyClientBase clientBase = null;
-    try {
-      clientBase = connPool.getConnection(qmMasterAddr, QueryMasterProtocol.class, true);
-      return clientBase.getStub();
-    } finally {
-      connPool.releaseConnection(clientBase);
-    }
+  private AsyncRpcClient getRpcClient() {
+    return queryMasterClient;
+  }
+
+  public Interface getStub() {
+    return stub;
+  }
+
+  public boolean isStopped() {
+    return stop.get();
   }
 
   public void stop(){
@@ -171,41 +172,32 @@ public class ExecutionBlockContext {
 
     // If ExecutionBlock is stopped, all running or pending tasks will be marked as failed.
     for (Task task : tasks.values()) {
-      if (task.getStatus() == TajoProtos.TaskAttemptState.TA_PENDING ||
-          task.getStatus() == TajoProtos.TaskAttemptState.TA_RUNNING) {
-        task.setState(TajoProtos.TaskAttemptState.TA_FAILED);
+      if (task.getTaskContext().getState() == TajoProtos.TaskAttemptState.TA_PENDING ||
+          task.getTaskContext().getState() == TajoProtos.TaskAttemptState.TA_RUNNING) {
+
         try{
           task.abort();
         } catch (Throwable e){
-          LOG.error(e);
+          LOG.error(e, e);
         }
       }
     }
     tasks.clear();
-
+    taskHistories.clear();
     resource.release();
-
-    try {
-      releaseShuffleChannelFactory();
-    } catch (Throwable e) {
-      LOG.error(e.getMessage(), e);
-    }
+    RpcClientManager.cleanup(queryMasterClient);
   }
 
   public TajoConf getConf() {
-    return manager.getTajoConf();
+    return systemConf;
   }
 
   public FileSystem getLocalFS() {
     return localFS;
   }
 
-  public FileSystem getDefaultFS() {
-    return defaultFS;
-  }
-
   public LocalDirAllocator getLocalDirAllocator() {
-    return manager.getWorkerContext().getLocalDirAllocator();
+    return workerContext.getLocalDirAllocator();
   }
 
   public TajoQueryEngine getTQueryEngine() {
@@ -221,21 +213,12 @@ public class ExecutionBlockContext {
   }
 
   public static Path getBaseOutputDir(ExecutionBlockId executionBlockId) {
-    Path workDir =
-        StorageUtil.concatPath(
-            executionBlockId.getQueryId().toString(),
-            "output",
-            String.valueOf(executionBlockId.getId()));
-    return workDir;
+    return TajoPullServerService.getBaseOutputDir(
+        executionBlockId.getQueryId().toString(), String.valueOf(executionBlockId.getId()));
   }
 
   public static Path getBaseInputDir(ExecutionBlockId executionBlockId) {
-    Path workDir =
-        StorageUtil.concatPath(
-            executionBlockId.getQueryId().toString(),
-            "in",
-            executionBlockId.toString());
-    return workDir;
+    return TajoPullServerService.getBaseInputDir(executionBlockId.getQueryId().toString(), executionBlockId.toString());
   }
 
   public ExecutionBlockId getExecutionBlockId() {
@@ -250,51 +233,60 @@ public class ExecutionBlockContext {
     return tasks.get(taskAttemptId);
   }
 
-  public void stopTaskRunner(String id){
-    manager.stopTaskRunner(id);
+  public void addTaskHistory(TaskId taskId, TaskHistory taskHistory) {
+    taskHistories.put(taskId, taskHistory);
   }
 
-  public TaskRunner getTaskRunner(String taskRunnerId){
-    return manager.getTaskRunner(taskRunnerId);
+  public Map<TaskId, TaskHistory> getTaskHistories() {
+    return taskHistories;
   }
 
-  public void addTaskHistory(String taskRunnerId, TaskAttemptId quAttemptId, TaskHistory taskHistory) {
-    histories.get(taskRunnerId).addTaskHistory(quAttemptId, taskHistory);
-  }
+  public void fatalError(TaskAttemptId taskAttemptId, String message) {
+    if (message == null) {
+      message = "No error message";
+    }
+    TaskFatalErrorReport.Builder builder = TaskFatalErrorReport.newBuilder()
+        .setId(taskAttemptId.getProto())
+        .setErrorMessage(message);
 
-  public TaskRunnerHistory createTaskRunnerHistory(TaskRunner runner){
-    histories.putIfAbsent(runner.getId(), new TaskRunnerHistory(runner.getContainerId(), executionBlockId));
-    return histories.get(runner.getId());
+    try {
+      //If QueryMaster does not responding, current execution block should be stop
+      CallFuture<PrimitiveProtos.NullProto> callFuture = new CallFuture<>();
+      getStub().fatalError(callFuture.getController(), builder.build(), callFuture);
+      callFuture.get(RpcConstants.FUTURE_TIMEOUT_SECONDS_DEFAULT, TimeUnit.SECONDS);
+    } catch (Exception e) {
+      getWorkerContext().getTaskManager().getDispatcher().getEventHandler()
+          .handle(new ExecutionBlockErrorEvent(taskAttemptId.getTaskId().getExecutionBlockId(), e));
+    }
   }
 
   public TajoWorker.WorkerContext getWorkerContext(){
-    return manager.getWorkerContext();
+    return workerContext;
   }
 
-  protected synchronized ClientSocketChannelFactory getShuffleChannelFactory(){
-    if(channelFactory == null) {
-      int workerNum = getConf().getIntVar(TajoConf.ConfVars.SHUFFLE_RPC_CLIENT_WORKER_THREAD_NUM);
-      channelFactory = RpcChannelFactory.createClientChannelFactory("Fetcher", workerNum);
-    }
-    return channelFactory;
-  }
+  /**
+   * HASH_SHUFFLE, SCATTERED_HASH_SHUFFLE should send report when this executionBlock stopping.
+   */
+  protected void sendShuffleReport() throws Exception {
 
-  public Timer getRPCTimer() {
-    return manager.getRPCTimer();
-  }
-
-  protected synchronized void releaseShuffleChannelFactory(){
-    if(channelFactory != null) {
-      channelFactory.releaseExternalResources();
-      channelFactory = null;
+    switch (shuffleType) {
+      case HASH_SHUFFLE:
+      case SCATTERED_HASH_SHUFFLE:
+        sendHashShuffleReport(executionBlockId);
+        break;
+      case NONE_SHUFFLE:
+      case RANGE_SHUFFLE:
+      default:
+        break;
     }
   }
 
-  private void sendExecutionBlockReport(ExecutionBlockReport reporter) throws Exception {
-    getQueryMasterStub().doneExecutionBlock(null, reporter, NullCallback.get());
-  }
+  private void sendHashShuffleReport(ExecutionBlockId ebId) throws Exception {
+    /* This case is that worker did not ran tasks */
+    if(completedTasksNum.get() == 0) return;
 
-  protected void reportExecutionBlock(ExecutionBlockId ebId) {
+    Interface stub = getStub();
+
     ExecutionBlockReport.Builder reporterBuilder = ExecutionBlockReport.newBuilder();
     reporterBuilder.setEbId(ebId.getProto());
     reporterBuilder.setReportSuccess(true);
@@ -305,7 +297,10 @@ public class ExecutionBlockContext {
           getWorkerContext().getHashShuffleAppenderManager().close(ebId);
       if (shuffles == null) {
         reporterBuilder.addAllIntermediateEntries(intermediateEntries);
-        sendExecutionBlockReport(reporterBuilder.build());
+
+        CallFuture<PrimitiveProtos.NullProto> callFuture = new CallFuture<>();
+        stub.doneExecutionBlock(callFuture.getController(), reporterBuilder.build(), callFuture);
+        callFuture.get(RpcConstants.FUTURE_TIMEOUT_SECONDS_DEFAULT, TimeUnit.SECONDS);
         return;
       }
 
@@ -358,7 +353,9 @@ public class ExecutionBlockContext {
       }
     }
     try {
-      sendExecutionBlockReport(reporterBuilder.build());
+      CallFuture<PrimitiveProtos.NullProto> callFuture = new CallFuture<>();
+      stub.doneExecutionBlock(callFuture.getController(), reporterBuilder.build(), callFuture);
+      callFuture.get(RpcConstants.FUTURE_TIMEOUT_SECONDS_DEFAULT, TimeUnit.SECONDS);
     } catch (Throwable e) {
       // can't send report to query master
       LOG.fatal(e.getMessage(), e);
@@ -368,7 +365,6 @@ public class ExecutionBlockContext {
 
   protected class Reporter {
     private Thread reporterThread;
-    private AtomicBoolean reporterStop = new AtomicBoolean();
     private static final int PROGRESS_INTERVAL = 1000;
     private static final int MAX_RETRIES = 10;
 
@@ -385,25 +381,23 @@ public class ExecutionBlockContext {
 
       return new Runnable() {
         int remainingRetries = MAX_RETRIES;
-        QueryMasterProtocol.QueryMasterProtocolService.Interface masterStub;
         @Override
         public void run() {
-          while (!reporterStop.get() && !Thread.interrupted()) {
+          while (!isStopped() && !Thread.interrupted()) {
+
             try {
-              masterStub = getQueryMasterStub();
+              Interface masterStub = getStub();
 
               if(tasks.size() == 0){
                 masterStub.ping(null, getExecutionBlockId().getProto(), NullCallback.get());
               } else {
-                for (Task task : new ArrayList<Task>(tasks.values())){
+                for (Task task : new ArrayList<>(tasks.values())){
 
-                  if (task.isRunning() && task.isProgressChanged()) {
-                    task.updateProgress();
+                  if (task.getTaskContext().getState() ==
+                      TajoProtos.TaskAttemptState.TA_RUNNING && task.isProgressChanged()) {
                     masterStub.statusUpdate(null, task.getReport(), NullCallback.get());
-                    task.getContext().setProgressChanged(false);
-                  } else {
-                    task.updateProgress();
                   }
+                  task.updateProgress();
                 }
               }
             } catch (Throwable t) {
@@ -415,7 +409,7 @@ public class ExecutionBlockContext {
                 throw new RuntimeException(t);
               }
             } finally {
-              if (remainingRetries > 0 && !reporterStop.get()) {
+              if (remainingRetries > 0 && !isStopped()) {
                 synchronized (reporterThread) {
                   try {
                     reporterThread.wait(PROGRESS_INTERVAL);
@@ -430,10 +424,6 @@ public class ExecutionBlockContext {
     }
 
     public void stop() throws InterruptedException {
-      if (reporterStop.getAndSet(true)) {
-        return;
-      }
-
       if (reporterThread != null) {
         // Intent of the lock is to not send an interupt in the middle of an
         // umbilical.ping or umbilical.statusUpdate

@@ -22,8 +22,6 @@ import com.google.common.base.Objects;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SortSpec;
 
-import java.util.Comparator;
-
 /**
  * It represents a pair of start and end tuples.
  */
@@ -91,15 +89,6 @@ public class TupleRange implements Comparable<TupleRange>, Cloneable {
       return cmpVal;
     } else {
       return comp.compare(this.end, o.end);
-    }
-  }
-
-  public static class DescendingTupleRangeComparator
-      implements Comparator<TupleRange> {
-
-    @Override
-    public int compare(TupleRange left, TupleRange right) {
-      return right.compareTo(left);
     }
   }
 

@@ -23,6 +23,7 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SortSpec;
 import org.apache.tajo.datum.Datum;
+import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.plan.expr.WindowFunctionEval;
 import org.apache.tajo.plan.function.FunctionContext;
 import org.apache.tajo.plan.logical.WindowAggNode;
@@ -34,7 +35,6 @@ import org.apache.tajo.storage.VTuple;
 import org.apache.tajo.worker.TaskAttemptContext;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -66,8 +66,8 @@ public class WindowAggExec extends UnaryPhysicalExec {
   private boolean [] windowFuncFlags;
   private boolean [] endUnboundedFollowingFlags;
   private boolean [] endCurrentRowFlags;
-
-  private boolean endCurrentRow = false;
+  private Tuple currentKey;
+  private Tuple evaluatedTuple;
 
   // operator state
   enum WindowState {
@@ -80,10 +80,9 @@ public class WindowAggExec extends UnaryPhysicalExec {
 
   // Transient state
   boolean firstTime = true;
-  List<Tuple> evaluatedTuples = null;
-  List<Tuple> accumulatedInTuples = null;
-  List<Tuple> nextAccumulatedProjected = null;
-  List<Tuple> nextAccumulatedInTuples = null;
+  TupleList evaluatedTuples = null;
+  TupleList accumulatedInTuples = null;
+  TupleList nextAccumulatedInTuples = null;
   WindowState state = WindowState.NEW_WINDOW;
   Iterator<Tuple> tupleInFrameIterator = null;
 
@@ -105,6 +104,8 @@ public class WindowAggExec extends UnaryPhysicalExec {
       partitionKeyIds = null;
       hasPartitionKeys = false;
     }
+
+    currentKey = new VTuple(partitionKeyNum);
 
     if (plan.hasAggFunctions()) {
       functions = plan.getWindowFunctions();
@@ -170,7 +171,7 @@ public class WindowAggExec extends UnaryPhysicalExec {
       schemaForOrderBy = outSchema;
     }
 
-
+    evaluatedTuple = new VTuple(schemaForOrderBy.size());
     nonFunctionColumnNum = plan.getTargets().length - functionNum;
     nonFunctionColumns = new int[nonFunctionColumnNum];
     for (int idx = 0; idx < plan.getTargets().length - functionNum; idx++) {
@@ -180,13 +181,20 @@ public class WindowAggExec extends UnaryPhysicalExec {
     outputColumnNum = nonFunctionColumnNum + functionNum;
   }
 
+  @Override
+  public void init() throws IOException {
+    super.init();
+    for (EvalNode functionEval : functions) {
+      functionEval.bind(context.getEvalContext(), inSchema);
+    }
+  }
+
   private void transition(WindowState state) {
     this.state = state;
   }
 
   @Override
   public Tuple next() throws IOException {
-    Tuple currentKey = null;
     Tuple readTuple = null;
 
     while(!context.isStopped() && state != WindowState.END_OF_TUPLE) {
@@ -205,9 +213,8 @@ public class WindowAggExec extends UnaryPhysicalExec {
         }
 
         if (readTuple != null && hasPartitionKeys) { // get a key tuple
-          currentKey = new VTuple(partitionKeyIds.length);
           for (int i = 0; i < partitionKeyIds.length; i++) {
-            currentKey.put(i, readTuple.get(partitionKeyIds[i]));
+            currentKey.put(i, readTuple.asDatum(partitionKeyIds[i]));
           }
         }
       }
@@ -237,7 +244,7 @@ public class WindowAggExec extends UnaryPhysicalExec {
 
   private void initWindow() {
     if (firstTime) {
-      accumulatedInTuples = Lists.newArrayList();
+      accumulatedInTuples = new TupleList();
 
       contexts = new FunctionContext[functionNum];
       for(int evalIdx = 0; evalIdx < functionNum; evalIdx++) {
@@ -250,8 +257,10 @@ public class WindowAggExec extends UnaryPhysicalExec {
   private void accumulatingWindow(Tuple currentKey, Tuple inTuple) {
 
     if (lastKey == null || lastKey.equals(currentKey)) { // if the current key is same to the previous key
-      accumulatedInTuples.add(new VTuple(inTuple));
-
+      accumulatedInTuples.add(inTuple);
+      if (lastKey == null) {
+        lastKey = new VTuple(currentKey.size());
+      }
     } else {
       // if the current key is different from the previous key,
       // the current key belongs to the next window frame. preaccumulatingNextWindow() will
@@ -260,37 +269,30 @@ public class WindowAggExec extends UnaryPhysicalExec {
       transition(WindowState.EVALUATION);
     }
 
-    lastKey = currentKey;
+    lastKey.put(currentKey.getValues());
   }
 
   private void preAccumulatingNextWindow(Tuple inTuple) {
-    Tuple projectedTuple = new VTuple(outSchema.size());
-    for(int idx = 0; idx < nonFunctionColumnNum; idx++) {
-      projectedTuple.put(idx, inTuple.get(nonFunctionColumns[idx]));
-    }
-    nextAccumulatedProjected = Lists.newArrayList();
-    nextAccumulatedProjected.add(projectedTuple);
-    nextAccumulatedInTuples = Lists.newArrayList();
-    nextAccumulatedInTuples.add(new VTuple(inTuple));
+    nextAccumulatedInTuples = new TupleList();
+    nextAccumulatedInTuples.add(inTuple);
   }
 
   private void evaluationWindowFrame() {
     TupleComparator comp;
 
-    evaluatedTuples = new ArrayList<Tuple>();
+    evaluatedTuples = new TupleList();
 
     for (int i = 0; i <accumulatedInTuples.size(); i++) {
       Tuple inTuple = accumulatedInTuples.get(i);
 
-      Tuple projectedTuple = new VTuple(schemaForOrderBy.size());
       for (int c = 0; c < nonFunctionColumnNum; c++) {
-        projectedTuple.put(c, inTuple.get(nonFunctionColumns[c]));
+        evaluatedTuple.put(c, inTuple.asDatum(nonFunctionColumns[c]));
       }
       for (int c = 0; c < sortKeyColumns.length; c++) {
-        projectedTuple.put(outputColumnNum + c, inTuple.get(sortKeyColumns[c]));
+        evaluatedTuple.put(outputColumnNum + c, inTuple.asDatum(sortKeyColumns[c]));
       }
 
-      evaluatedTuples.add(projectedTuple);
+      evaluatedTuples.add(evaluatedTuple);
     }
 
     for (int idx = 0; idx < functions.length; idx++) {
@@ -305,7 +307,7 @@ public class WindowAggExec extends UnaryPhysicalExec {
         Tuple inTuple = accumulatedInTuples.get(i);
         Tuple outTuple = evaluatedTuples.get(i);
 
-        functions[idx].merge(contexts[idx], inSchema, inTuple);
+        functions[idx].merge(contexts[idx], inTuple);
 
         if (windowFuncFlags[idx]) {
           Datum result = functions[idx].terminate(contexts[idx]);
@@ -314,8 +316,8 @@ public class WindowAggExec extends UnaryPhysicalExec {
       }
 
       if (aggFuncFlags[idx]) {
-        Datum result = functions[idx].terminate(contexts[idx]);
         for (int i = 0; i < evaluatedTuples.size(); i++) {
+          Datum result = functions[idx].terminate(contexts[idx]);
           Tuple outTuple = evaluatedTuples.get(i);
           outTuple.put(nonFunctionColumnNum + idx, result);
         }
@@ -346,5 +348,23 @@ public class WindowAggExec extends UnaryPhysicalExec {
 
     lastKey = null;
     noMoreTuples = false;
+  }
+
+  @Override
+  public void close() throws IOException {
+    if (evaluatedTuples != null) {
+      evaluatedTuples.clear();
+      evaluatedTuples = null;
+    }
+    if (accumulatedInTuples != null) {
+      accumulatedInTuples.clear();
+      accumulatedInTuples = null;
+    }
+    if (nextAccumulatedInTuples != null) {
+      nextAccumulatedInTuples.clear();
+      nextAccumulatedInTuples = null;
+    }
+
+    super.close();
   }
 }

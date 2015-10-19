@@ -26,6 +26,8 @@ import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.datum.Datum;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.storage.Appender;
 import org.apache.tajo.storage.TableStatistics;
 import org.apache.tajo.storage.Tuple;
@@ -60,7 +62,6 @@ public abstract class AbstractHBaseAppender implements Appender {
   protected boolean[] isRowKeyMappings;
   protected boolean[] isColumnKeys;
   protected boolean[] isColumnValues;
-  protected int[] rowKeyFieldIndexes;
   protected int[] rowkeyColumnIndexes;
   protected char rowKeyDelimiter;
 
@@ -90,12 +91,16 @@ public abstract class AbstractHBaseAppender implements Appender {
     if (enabledStats) {
       stats = new TableStatistics(this.schema);
     }
-    columnMapping = new ColumnMapping(schema, meta);
+    try {
+      columnMapping = new ColumnMapping(schema, meta.getOptions());
+    } catch (TajoException e) {
+      throw new TajoInternalError(e);
+    }
 
     mappingColumnFamilies = columnMapping.getMappingColumns();
 
     isRowKeyMappings = columnMapping.getIsRowKeyMappings();
-    List<Integer> rowkeyColumnIndexList = new ArrayList<Integer>();
+    List<Integer> rowkeyColumnIndexList = new ArrayList<>();
     for (int i = 0; i < isRowKeyMappings.length; i++) {
       if (isRowKeyMappings[i]) {
         rowkeyColumnIndexList.add(i);
@@ -107,7 +112,6 @@ public abstract class AbstractHBaseAppender implements Appender {
     isColumnKeys = columnMapping.getIsColumnKeys();
     isColumnValues = columnMapping.getIsColumnValues();
     rowKeyDelimiter = columnMapping.getRowKeyDelimiter();
-    rowKeyFieldIndexes = columnMapping.getRowKeyFieldIndexes();
 
     this.columnNum = schema.size();
 
@@ -116,7 +120,7 @@ public abstract class AbstractHBaseAppender implements Appender {
     columnKeyValueDataIndexes = new int[isColumnKeys.length];
     int index = 0;
     int numKeyValues = 0;
-    Map<String, Integer> cfNameIndexMap = new HashMap<String, Integer>();
+    Map<String, Integer> cfNameIndexMap = new HashMap<>();
     for (int i = 0; i < isColumnKeys.length; i++) {
       if (isRowKeyMappings[i]) {
         continue;
@@ -153,11 +157,10 @@ public abstract class AbstractHBaseAppender implements Appender {
     if (rowkeyColumnIndexes.length > 1) {
       bout.reset();
       for (int i = 0; i < rowkeyColumnIndexes.length; i++) {
-        datum = tuple.get(rowkeyColumnIndexes[i]);
         if (isBinaryColumns[rowkeyColumnIndexes[i]]) {
-          rowkey = HBaseBinarySerializerDeserializer.serialize(schema.getColumn(rowkeyColumnIndexes[i]), datum);
+          rowkey = HBaseBinarySerializerDeserializer.serialize(schema.getColumn(rowkeyColumnIndexes[i]), tuple, i);
         } else {
-          rowkey = HBaseTextSerializerDeserializer.serialize(schema.getColumn(rowkeyColumnIndexes[i]), datum);
+          rowkey = HBaseTextSerializerDeserializer.serialize(schema.getColumn(rowkeyColumnIndexes[i]), tuple, i);
         }
         bout.write(rowkey);
         if (i < rowkeyColumnIndexes.length - 1) {
@@ -167,11 +170,10 @@ public abstract class AbstractHBaseAppender implements Appender {
       rowkey = bout.toByteArray();
     } else {
       int index = rowkeyColumnIndexes[0];
-      datum = tuple.get(index);
       if (isBinaryColumns[index]) {
-        rowkey = HBaseBinarySerializerDeserializer.serialize(schema.getColumn(index), datum);
+        rowkey = HBaseBinarySerializerDeserializer.serialize(schema.getColumn(index), tuple, index);
       } else {
-        rowkey = HBaseTextSerializerDeserializer.serialize(schema.getColumn(index), datum);
+        rowkey = HBaseTextSerializerDeserializer.serialize(schema.getColumn(index), tuple, index);
       }
     }
 
@@ -184,12 +186,11 @@ public abstract class AbstractHBaseAppender implements Appender {
       if (isRowKeyMappings[i]) {
         continue;
       }
-      Datum datum = tuple.get(i);
       byte[] value;
       if (isBinaryColumns[i]) {
-        value = HBaseBinarySerializerDeserializer.serialize(schema.getColumn(i), datum);
+        value = HBaseBinarySerializerDeserializer.serialize(schema.getColumn(i), tuple, i);
       } else {
-        value = HBaseTextSerializerDeserializer.serialize(schema.getColumn(i), datum);
+        value = HBaseTextSerializerDeserializer.serialize(schema.getColumn(i), tuple, i);
       }
 
       if (isColumnKeys[i]) {

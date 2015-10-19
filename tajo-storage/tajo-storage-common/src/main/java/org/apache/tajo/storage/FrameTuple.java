@@ -22,15 +22,18 @@
 package org.apache.tajo.storage;
 
 import com.google.common.base.Preconditions;
+import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.IntervalDatum;
 import org.apache.tajo.datum.ProtobufDatum;
+import org.apache.tajo.exception.TajoRuntimeException;
 import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.util.datetime.TimeMeta;
 
 /**
  * An instance of FrameTuple is an immutable tuple.
  * It contains two tuples and pretends to be one instance of Tuple for
- * join qual evaluatations.
+ * join qual evaluations.
  */
 public class FrameTuple implements Tuple, Cloneable {
   private int size;
@@ -52,6 +55,18 @@ public class FrameTuple implements Tuple, Cloneable {
     this.right = right;
   }
 
+  public FrameTuple setLeft(Tuple left) {
+    this.left = left;
+    this.leftSize = left.size();
+    return this;
+  }
+
+  public FrameTuple setRight(Tuple right) {
+    this.right = right;
+    this.size = leftSize + right.size();
+    return this;
+  }
+
   @Override
   public int size() {
     return size;
@@ -70,125 +85,146 @@ public class FrameTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public boolean isNull(int fieldid) {
-    return get(fieldid).isNull();
+  public boolean isBlank(int fieldid) {
+    return asDatum(fieldid) == null;
   }
 
   @Override
-  public boolean isNotNull(int fieldid) {
-    return !isNull(fieldid);
+  public boolean isBlankOrNull(int fieldid) {
+    Datum datum = asDatum(fieldid);
+    return datum == null || datum.isNull();
+  }
+
+  @Override
+  public void insertTuple(int fieldId, Tuple tuple) {
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
   public void clear() {
-    throw new UnsupportedException();
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
   public void put(int fieldId, Datum value) {
-    throw new UnsupportedException();
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
-  public void put(int fieldId, Datum[] values) {
-    throw new UnsupportedException();
+  public void put(Datum[] values) {
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
-  public void put(int fieldId, Tuple tuple) {
-    throw new UnsupportedException();
+  public TajoDataTypes.Type type(int fieldId) {
+    return null;
+  }
+
+  @Override
+  public int size(int fieldId) {
+    return 0;
+  }
+
+  @Override
+  public void clearOffset() {
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
   public void setOffset(long offset) {
-    throw new UnsupportedException();
+    throw new TajoRuntimeException(new UnsupportedException());
   }
   
   @Override
   public long getOffset() {
-    throw new UnsupportedException();
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   @Override
-  public void put(Datum [] values) {
-    throw new UnsupportedException();
-  }
-
-  @Override
-  public Datum get(int fieldId) {
+  public Datum asDatum(int fieldId) {
     Preconditions.checkArgument(fieldId < size, 
         "Out of field access: " + fieldId);
     
     if (fieldId < leftSize) {
-      return left.get(fieldId);
+      return left.asDatum(fieldId);
     } else {
-      return right.get(fieldId - leftSize);
+      return right.asDatum(fieldId - leftSize);
     }
   }
 
   @Override
   public boolean getBool(int fieldId) {
-    return get(fieldId).asBool();
+    return asDatum(fieldId).asBool();
   }
 
   @Override
   public byte getByte(int fieldId) {
-    return get(fieldId).asByte();
+    return asDatum(fieldId).asByte();
   }
 
   @Override
   public char getChar(int fieldId) {
-    return get(fieldId).asChar();
+    return asDatum(fieldId).asChar();
   }
 
   @Override
   public byte [] getBytes(int fieldId) {
-    return get(fieldId).asByteArray();
+    return asDatum(fieldId).asByteArray();
+  }
+
+  @Override
+  public byte[] getTextBytes(int fieldId) {
+    return asDatum(fieldId).asTextBytes();
   }
 
   @Override
   public short getInt2(int fieldId) {
-    return get(fieldId).asInt2();
+    return asDatum(fieldId).asInt2();
   }
 
   @Override
   public int getInt4(int fieldId) {
-    return get(fieldId).asInt4();
+    return asDatum(fieldId).asInt4();
   }
 
   @Override
   public long getInt8(int fieldId) {
-    return get(fieldId).asInt8();
+    return asDatum(fieldId).asInt8();
   }
 
   @Override
   public float getFloat4(int fieldId) {
-    return get(fieldId).asFloat4();
+    return asDatum(fieldId).asFloat4();
   }
 
   @Override
   public double getFloat8(int fieldId) {
-    return get(fieldId).asFloat8();
+    return asDatum(fieldId).asFloat8();
   }
 
   @Override
   public String getText(int fieldId) {
-    return get(fieldId).asChars();
+    return asDatum(fieldId).asChars();
+  }
+
+  @Override
+  public TimeMeta getTimeDate(int fieldId) {
+    return null;
   }
 
   @Override
   public ProtobufDatum getProtobufDatum(int fieldId) {
-    return (ProtobufDatum) get(fieldId);
+    return (ProtobufDatum) asDatum(fieldId);
   }
 
   @Override
   public IntervalDatum getInterval(int fieldId) {
-    return (IntervalDatum) get(fieldId);
+    return (IntervalDatum) asDatum(fieldId);
   }
 
   @Override
   public char [] getUnicodeChars(int fieldId) {
-    return get(fieldId).asUnicodeChars();
+    return asDatum(fieldId).asUnicodeChars();
   }
 
   @Override
@@ -200,7 +236,7 @@ public class FrameTuple implements Tuple, Cloneable {
 
   @Override
   public Datum[] getValues(){
-    throw new UnsupportedException();
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   public String toString() {
@@ -216,7 +252,7 @@ public class FrameTuple implements Tuple, Cloneable {
         }
         str.append(i)
         .append("=>")
-        .append(get(i));
+        .append(asDatum(i));
       }
     }
     str.append(")");

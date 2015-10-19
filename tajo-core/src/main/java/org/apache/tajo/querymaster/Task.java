@@ -34,9 +34,8 @@ import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.TaskId;
 import org.apache.tajo.catalog.statistics.TableStats;
-import org.apache.tajo.ipc.TajoWorkerProtocol.FailureIntermediateProto;
-import org.apache.tajo.ipc.TajoWorkerProtocol.IntermediateEntryProto;
 import org.apache.tajo.master.TaskState;
+import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext;
 import org.apache.tajo.plan.logical.*;
@@ -57,7 +56,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.ShuffleFileOutput;
+import static org.apache.tajo.ResourceProtos.*;
 
 public class Task implements EventHandler<TaskEvent> {
   /** Class Logger */
@@ -86,9 +85,8 @@ public class Task implements EventHandler<TaskEvent> {
   private TaskAttemptId lastAttemptId;
 
   private TaskAttemptId successfulAttempt;
-  private String succeededHost;
-  private int succeededHostPort;
-  private int succeededPullServerPort;
+
+  private WorkerConnectionInfo succeededWorker;
 
   private int failedAttempts;
   private int finishedAttempts; // finish are total of success, failed and killed
@@ -172,7 +170,11 @@ public class Task implements EventHandler<TaskEvent> {
           // Ignore-able transitions
           .addTransition(TaskState.KILLED, TaskState.KILLED,
               EnumSet.of(
-                  TaskEventType.T_KILL, TaskEventType.T_ATTEMPT_SUCCEEDED, TaskEventType.T_ATTEMPT_FAILED))
+                  TaskEventType.T_KILL,
+                  TaskEventType.T_SCHEDULE,
+                  TaskEventType.T_ATTEMPT_LAUNCHED,
+                  TaskEventType.T_ATTEMPT_SUCCEEDED,
+                  TaskEventType.T_ATTEMPT_FAILED))
 
           .installTopology();
 
@@ -189,10 +191,10 @@ public class Task implements EventHandler<TaskEvent> {
 		this.taskId = id;
     this.eventHandler = eventHandler;
     this.isLeafTask = isLeafTask;
-		scan = new ArrayList<ScanNode>();
+		scan = new ArrayList<>();
     fetchMap = Maps.newHashMap();
     fragMap = Maps.newHashMap();
-    shuffleFileOutputs = new ArrayList<ShuffleFileOutput>();
+    shuffleFileOutputs = new ArrayList<>();
     attempts = Collections.emptyMap();
     lastAttemptId = null;
     nextAttempt = -1;
@@ -249,7 +251,11 @@ public class Task implements EventHandler<TaskEvent> {
       taskHistory.setState(lastAttempt.getState().toString());
       taskHistory.setProgress(lastAttempt.getProgress());
     }
-    taskHistory.setHostAndPort(succeededHost + ":" + succeededHostPort);
+
+    if(getSucceededWorker() != null) {
+      taskHistory.setHostAndPort(succeededWorker.getHostAndPeerRpcPort());
+    }
+
     taskHistory.setRetryCount(this.getRetryCount());
     taskHistory.setLaunchTime(launchTime);
     taskHistory.setFinishTime(finishTime);
@@ -263,19 +269,19 @@ public class Task implements EventHandler<TaskEvent> {
       }
     }
 
-    List<String> fragmentList = new ArrayList<String>();
+    List<String> fragmentList = new ArrayList<>();
     for (FragmentProto eachFragment : getAllFragments()) {
       try {
         Fragment fragment = FragmentConvertor.convert(systemConf, eachFragment);
         fragmentList.add(fragment.toString());
       } catch (Exception e) {
-        LOG.error(e.getMessage());
-        fragmentList.add("ERROR: " + eachFragment.getStoreType() + "," + eachFragment.getId() + ": " + e.getMessage());
+        LOG.error(e.getMessage(), e);
+        fragmentList.add("ERROR: " + eachFragment.getDataFormat() + "," + eachFragment.getId() + ": " + e.getMessage());
       }
     }
     taskHistory.setFragments(fragmentList.toArray(new String[]{}));
 
-    List<String[]> fetchList = new ArrayList<String[]>();
+    List<String[]> fetchList = new ArrayList<>();
     for (Map.Entry<String, Set<FetchImpl>> e : getFetchMap().entrySet()) {
       for (FetchImpl f : e.getValue()) {
         for (URI uri : f.getSimpleURIs()){
@@ -286,7 +292,7 @@ public class Task implements EventHandler<TaskEvent> {
 
     taskHistory.setFetchs(fetchList.toArray(new String[][]{}));
 
-    List<String> dataLocationList = new ArrayList<String>();
+    List<String> dataLocationList = new ArrayList<>();
     for(DataLocation eachLocation: getDataLocations()) {
       dataLocationList.add(eachLocation.toString());
     }
@@ -299,7 +305,7 @@ public class Task implements EventHandler<TaskEvent> {
 	  this.plan = plan;
 
 	  LogicalNode node = plan;
-	  ArrayList<LogicalNode> s = new ArrayList<LogicalNode>();
+	  ArrayList<LogicalNode> s = new ArrayList<>();
 	  s.add(node);
 	  while (!s.isEmpty()) {
 	    node = s.remove(s.size()-1);
@@ -334,7 +340,7 @@ public class Task implements EventHandler<TaskEvent> {
     if (fragMap.containsKey(fragment.getTableName())) {
       fragmentProtos = fragMap.get(fragment.getTableName());
     } else {
-      fragmentProtos = new HashSet<FragmentProto>();
+      fragmentProtos = new HashSet<>();
       fragMap.put(fragment.getTableName(), fragmentProtos);
     }
     fragmentProtos.add(fragment.getProto());
@@ -354,8 +360,8 @@ public class Task implements EventHandler<TaskEvent> {
     return dataLocations;
   }
 
-  public String getSucceededHost() {
-    return succeededHost;
+  public WorkerConnectionInfo getSucceededWorker() {
+    return succeededWorker;
   }
 	
 	public void addFetches(String tableId, Collection<FetchImpl> fetches) {
@@ -375,7 +381,7 @@ public class Task implements EventHandler<TaskEvent> {
 	}
 
   public Collection<FragmentProto> getAllFragments() {
-    Set<FragmentProto> fragmentProtos = new HashSet<FragmentProto>();
+    Set<FragmentProto> fragmentProtos = new HashSet<>();
     for (Set<FragmentProto> eachFragmentSet : fragMap.values()) {
       fragmentProtos.addAll(eachFragmentSet);
     }
@@ -541,7 +547,7 @@ public class Task implements EventHandler<TaskEvent> {
 
       case 1:
         Map<TaskAttemptId, TaskAttempt> newAttempts
-            = new LinkedHashMap<TaskAttemptId, TaskAttempt>(3);
+            = new LinkedHashMap<>(3);
         newAttempts.putAll(attempts);
         attempts = newAttempts;
         attempts.put(attempt.getId(), attempt);
@@ -598,13 +604,14 @@ public class Task implements EventHandler<TaskEvent> {
     @Override
     public void transition(Task task,
                            TaskEvent event) {
+      if (!(event instanceof TaskTAttemptEvent)) {
+        throw new IllegalArgumentException("event should be a TaskTAttemptEvent type.");
+      }
       TaskTAttemptEvent attemptEvent = (TaskTAttemptEvent) event;
       TaskAttempt attempt = task.attempts.get(attemptEvent.getTaskAttemptId());
 
       task.successfulAttempt = attemptEvent.getTaskAttemptId();
-      task.succeededHost = attempt.getWorkerConnectionInfo().getHost();
-      task.succeededHostPort = attempt.getWorkerConnectionInfo().getPeerRpcPort();
-      task.succeededPullServerPort = attempt.getWorkerConnectionInfo().getPullServerPort();
+      task.succeededWorker = attempt.getWorkerConnectionInfo();
 
       task.finishTask();
       task.eventHandler.handle(new StageTaskEvent(event.getTaskId(), TaskState.SUCCEEDED));
@@ -615,17 +622,19 @@ public class Task implements EventHandler<TaskEvent> {
     @Override
     public void transition(Task task,
                            TaskEvent event) {
-      TaskTAttemptEvent attemptEvent = (TaskTAttemptEvent) event;
-      TaskAttempt attempt = task.attempts.get(attemptEvent.getTaskAttemptId());
+      if (!(event instanceof TaskTAttemptEvent)) {
+        throw new IllegalArgumentException("event should be a TaskTAttemptEvent type.");
+      }
       task.launchTime = System.currentTimeMillis();
-      task.succeededHost = attempt.getWorkerConnectionInfo().getHost();
-      task.succeededHostPort = attempt.getWorkerConnectionInfo().getPeerRpcPort();
     }
   }
 
   private static class AttemptFailedTransition implements SingleArcTransition<Task, TaskEvent> {
     @Override
     public void transition(Task task, TaskEvent event) {
+      if (!(event instanceof TaskTAttemptEvent)) {
+        throw new IllegalArgumentException("event should be a TaskTAttemptEvent type.");
+      }
       TaskTAttemptEvent attemptEvent = (TaskTAttemptEvent) event;
       LOG.info("=============================================================");
       LOG.info(">>> Task Failed: " + attemptEvent.getTaskAttemptId() + " <<<");
@@ -643,6 +652,9 @@ public class Task implements EventHandler<TaskEvent> {
 
     @Override
     public TaskState transition(Task task, TaskEvent taskEvent) {
+      if (!(taskEvent instanceof TaskTAttemptEvent)) {
+        throw new IllegalArgumentException("taskEvent should be a TaskTAttemptEvent type.");
+      }
       TaskTAttemptEvent attemptEvent = (TaskTAttemptEvent) taskEvent;
       task.failedAttempts++;
       task.finishedAttempts++;
@@ -704,7 +716,7 @@ public class Task implements EventHandler<TaskEvent> {
   }
 
   public void setIntermediateData(Collection<IntermediateEntry> partitions) {
-    this.intermediateData = new ArrayList<IntermediateEntry>(partitions);
+    this.intermediateData = new ArrayList<>(partitions);
   }
 
   public List<IntermediateEntry> getIntermediateData() {
@@ -783,14 +795,14 @@ public class Task implements EventHandler<TaskEvent> {
       this.host = new PullHost(pullHost[0], Integer.parseInt(pullHost[1]));
       this.volume = proto.getVolume();
 
-      failureRowNums = new ArrayList<Pair<Long, Pair<Integer, Integer>>>();
+      failureRowNums = new ArrayList<>();
       for (FailureIntermediateProto eachFailure: proto.getFailuresList()) {
 
         failureRowNums.add(new Pair(eachFailure.getPagePos(),
             new Pair(eachFailure.getStartRowNum(), eachFailure.getEndRowNum())));
       }
 
-      pages = new ArrayList<Pair<Long, Integer>>();
+      pages = new ArrayList<>();
       for (IntermediateEntryProto.PageProto eachPage: proto.getPagesList()) {
         pages.add(new Pair(eachPage.getPos(), eachPage.getLength()));
       }
@@ -861,7 +873,7 @@ public class Task implements EventHandler<TaskEvent> {
     }
 
     public List<Pair<Long, Long>> split(long firstSplitVolume, long splitVolume) {
-      List<Pair<Long, Long>> splits = new ArrayList<Pair<Long, Long>>();
+      List<Pair<Long, Long>> splits = new ArrayList<>();
 
       if (pages == null || pages.isEmpty()) {
         return splits;

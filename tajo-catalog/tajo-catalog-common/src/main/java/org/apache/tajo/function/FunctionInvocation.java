@@ -35,6 +35,8 @@ public class FunctionInvocation implements ProtoObject<FunctionInvocationProto> 
   StaticMethodInvocationDesc scalarJIT;
   @Expose
   ClassBaseInvocationDesc<?> aggregationJIT;
+  @Expose
+  PythonInvocationDesc python;
 
   public FunctionInvocation() {
   }
@@ -49,11 +51,14 @@ public class FunctionInvocation implements ProtoObject<FunctionInvocationProto> 
     if (proto.hasAggregation()) {
       this.aggregation = new ClassBaseInvocationDesc(proto.getAggregation());
     }
-    if (proto.hasScalarJIT()) {
-      this.scalarJIT = new StaticMethodInvocationDesc(proto.getScalarJIT());
+    if (proto.hasScalarJit()) {
+      this.scalarJIT = new StaticMethodInvocationDesc(proto.getScalarJit());
     }
-    if (proto.hasAggregationJIT()) {
+    if (proto.hasAggregationJit()) {
       this.aggregationJIT = new ClassBaseInvocationDesc(proto.getAggregation());
+    }
+    if (proto.hasPython()) {
+      this.python = new PythonInvocationDesc(proto.getPython());
     }
   }
 
@@ -121,6 +126,30 @@ public class FunctionInvocation implements ProtoObject<FunctionInvocationProto> 
     return aggregationJIT;
   }
 
+  public boolean hasPython() {
+    return python != null && python.isScalarFunction();
+  }
+
+  public void setPython(PythonInvocationDesc python) {
+    this.python = python;
+  }
+
+  public PythonInvocationDesc getPython() {
+    return python;
+  }
+
+  public boolean hasPythonAggregation() {
+    return python != null && !python.isScalarFunction();
+  }
+
+  public void setPythonAggregation(PythonInvocationDesc pythonAggregation) {
+    this.python = pythonAggregation;
+  }
+
+  public PythonInvocationDesc getPythonAggregation() {
+    return this.python;
+  }
+
   @Override
   public FunctionInvocationProto getProto() {
     FunctionInvocationProto.Builder builder = FunctionInvocationProto.newBuilder();
@@ -134,21 +163,25 @@ public class FunctionInvocation implements ProtoObject<FunctionInvocationProto> 
       builder.setAggregation(aggregation.getProto());
     }
     if (hasScalarJIT()) {
-      builder.setScalarJIT(scalarJIT.getProto());
+      builder.setScalarJit(scalarJIT.getProto());
     }
     if (hasAggregationJIT()) {
-      builder.setAggregationJIT(aggregationJIT.getProto());
+      builder.setAggregationJit(aggregationJIT.getProto());
+    }
+    if (hasPython() || hasPythonAggregation()) {
+      builder.setPython(python.getProto());
     }
     return builder.build();
   }
 
   @Override
   public int hashCode() {
-    return Objects.hashCode(legacy, scalar, scalarJIT);
+    return Objects.hashCode(legacy, scalar, scalarJIT, python);
   }
 
   public String toString() {
     return "legacy=" + hasLegacy() + ",scalar=" + hasScalar() + ",agg=" + hasAggregation() +
-        ",scalarJIT=" + hasScalarJIT() + ",aggJIT=" + hasAggregationJIT();
+        ",scalarJIT=" + hasScalarJIT() + ",aggJIT=" + hasAggregationJIT() + ",python=" + hasPython() +
+        ",aggPython=" + hasPythonAggregation();
   }
 }

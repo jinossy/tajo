@@ -19,16 +19,16 @@
 package org.apache.tajo.client;
 
 import org.apache.tajo.QueryId;
+import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.SessionVars;
 import org.apache.tajo.TajoProtos;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableDesc;
-import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.exception.QueryNotFoundException;
 import org.apache.tajo.ipc.ClientProtos;
 import org.apache.tajo.jdbc.FetchResultSet;
 import org.apache.tajo.jdbc.TajoMemoryResultSet;
-import org.apache.tajo.jdbc.TajoResultSet;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 
 import java.io.IOException;
@@ -58,20 +58,33 @@ public class TajoClientUtil {
     return !isQueryWaitingForSchedule(state) && !isQueryRunning(state);
   }
 
-  public static ResultSet createResultSet(TajoConf conf, TajoClient client, QueryId queryId,
-                                          ClientProtos.GetQueryResultResponse response)
-      throws IOException {
-    TableDesc desc = CatalogUtil.newTableDesc(response.getTableDesc());
-    conf.setVar(TajoConf.ConfVars.USERNAME, response.getTajoUserName());
-    return new TajoResultSet(client, queryId, conf, desc);
+  public static QueryStatus waitCompletion(QueryClient client, QueryId queryId) throws QueryNotFoundException {
+    QueryStatus status = client.getQueryStatus(queryId);
+
+    while(!isQueryComplete(status.getState())) {
+      try {
+        Thread.sleep(500);
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+      }
+
+      status = client.getQueryStatus(queryId);
+    }
+    return status;
   }
 
-  public static ResultSet createResultSet(TajoConf conf, QueryClient client, ClientProtos.SubmitQueryResponse response)
+  public static ResultSet createResultSet(TajoClient client, QueryId queryId,
+                                          ClientProtos.GetQueryResultResponse response, int fetchRows)
       throws IOException {
+    TableDesc desc = CatalogUtil.newTableDesc(response.getTableDesc());
+    return new FetchResultSet(client, desc.getLogicalSchema(), queryId, fetchRows);
+  }
+
+  public static ResultSet createResultSet(QueryClient client, ClientProtos.SubmitQueryResponse response, int fetchRows) {
     if (response.hasTableDesc()) {
       // non-forward query
       // select * from table1 [limit 10]
-      int fetchRowNum = conf.getIntVar(TajoConf.ConfVars.$RESULT_SET_FETCH_ROWNUM);
+      int fetchRowNum = fetchRows;
       if (response.hasSessionVars()) {
         for (PrimitiveProtos.KeyValueProto eachKeyValue: response.getSessionVars().getKeyvalList()) {
           if (eachKeyValue.getKey().equals(SessionVars.FETCH_ROWNUM.keyname())) {
@@ -85,11 +98,17 @@ public class TajoClientUtil {
       // simple eval query
       // select substr('abc', 1, 2)
       ClientProtos.SerializedResultSet serializedResultSet = response.getResultSet();
-      return new TajoMemoryResultSet(
+      return new TajoMemoryResultSet(new QueryId(response.getQueryId()),
           new Schema(serializedResultSet.getSchema()),
-          serializedResultSet.getSerializedTuplesList(),
-          response.getMaxRowNum(),
+          serializedResultSet,
           client.getClientSideSessionVars());
     }
+  }
+
+  public static final ResultSet NULL_RESULT_SET =
+      new TajoMemoryResultSet(QueryIdFactory.NULL_QUERY_ID, new Schema(), null, null);
+
+  public static TajoMemoryResultSet createNullResultSet(QueryId queryId) {
+    return new TajoMemoryResultSet(queryId, new Schema(), null, null);
   }
 }

@@ -22,6 +22,7 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
+import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.util.Bytes;
 
 import java.io.IOException;
@@ -39,10 +40,14 @@ public class HBaseBinarySerializerDeserializer {
         datum = bytes == null || bytes.length == 0 ? NullDatum.get() : DatumFactory.createInt4(Bytes.toInt(bytes));
         break;
       case INT8:
-        if (bytes.length == 4) {
-          datum = bytes == null || bytes.length == 0 ? NullDatum.get() : DatumFactory.createInt8(Bytes.toInt(bytes));
+        if (bytes == null) {
+          datum = NullDatum.get();
         } else {
-          datum = bytes == null || bytes.length == 0 ? NullDatum.get() : DatumFactory.createInt8(Bytes.toLong(bytes));
+          if (bytes.length == 4) {
+            datum = DatumFactory.createInt8(Bytes.toInt(bytes));
+          } else {
+            datum = bytes.length == 0 ? NullDatum.get() : DatumFactory.createInt8(Bytes.toLong(bytes));
+          }
         }
         break;
       case FLOAT4:
@@ -61,7 +66,7 @@ public class HBaseBinarySerializerDeserializer {
     return datum;
   }
 
-  public static byte[] serialize(Column col, Datum datum) throws IOException {
+  public static byte[] serialize(Column col, Datum datum) {
     if (datum == null || datum instanceof NullDatum) {
       return null;
     }
@@ -86,6 +91,40 @@ public class HBaseBinarySerializerDeserializer {
         break;
       case TEXT:
         bytes = Bytes.toBytes(datum.asChars());
+        break;
+      default:
+        bytes = null;
+        break;
+    }
+
+    return bytes;
+  }
+
+  public static byte[] serialize(Column col, Tuple tuple, int index) throws IOException {
+    if (tuple.isBlankOrNull(index)) {
+      return null;
+    }
+
+    byte[] bytes;
+    switch (col.getDataType().getType()) {
+      case INT1:
+      case INT2:
+        bytes = Bytes.toBytes(tuple.getInt2(index));
+        break;
+      case INT4:
+        bytes = Bytes.toBytes(tuple.getInt4(index));
+        break;
+      case INT8:
+        bytes = Bytes.toBytes(tuple.getInt8(index));
+        break;
+      case FLOAT4:
+        bytes = Bytes.toBytes(tuple.getFloat4(index));
+        break;
+      case FLOAT8:
+        bytes = Bytes.toBytes(tuple.getFloat8(index));
+        break;
+      case TEXT:
+        bytes = Bytes.toBytes(tuple.getText(index));
         break;
       default:
         bytes = null;

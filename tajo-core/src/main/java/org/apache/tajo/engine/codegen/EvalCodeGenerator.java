@@ -73,14 +73,18 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
     this.classLoader = classLoader;
   }
 
+  protected synchronized static int getAndIncrementClassSeq() {
+    return classSeq++;
+  }
+
   public EvalNode compile(Schema schema, EvalNode expr) throws CompilationError {
 
     ClassWriter classWriter = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 
-    String className = EvalCodeGenerator.class.getPackage().getName() + ".CompiledEval" + classSeq++;
+    String className = EvalCodeGenerator.class.getPackage().getName() + ".CompiledEval" + getAndIncrementClassSeq();
     EvalCodeGenContext context = new EvalCodeGenContext(TajoGeneratorAdapter.getInternalName(className),
         schema, classWriter, expr);
-    visit(context, expr, new Stack<EvalNode>());
+    visit(context, expr, new Stack<>());
     context.emitReturn();
 
     Class aClass = classLoader.defineClass(className, classWriter.toByteArray());
@@ -126,7 +130,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
     }
   }
 
-  public EvalNode visitUnaryEval(EvalCodeGenContext context, Stack<EvalNode> stack, UnaryEval unary) {
+  public EvalNode visitUnaryEval(EvalCodeGenContext context, UnaryEval unary, Stack<EvalNode> stack) {
     stack.push(unary);
     if (unary.getType() == EvalType.CAST) {
       visitCast(context, stack, (CastEval) unary);
@@ -345,7 +349,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
     return cast;
   }
 
-  public EvalNode visitField(EvalCodeGenContext context, Stack<EvalNode> stack, FieldEval field) {
+  public EvalNode visitField(EvalCodeGenContext context, FieldEval field, Stack<EvalNode> stack) {
 
     if (field.getValueType().getType() == TajoDataTypes.Type.NULL_TYPE) {
       context.pushNullOfThreeValuedLogic();
@@ -360,7 +364,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
         fieldIdx = context.schema.getColumnIdByName(columnRef.getSimpleName());
       }
 
-      context.methodvisitor.visitVarInsn(Opcodes.ALOAD, 2);
+      context.methodvisitor.visitVarInsn(Opcodes.ALOAD, 1);
       context.push(fieldIdx);
       context.invokeInterface(Tuple.class, "isNull", boolean.class, new Class [] {int.class});
 
@@ -430,7 +434,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
         throw new InvalidEvalException(field.getValueType() + " is not supported yet");
       }
 
-      context.methodvisitor.visitVarInsn(Opcodes.ALOAD, 2);
+      context.methodvisitor.visitVarInsn(Opcodes.ALOAD, 1);
       context.push(fieldIdx);
       context.invokeInterface(Tuple.class, methodName, returnType, paramTypes);
 
@@ -736,13 +740,8 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
   public EvalNode visitInPredicate(EvalCodeGenContext context, EvalNode patternEval, Stack<EvalNode> stack) {
     String fieldName = context.symbols.get(patternEval);
     emitGetField(context, context.owner, fieldName, InEval.class);
-    if (context.schema != null) {
-      emitGetField(context, context.owner, "schema", Schema.class);
-    } else {
-      context.methodvisitor.visitInsn(Opcodes.ACONST_NULL);
-    }
-    context.aload(2); // tuple
-    context.invokeVirtual(InEval.class, "eval", Datum.class, new Class[]{Schema.class, Tuple.class});
+    context.aload(1); // tuple
+    context.invokeVirtual(InEval.class, "eval", Datum.class, new Class[]{Tuple.class});
     context.convertToPrimitive(patternEval.getValueType());
 
     return patternEval;
@@ -752,13 +751,8 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
     Class clazz = getStringPatternEvalClass(patternEval.getType());
     String fieldName = context.symbols.get(patternEval);
     emitGetField(context, context.owner, fieldName, clazz);
-    if (context.schema != null) {
-      emitGetField(context, context.owner, "schema", Schema.class);
-    } else {
-      context.methodvisitor.visitInsn(Opcodes.ACONST_NULL);
-    }
-    context.aload(2); // tuple
-    context.invokeVirtual(clazz, "eval", Datum.class, new Class[]{Schema.class, Tuple.class});
+    context.aload(1); // tuple
+    context.invokeVirtual(clazz, "eval", Datum.class, new Class[]{Tuple.class});
     context.convertToPrimitive(patternEval.getValueType());
 
     return patternEval;

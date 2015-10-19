@@ -18,11 +18,18 @@
 
 package org.apache.tajo.plan.exprrewrite.rules;
 
+import org.apache.tajo.datum.Datum;
+import org.apache.tajo.plan.LogicalPlanner;
+import org.apache.tajo.plan.annotator.Prioritized;
 import org.apache.tajo.plan.expr.*;
 import org.apache.tajo.plan.exprrewrite.EvalTreeOptimizationRule;
-import org.apache.tajo.plan.annotator.Prioritized;
-import org.apache.tajo.plan.LogicalPlanner;
+import org.apache.tajo.plan.function.python.PythonScriptEngine;
+import org.apache.tajo.plan.function.python.TajoScriptEngine;
 
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Stack;
 
 @Prioritized(priority = 10)
@@ -31,7 +38,7 @@ public class ConstantFolding extends SimpleEvalNodeVisitor<LogicalPlanner.PlanCo
 
   @Override
   public EvalNode optimize(LogicalPlanner.PlanContext context, EvalNode evalNode) {
-    return visit(context, evalNode, new Stack<EvalNode>());
+    return visit(context, evalNode, new Stack<>());
   }
 
   @Override
@@ -49,42 +56,63 @@ public class ConstantFolding extends SimpleEvalNodeVisitor<LogicalPlanner.PlanCo
     }
 
     if (lhs.getType() == EvalType.CONST && rhs.getType() == EvalType.CONST) {
-      return new ConstEval(binaryEval.eval(null, null));
+      binaryEval.bind(null, null);
+      return new ConstEval(binaryEval.eval(null));
     }
 
     return binaryEval;
   }
 
   @Override
-  public EvalNode visitUnaryEval(LogicalPlanner.PlanContext context, Stack<EvalNode> stack, UnaryEval unaryEval) {
+  public EvalNode visitUnaryEval(LogicalPlanner.PlanContext context, UnaryEval unaryEval, Stack<EvalNode> stack) {
     stack.push(unaryEval);
     EvalNode child = visit(context, unaryEval.getChild(), stack);
     stack.pop();
 
+    unaryEval.setChild(child);
     if (child.getType() == EvalType.CONST) {
-      return new ConstEval(unaryEval.eval(null, null));
+      unaryEval.bind(null, null);
+      return new ConstEval(unaryEval.eval(null));
     }
 
     return unaryEval;
   }
 
+  // exceptional func names not to use constant folding
+  private static final Set<String> NON_CONSTANT_FUNC_NAMES = new HashSet<>(Arrays.asList("sleep", "random"));
+
   @Override
   public EvalNode visitFuncCall(LogicalPlanner.PlanContext context, FunctionEval evalNode, Stack<EvalNode> stack) {
     boolean constantOfAllDescendents = true;
 
-    if ("sleep".equals(evalNode.getFuncDesc().getFunctionName())) {
+    if (NON_CONSTANT_FUNC_NAMES.contains(evalNode.getFuncDesc().getFunctionName())) {
       constantOfAllDescendents = false;
     } else {
-      if (evalNode.getArgs() != null) {
-        for (EvalNode arg : evalNode.getArgs()) {
-          arg = visit(context, arg, stack);
-          constantOfAllDescendents &= (arg.getType() == EvalType.CONST);
-        }
+      for (EvalNode arg : evalNode.getArgs()) {
+        arg = visit(context, arg, stack);
+        constantOfAllDescendents &= (arg.getType() == EvalType.CONST);
       }
     }
 
     if (constantOfAllDescendents && evalNode.getType() == EvalType.FUNCTION) {
-      return new ConstEval(evalNode.eval(null, null));
+      if (evalNode.getFuncDesc().getInvocation().hasPython()) {
+        TajoScriptEngine executor = new PythonScriptEngine(evalNode.getFuncDesc());
+        try {
+          executor.start(context.getQueryContext().getConf());
+          EvalContext evalContext = new EvalContext();
+          evalContext.addScriptEngine(evalNode, executor);
+          evalNode.bind(evalContext, null);
+          Datum funcRes = evalNode.eval(null);
+          executor.shutdown();
+          return new ConstEval(funcRes);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      } else {
+        evalNode.bind(null, null);
+        return new ConstEval(evalNode.eval(null));
+      }
+
     } else {
       return evalNode;
     }

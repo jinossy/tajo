@@ -20,10 +20,9 @@ package org.apache.tajo.util.metrics.reporter;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.io.IOUtils;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
+import java.io.*;
 
 public class MetricsFileScheduledReporter extends MetricsStreamScheduledReporter {
   private static final Log LOG = LogFactory.getLog(MetricsFileScheduledReporter.class);
@@ -40,6 +39,7 @@ public class MetricsFileScheduledReporter extends MetricsStreamScheduledReporter
       LOG.warn("No " + metricsPropertyKey + "filename property in tajo-metrics.properties");
       return;
     }
+
     try {
       File file = new File(fileName);
       File parentFile = file.getParentFile();
@@ -48,11 +48,11 @@ public class MetricsFileScheduledReporter extends MetricsStreamScheduledReporter
           LOG.warn("Can't create dir for tajo metrics:" + parentFile.getAbsolutePath());
         }
       }
-      this.setOutput(new FileOutputStream(fileName, true));
+      this.output = new FileOutputStream(fileName, true);
       this.setDateFormat(null);
     } catch (FileNotFoundException e) {
       LOG.warn("Can't open metrics file:" + fileName);
-      this.close();
+      IOUtils.cleanup(LOG, this);
     }
   }
 }

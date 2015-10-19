@@ -18,11 +18,14 @@
 
 package org.apache.tajo.datum;
 
-import com.google.protobuf.Message;
+import org.apache.commons.codec.binary.Base64;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.common.TajoDataTypes.Type;
-import org.apache.tajo.exception.InvalidCastException;
-import org.apache.tajo.util.Bytes;
+import org.apache.tajo.exception.InvalidValueForCastException;
+import org.apache.tajo.exception.TajoInternalError;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedDataTypeException;
+import org.apache.tajo.util.NumberUtil;
 import org.apache.tajo.util.datetime.DateTimeFormat;
 import org.apache.tajo.util.datetime.DateTimeUtil;
 import org.apache.tajo.util.datetime.TimeMeta;
@@ -66,11 +69,11 @@ public class DatumFactory {
       case INET4:
         return Inet4Datum.class;
       case ANY:
-        return NullDatum.class;
+        return AnyDatum.class;
       case NULL_TYPE:
         return NullDatum.class;
       default:
-        throw new UnsupportedOperationException(type.name());
+        throw new TajoRuntimeException(new UnsupportedDataTypeException(type.name()));
     }
   }
 
@@ -106,53 +109,49 @@ public class DatumFactory {
     case INET4:
       return createInet4(value);
     default:
-      throw new UnsupportedOperationException(dataType.toString());
+      throw new TajoRuntimeException(new UnsupportedDataTypeException(dataType.toString()));
     }
   }
 
   public static Datum createFromBytes(DataType dataType, byte[] bytes) {
     switch (dataType.getType()) {
 
-      case BOOLEAN:
-        return createBool(bytes[0]);
-      case INT2:
-        return createInt2(Bytes.toShort(bytes));
-      case INT4:
-        return createInt4(Bytes.toInt(bytes));
-      case INT8:
-        return createInt8(Bytes.toLong(bytes));
-      case FLOAT4:
-        return createFloat4(Bytes.toFloat(bytes));
-      case FLOAT8:
-        return createFloat8(Bytes.toDouble(bytes));
-      case CHAR:
-        return createChar(bytes);
-      case TEXT:
-        return createText(bytes);
-      case DATE:
-        return new DateDatum(Bytes.toInt(bytes));
-      case TIME:
-        return new TimeDatum(Bytes.toLong(bytes));
-      case TIMESTAMP:
-        return new TimestampDatum(Bytes.toLong(bytes));
-      case BIT:
-        return createBit(bytes[0]);
-      case BLOB:
-        return createBlob(bytes);
-      case INET4:
-        return createInet4(bytes);
-      case PROTOBUF:
-        ProtobufDatumFactory factory = ProtobufDatumFactory.get(dataType);
-        Message.Builder builder = factory.newBuilder();
-        try {
-          builder.mergeFrom(bytes);
-          return factory.createDatum(builder.build());
-        } catch (IOException e) {
-          e.printStackTrace();
-          throw new RuntimeException(e);
-        }
-      default:
-        throw new UnsupportedOperationException(dataType.toString());
+    case BOOLEAN:
+      return createBool(bytes[0]);
+    case INT2:
+      return createInt2(NumberUtil.toShort(bytes));
+    case INT4:
+      return createInt4(NumberUtil.toInt(bytes));
+    case INT8:
+      return createInt8(NumberUtil.toLong(bytes));
+    case FLOAT4:
+      return createFloat4(NumberUtil.toFloat(bytes));
+    case FLOAT8:
+      return createFloat8(NumberUtil.toDouble(bytes));
+    case CHAR:
+      return createChar(bytes);
+    case TEXT:
+      return createText(bytes);
+    case DATE:
+      return new DateDatum(NumberUtil.toInt(bytes));
+    case TIME:
+      return new TimeDatum(NumberUtil.toLong(bytes));
+    case TIMESTAMP:
+      return new TimestampDatum(NumberUtil.toLong(bytes));
+    case BIT:
+      return createBit(bytes[0]);
+    case BLOB:
+      return createBlob(bytes);
+    case INET4:
+      return createInet4(bytes);
+    case PROTOBUF:
+      try {
+        return ProtobufDatumFactory.createDatum(dataType, bytes);
+      } catch (IOException e) {
+        throw new TajoInternalError(e);
+      }
+    default:
+      throw new TajoRuntimeException(new UnsupportedDataTypeException(dataType.toString()));
     }
   }
 
@@ -163,7 +162,7 @@ public class DatumFactory {
     case DATE:
       return new DateDatum(val);
     default:
-      throw new UnsupportedOperationException("Cannot create " + type.getType().name() + " datum from INT4");
+      throw new TajoRuntimeException(new UnsupportedDataTypeException(type.getType().name()));
     }
   }
 
@@ -176,7 +175,7 @@ public class DatumFactory {
     case TIME:
       return createTime(val); 
     default:
-      throw new UnsupportedOperationException("Cannot create " + type.getType().name() + " datum from INT8");
+      throw new TajoRuntimeException(new UnsupportedDataTypeException(type.getType().name()));
     }
   }
 
@@ -317,6 +316,10 @@ public class DatumFactory {
     return new IntervalDatum(interval);
   }
 
+  public static IntervalDatum createInterval(int month, long interval) {
+    return new IntervalDatum(month, interval);
+  }
+
   public static DateDatum createDate(Datum datum) {
     switch (datum.type()) {
     case INT4:
@@ -328,7 +331,7 @@ public class DatumFactory {
     case DATE:
       return (DateDatum) datum;
     default:
-      throw new InvalidCastException(datum.type(), Type.DATE);
+      throw new TajoRuntimeException(new InvalidValueForCastException(datum.type(), Type.DATE));
     }
   }
 
@@ -347,7 +350,7 @@ public class DatumFactory {
     case TIME:
       return (TimeDatum) datum;
     default:
-      throw new InvalidCastException(datum.type(), Type.TIME);
+      throw new TajoRuntimeException(new InvalidValueForCastException(datum.type(), Type.TIME));
     }
   }
 
@@ -360,7 +363,7 @@ public class DatumFactory {
       case TIMESTAMP:
         return (TimestampDatum) datum;
       default:
-        throw new InvalidCastException(datum.type(), Type.TIMESTAMP);
+        throw new TajoRuntimeException(new InvalidValueForCastException(datum.type(), Type.TIMESTAMP));
     }
   }
 
@@ -373,16 +376,16 @@ public class DatumFactory {
     return new TimestampDatum(DateTimeUtil.toJulianTimestampWithTZ(str, tz));
   }
 
-  public static BlobDatum createBlob(byte[] val) {
-    return new BlobDatum(val);
+  public static BlobDatum createBlob(byte[] encoded) {
+    return new BlobDatum(encoded);
   }
 
-  public static BlobDatum createBlob(byte[] val, int offset, int length) {
-    return new BlobDatum(val, offset, length);
+  public static BlobDatum createBlob(byte[] encoded, int offset, int length) {
+    return new BlobDatum(encoded, offset, length);
   }
 
-  public static BlobDatum createBlob(String val) {
-    return new BlobDatum(val.getBytes());
+  public static BlobDatum createBlob(String plainString) {
+    return new BlobDatum(Base64.encodeBase64(plainString.getBytes()));
   }
 
   public static Inet4Datum createInet4(int encoded) {
@@ -399,6 +402,10 @@ public class DatumFactory {
 
   public static Inet4Datum createInet4(String val) {
     return new Inet4Datum(val);
+  }
+
+  public static AnyDatum createAny(Datum val) {
+    return new AnyDatum(val);
   }
 
   public static Datum cast(Datum operandDatum, DataType target, @Nullable TimeZone tz) {
@@ -424,7 +431,7 @@ public class DatumFactory {
         case TIMESTAMP: {
           TimestampDatum timestampDatum = (TimestampDatum)operandDatum;
           if (tz != null) {
-            return DatumFactory.createText(timestampDatum.asChars(tz, false));
+            return DatumFactory.createText(TimestampDatum.asChars(operandDatum.asTimeMeta(), tz, false));
           } else {
             return DatumFactory.createText(timestampDatum.asChars());
           }
@@ -432,7 +439,7 @@ public class DatumFactory {
         case TIME: {
           TimeDatum timeDatum = (TimeDatum)operandDatum;
           if (tz != null) {
-            return DatumFactory.createText(timeDatum.asChars(tz, false));
+            return DatumFactory.createText(TimeDatum.asChars(operandDatum.asTimeMeta(), tz, false));
           } else {
             return DatumFactory.createText(timeDatum.asChars());
           }
@@ -450,8 +457,10 @@ public class DatumFactory {
       return DatumFactory.createBlob(operandDatum.asByteArray());
     case INET4:
       return DatumFactory.createInet4(operandDatum.asByteArray());
+    case ANY:
+      return DatumFactory.createAny(operandDatum);
     default:
-      throw new InvalidCastException(operandDatum.type(), target.getType());
+      throw new TajoRuntimeException(new InvalidValueForCastException(operandDatum.type(), target.getType()));
     }
   }
 }

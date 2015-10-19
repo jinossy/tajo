@@ -21,6 +21,7 @@ package org.apache.tajo.engine.planner.physical;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.BuiltinStorages;
 import org.apache.tajo.SessionVars;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SortSpec;
@@ -29,12 +30,15 @@ import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.PhysicalPlanningException;
-import org.apache.tajo.plan.util.PlannerUtil;
+import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.plan.logical.NodeType;
 import org.apache.tajo.plan.logical.PersistentStoreNode;
-import org.apache.tajo.engine.query.QueryContext;
-import org.apache.tajo.storage.*;
+import org.apache.tajo.plan.util.PlannerUtil;
+import org.apache.tajo.storage.BaseTupleComparator;
+import org.apache.tajo.storage.FileTablespace;
+import org.apache.tajo.storage.StorageConstants;
+import org.apache.tajo.storage.TupleComparator;
 import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.storage.fragment.FragmentConvertor;
 
@@ -48,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PhysicalPlanUtil {
   public static <T extends PhysicalExec> T findExecutor(PhysicalExec plan, Class<? extends PhysicalExec> clazz)
       throws PhysicalPlanningException {
-    return (T) new FindVisitor().visit(plan, new Stack<PhysicalExec>(), clazz);
+    return (T) new FindVisitor().visit(plan, new Stack<>(), clazz);
   }
 
   public static TupleComparator [] getComparatorsFromJoinQual(EvalNode joinQual, Schema leftSchema, Schema rightSchema) {
@@ -71,22 +75,22 @@ public class PhysicalPlanUtil {
    */
   public static CatalogProtos.FragmentProto[] getNonZeroLengthDataFiles(TajoConf tajoConf,TableDesc tableDesc,
                                                           int fileIndex, int numResultFiles) throws IOException {
-    Path path = new Path(tableDesc.getPath());
+    Path path = new Path(tableDesc.getUri());
     FileSystem fs = path.getFileSystem(tajoConf);
 
     //In the case of partitioned table, we should return same partition key data files.
     int partitionDepth = 0;
     if (tableDesc.hasPartition()) {
-      partitionDepth = tableDesc.getPartitionMethod().getExpressionSchema().getColumns().size();
+      partitionDepth = tableDesc.getPartitionMethod().getExpressionSchema().getRootColumns().size();
     }
 
-    List<FileStatus> nonZeroLengthFiles = new ArrayList<FileStatus>();
+    List<FileStatus> nonZeroLengthFiles = new ArrayList<>();
     if (fs.exists(path)) {
       getNonZeroLengthDataFiles(fs, path, nonZeroLengthFiles, fileIndex, numResultFiles,
           new AtomicInteger(0), tableDesc.hasPartition(), 0, partitionDepth);
     }
 
-    List<FileFragment> fragments = new ArrayList<FileFragment>();
+    List<FileFragment> fragments = new ArrayList<>();
 
 
     String[] previousPartitionPathNames = null;
@@ -138,7 +142,7 @@ public class PhysicalPlanUtil {
                                          int currentDepth, int maxDepth) throws IOException {
     // Intermediate directory
     if (fs.isDirectory(path)) {
-      FileStatus[] files = fs.listStatus(path, FileStorageManager.hiddenFileFilter);
+      FileStatus[] files = fs.listStatus(path, FileTablespace.hiddenFileFilter);
       if (files != null && files.length > 0) {
 
         for (FileStatus eachFile : files) {
@@ -205,20 +209,13 @@ public class PhysicalPlanUtil {
    * @param nullChar A character for NULL representation
    */
   private static void setNullCharForTextSerializer(TableMeta meta, String nullChar) {
-    switch (meta.getStoreType()) {
-      case CSV:
-        meta.putOption(StorageConstants.TEXT_NULL, nullChar);
-        break;
-      case TEXTFILE:
-        meta.putOption(StorageConstants.TEXT_NULL, nullChar);
-        break;
-      case RCFILE:
-        meta.putOption(StorageConstants.RCFILE_NULL, nullChar);
-        break;
-      case SEQUENCEFILE:
-        meta.putOption(StorageConstants.SEQUENCEFILE_NULL, nullChar);
-        break;
-      default: // nothing to do
+    String dataFormat = meta.getDataFormat();
+    if (dataFormat.equalsIgnoreCase(BuiltinStorages.TEXT)) {
+      meta.putOption(StorageConstants.TEXT_NULL, nullChar);
+    }  else if (dataFormat.equalsIgnoreCase(BuiltinStorages.RCFILE)) {
+      meta.putOption(StorageConstants.RCFILE_NULL, nullChar);
+    } else if (dataFormat.equalsIgnoreCase(BuiltinStorages.SEQUENCE_FILE)) {
+      meta.putOption(StorageConstants.SEQUENCEFILE_NULL, nullChar);
     }
   }
 
@@ -229,17 +226,15 @@ public class PhysicalPlanUtil {
    * @return True if TableMeta contains NULL char property according to file format
    */
   public static boolean containsNullChar(TableMeta meta) {
-    switch (meta.getStoreType()) {
-      case CSV:
-        return meta.containsOption(StorageConstants.TEXT_NULL);
-      case TEXTFILE:
-        return meta.containsOption(StorageConstants.TEXT_NULL);
-      case RCFILE:
-        return meta.containsOption(StorageConstants.RCFILE_NULL);
-      case SEQUENCEFILE:
-        return meta.containsOption(StorageConstants.SEQUENCEFILE_NULL);
-      default: // nothing to do
-        return false;
+    String dataFormat = meta.getDataFormat();
+    if (dataFormat.equalsIgnoreCase(BuiltinStorages.TEXT)) {
+      return meta.containsOption(StorageConstants.TEXT_NULL);
+    } else if (dataFormat.equalsIgnoreCase(BuiltinStorages.RCFILE)) {
+      return meta.containsOption(StorageConstants.RCFILE_NULL);
+    } else if (dataFormat.equalsIgnoreCase(BuiltinStorages.SEQUENCE_FILE)) {
+      return meta.containsOption(StorageConstants.SEQUENCEFILE_NULL);
+    } else {
+      return false;
     }
   }
 

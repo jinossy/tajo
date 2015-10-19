@@ -21,28 +21,26 @@ package org.apache.tajo.plan.util;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-import org.apache.tajo.OverridableConf;
-import org.apache.tajo.SessionVars;
 import org.apache.tajo.algebra.*;
 import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.catalog.*;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.DataType;
-import org.apache.tajo.plan.*;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.TajoInternalError;
+import org.apache.tajo.exception.UndefinedTableException;
+import org.apache.tajo.plan.LogicalPlan;
+import org.apache.tajo.plan.Target;
 import org.apache.tajo.plan.expr.*;
 import org.apache.tajo.plan.logical.*;
+import org.apache.tajo.plan.serder.PlanProto.ShuffleType;
 import org.apache.tajo.plan.visitor.BasicLogicalPlanVisitor;
 import org.apache.tajo.plan.visitor.ExplainLogicalPlanVisitor;
 import org.apache.tajo.plan.visitor.SimpleAlgebraVisitor;
-import org.apache.tajo.storage.StorageConstants;
 import org.apache.tajo.util.KeyValueSet;
+import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.util.TUtil;
 
-import java.io.IOException;
 import java.util.*;
-
-import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType.CSV;
-import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType.TEXTFILE;
 
 public class PlannerUtil {
 
@@ -71,15 +69,41 @@ public class PlannerUtil {
         type == NodeType.CREATE_DATABASE ||
             type == NodeType.DROP_DATABASE ||
             (type == NodeType.CREATE_TABLE && !((CreateTableNode) baseNode).hasSubQuery()) ||
-            baseNode.getType() == NodeType.DROP_TABLE ||
-            baseNode.getType() == NodeType.ALTER_TABLESPACE ||
-            baseNode.getType() == NodeType.ALTER_TABLE ||
-            baseNode.getType() == NodeType.TRUNCATE_TABLE;
+            type == NodeType.DROP_TABLE ||
+            type == NodeType.ALTER_TABLESPACE ||
+            type == NodeType.ALTER_TABLE ||
+            type == NodeType.TRUNCATE_TABLE ||
+            type == NodeType.CREATE_INDEX ||
+            type == NodeType.DROP_INDEX;
+  }
+
+  /**
+   * Most update queries require only the updates to the catalog information,
+   * but some queries such as "CREATE INDEX" or CTAS requires distributed execution on multiple cluster nodes.
+   * This function checks whether the given DDL plan requires distributed execution or not.
+   * @param node the root node of a query plan
+   * @return Return true if the input query plan requires distributed execution. Otherwise, return false.
+   */
+  public static boolean isDistExecDDL(LogicalNode node) {
+    LogicalNode baseNode = node;
+    if (node instanceof LogicalRootNode) {
+      baseNode = ((LogicalRootNode) node).getChild();
+    }
+
+    NodeType type = baseNode.getType();
+
+    return type == NodeType.CREATE_INDEX && !((CreateIndexNode)baseNode).isExternal() ||
+        type == NodeType.CREATE_TABLE && ((CreateTableNode)baseNode).hasSubQuery();
   }
 
   /**
    * Checks whether the query is simple or not.
-   * The simple query can be defined as 'select * from tb_name [LIMIT X]'.
+   *
+   * The simple query can be as follows:
+   * <ul>
+   * <li><code>'select * from tb_name [LIMIT X]'</code></li>
+   * <li><code>'select length(name), name from tb_name [LIMIT X]'</code></li>
+   * </ul>
    *
    * @param plan The logical plan
    * @return True if the query is a simple query.
@@ -99,45 +123,25 @@ public class PlannerUtil {
         (plan.getRootBlock().hasNode(NodeType.SCAN) || plan.getRootBlock().hasNode(NodeType.PARTITIONS_SCAN)) &&
         PlannerUtil.getRelationLineage(plan.getRootBlock().getRoot()).length == 1;
 
-    boolean noComplexComputation = false;
+    boolean partitionWhere = false;
     if (singleRelation) {
       ScanNode scanNode = plan.getRootBlock().getNode(NodeType.SCAN);
       if (scanNode == null) {
         scanNode = plan.getRootBlock().getNode(NodeType.PARTITIONS_SCAN);
       }
-      if (scanNode.hasTargets()) {
-        // If the number of columns in the select clause is s different from table schema,
-        // This query is not a simple query.
-        if (scanNode.getTableDesc().hasPartition()) {
-          // In the case of partitioned table, the actual number of columns is ScanNode.InSchema + partitioned columns
-          int numPartitionColumns = scanNode.getTableDesc().getPartitionMethod().getExpressionSchema().size();
-          if (scanNode.getTargets().length != scanNode.getInSchema().size() + numPartitionColumns) {
-            return false;
-          }
-        } else {
-          if (scanNode.getTargets().length != scanNode.getInSchema().size()) {
-            return false;
-          }
-        }
-        noComplexComputation = true;
-        for (int i = 0; i < scanNode.getTargets().length; i++) {
-          noComplexComputation =
-              noComplexComputation && scanNode.getTargets()[i].getEvalTree().getType() == EvalType.FIELD;
-          if (noComplexComputation) {
-            noComplexComputation = noComplexComputation &&
-                scanNode.getTargets()[i].getNamedColumn().equals(
-                    scanNode.getTableDesc().getLogicalSchema().getColumn(i));
-          }
-          if (!noComplexComputation) {
-            return noComplexComputation;
-          }
+
+      if (!noWhere && scanNode.getTableDesc().hasPartition()) {
+        EvalNode node = ((SelectionNode) plan.getRootBlock().getNode(NodeType.SELECTION)).getQual();
+        Schema partSchema = scanNode.getTableDesc().getPartitionMethod().getExpressionSchema();
+        if (EvalTreeUtil.checkIfPartitionSelection(node, partSchema)) {
+          partitionWhere = true;
         }
       }
     }
 
     return !checkIfDDLPlan(rootNode) &&
-        (simpleOperator && noComplexComputation && isOneQueryBlock &&
-            noOrderBy && noGroupBy && noWhere && noJoin && singleRelation);
+        (simpleOperator && isOneQueryBlock &&
+            noOrderBy && noGroupBy && (noWhere || partitionWhere) && noJoin && singleRelation);
   }
   
   /**
@@ -155,7 +159,7 @@ public class PlannerUtil {
     
     for (LogicalNode node: scanNodes) {
       scanNode = (ScanNode) node;
-      isVirtualTable &= (scanNode.getTableDesc().getMeta().getStoreType() == StoreType.SYSTEM);
+      isVirtualTable &= (scanNode.getTableDesc().getMeta().getDataFormat().equalsIgnoreCase("SYSTEM"));
     }
     
     return !checkIfDDLPlan(rootNode) && hasScanNode && isVirtualTable;
@@ -194,22 +198,23 @@ public class PlannerUtil {
     return tableNames;
   }
 
-  /**
-   * Get all RelationNodes which are descendant of a given LogicalNode.
-   * The finding is restricted within a query block.
-   *
-   * @param from The LogicalNode to start visiting LogicalNodes.
-   * @return an array of all descendant RelationNode of LogicalNode.
-   */
-  public static Collection<String> getRelationLineageWithinQueryBlock(LogicalPlan plan, LogicalNode from)
-      throws PlanningException {
-    RelationFinderVisitor visitor = new RelationFinderVisitor();
-    visitor.visit(null, plan, null, from, new Stack<LogicalNode>());
-    return visitor.getFoundRelations();
+  public static String getTopRelationInLineage(LogicalPlan plan, LogicalNode from) throws TajoException {
+    RelationFinderVisitor visitor = new RelationFinderVisitor(true);
+    visitor.visit(null, plan, null, from, new Stack<>());
+    if (visitor.getFoundRelations().isEmpty()) {
+      return null;
+    } else {
+      return visitor.getFoundRelations().iterator().next();
+    }
   }
 
   public static class RelationFinderVisitor extends BasicLogicalPlanVisitor<Object, LogicalNode> {
     private Set<String> foundRelNameSet = Sets.newHashSet();
+    private boolean topOnly = false;
+
+    public RelationFinderVisitor(boolean topOnly) {
+      this.topOnly = topOnly;
+    }
 
     public Set<String> getFoundRelations() {
       return foundRelNameSet;
@@ -217,7 +222,11 @@ public class PlannerUtil {
 
     @Override
     public LogicalNode visit(Object context, LogicalPlan plan, @Nullable LogicalPlan.QueryBlock block, LogicalNode node,
-                             Stack<LogicalNode> stack) throws PlanningException {
+                             Stack<LogicalNode> stack) throws TajoException {
+      if (topOnly && foundRelNameSet.size() > 0) {
+        return node;
+      }
+
       if (node.getType() != NodeType.TABLE_SUBQUERY) {
         super.visit(context, plan, block, node, stack);
       }
@@ -256,10 +265,10 @@ public class PlannerUtil {
       } else if (binaryParent.getRightChild().deepEquals(child)) {
         binaryParent.setRightChild(grandChild);
       } else {
-        throw new IllegalStateException("ERROR: both logical node must be parent and child nodes");
+        throw new TajoInternalError("both logical node must be parent and child nodes");
       }
     } else {
-      throw new InvalidQueryException("Unexpected logical plan: " + parent);
+      throw new TajoInternalError("unexpected logical plan: " + parent);
     }
     return child;
   }
@@ -267,9 +276,9 @@ public class PlannerUtil {
   public static void replaceNode(LogicalPlan plan, LogicalNode startNode, LogicalNode oldNode, LogicalNode newNode) {
     LogicalNodeReplaceVisitor replacer = new LogicalNodeReplaceVisitor(oldNode, newNode);
     try {
-      replacer.visit(new ReplacerContext(), plan, null, startNode, new Stack<LogicalNode>());
-    } catch (PlanningException e) {
-      e.printStackTrace();
+      replacer.visit(new ReplacerContext(), plan, null, startNode, new Stack<>());
+    } catch (TajoException e) {
+      throw new TajoInternalError(e);
     }
   }
 
@@ -295,7 +304,7 @@ public class PlannerUtil {
 
     @Override
     public LogicalNode visit(ReplacerContext context, LogicalPlan plan, @Nullable LogicalPlan.QueryBlock block,
-                             LogicalNode node, Stack<LogicalNode> stack) throws PlanningException {
+                             LogicalNode node, Stack<LogicalNode> stack) throws TajoException {
       LogicalNode left = null;
       LogicalNode right = null;
 
@@ -350,15 +359,19 @@ public class PlannerUtil {
 
     @Override
     public LogicalNode visitScan(ReplacerContext context, LogicalPlan plan, LogicalPlan.QueryBlock block, ScanNode node,
-                                 Stack<LogicalNode> stack) throws PlanningException {
+                                 Stack<LogicalNode> stack) throws TajoException {
       return node;
     }
 
     @Override
     public LogicalNode visitPartitionedTableScan(ReplacerContext context, LogicalPlan plan, LogicalPlan.
-        QueryBlock block, PartitionedTableScanNode node, Stack<LogicalNode> stack)
+        QueryBlock block, PartitionedTableScanNode node, Stack<LogicalNode> stack) {
+      return node;
+    }
 
-        throws PlanningException {
+    @Override
+    public LogicalNode visitIndexScan(ReplacerContext context, LogicalPlan plan, LogicalPlan.QueryBlock block,
+                                      IndexScanNode node, Stack<LogicalNode> stack) throws TajoException {
       return node;
     }
   }
@@ -448,7 +461,7 @@ public class PlannerUtil {
     Preconditions.checkNotNull(type);
 
     ParentNodeFinder finder = new ParentNodeFinder(type);
-    node.postOrder(finder);
+    node.preOrder(finder);
 
     if (finder.getFoundNodes().size() == 0) {
       return null;
@@ -457,7 +470,7 @@ public class PlannerUtil {
   }
 
   private static class LogicalNodeFinder implements LogicalNodeVisitor {
-    private List<LogicalNode> list = new ArrayList<LogicalNode>();
+    private List<LogicalNode> list = new ArrayList<>();
     private final NodeType[] tofind;
     private boolean topmost = false;
     private boolean finished = false;
@@ -495,7 +508,7 @@ public class PlannerUtil {
   }
 
   private static class ParentNodeFinder implements LogicalNodeVisitor {
-    private List<LogicalNode> list = new ArrayList<LogicalNode>();
+    private List<LogicalNode> list = new ArrayList<>();
     private NodeType tofind;
 
     public ParentNodeFinder(NodeType type) {
@@ -523,20 +536,6 @@ public class PlannerUtil {
     }
   }
 
-  /**
-   * fill targets with FieldEvals from a given schema
-   *
-   * @param schema  to be transformed to targets
-   * @param targets to be filled
-   */
-  public static void schemaToTargets(Schema schema, Target[] targets) {
-    FieldEval eval;
-    for (int i = 0; i < schema.size(); i++) {
-      eval = new FieldEval(schema.getColumn(i));
-      targets[i] = new Target(eval);
-    }
-  }
-
   public static Target[] schemaToTargets(Schema schema) {
     Target[] targets = new Target[schema.size()];
 
@@ -546,17 +545,6 @@ public class PlannerUtil {
       targets[i] = new Target(eval);
     }
     return targets;
-  }
-
-  public static Target[] schemaToTargetsWithGeneratedFields(Schema schema) {
-    List<Target> targets = TUtil.newList();
-
-    FieldEval eval;
-    for (int i = 0; i < schema.size(); i++) {
-      eval = new FieldEval(schema.getColumn(i));
-      targets.add(new Target(eval));
-    }
-    return targets.toArray(new Target[targets.size()]);
   }
 
   public static SortSpec[] schemaToSortSpecs(Schema schema) {
@@ -731,21 +719,26 @@ public class PlannerUtil {
     }
   }
 
-  public static boolean isCommutativeJoin(JoinType joinType) {
-    return joinType == JoinType.INNER;
+  public static boolean isCommutativeJoinType(JoinType joinType) {
+    // Full outer join is also commutative.
+    return joinType == JoinType.INNER || joinType == JoinType.CROSS || joinType == JoinType.FULL_OUTER;
   }
 
-  public static boolean existsAggregationFunction(Expr expr) throws PlanningException {
+  public static boolean isOuterJoinType(JoinType joinType) {
+    return joinType == JoinType.LEFT_OUTER || joinType == JoinType.RIGHT_OUTER || joinType==JoinType.FULL_OUTER;
+  }
+
+  public static boolean existsAggregationFunction(Expr expr) throws TajoException {
     AggregationFunctionFinder finder = new AggregationFunctionFinder();
     AggFunctionFoundResult result = new AggFunctionFoundResult();
-    finder.visit(result, new Stack<Expr>(), expr);
+    finder.visit(result, new Stack<>(), expr);
     return result.generalSetFunction;
   }
 
-  public static boolean existsDistinctAggregationFunction(Expr expr) throws PlanningException {
+  public static boolean existsDistinctAggregationFunction(Expr expr) throws TajoException {
     AggregationFunctionFinder finder = new AggregationFunctionFinder();
     AggFunctionFoundResult result = new AggFunctionFoundResult();
-    finder.visit(result, new Stack<Expr>(), expr);
+    finder.visit(result, new Stack<>(), expr);
     return result.distinctSetFunction;
   }
 
@@ -757,14 +750,14 @@ public class PlannerUtil {
   static class AggregationFunctionFinder extends SimpleAlgebraVisitor<AggFunctionFoundResult, Object> {
     @Override
     public Object visitCountRowsFunction(AggFunctionFoundResult ctx, Stack<Expr> stack, CountRowsFunctionExpr expr)
-        throws PlanningException {
+        throws TajoException {
       ctx.generalSetFunction = true;
       return super.visitCountRowsFunction(ctx, stack, expr);
     }
 
     @Override
     public Object visitGeneralSetFunction(AggFunctionFoundResult ctx, Stack<Expr> stack, GeneralSetFunctionExpr expr)
-        throws PlanningException {
+        throws TajoException {
       ctx.generalSetFunction = true;
       ctx.distinctSetFunction = expr.isDistinct();
       return super.visitGeneralSetFunction(ctx, stack, expr);
@@ -800,39 +793,21 @@ public class PlannerUtil {
         explains.append(
             ExplainLogicalPlanVisitor.printDepthString(explainContext.getMaxDepth(), explainContext.explains.pop()));
       }
-    } catch (PlanningException e) {
-      throw new RuntimeException(e);
+    } catch (TajoException e) {
+      throw new TajoInternalError(e);
     }
 
     return explains.toString();
   }
 
-  public static void applySessionToTableProperties(OverridableConf sessionVars,
-                                                   StoreType storeType,
-                                                   KeyValueSet tableProperties) {
-    if (storeType == CSV || storeType == TEXTFILE) {
-      if (sessionVars.containsKey(SessionVars.NULL_CHAR)) {
-        tableProperties.set(StorageConstants.TEXT_NULL, sessionVars.get(SessionVars.NULL_CHAR));
-      }
-
-      if (sessionVars.containsKey(SessionVars.TIMEZONE)) {
-        tableProperties.set(StorageConstants.TIMEZONE, sessionVars.get(SessionVars.TIMEZONE));
-      }
-    }
+  public static String getShuffleType(ShuffleType shuffleType) {
+    if (shuffleType == null) return ShuffleType.NONE_SHUFFLE.toString();
+    return shuffleType.toString();
   }
 
-  /**
-   * This method sets a set of table properties by System default configs.
-   * These properties are implicitly used to read or write rows in Table.
-   * Don't use this method for TableMeta to be stored in Catalog.
-   *
-   * @param systemConf System configuration
-   * @param meta TableMeta to be set
-   */
-  public static void applySystemDefaultToTableProperties(OverridableConf systemConf, TableMeta meta) {
-    if (!meta.containsOption(StorageConstants.TIMEZONE)) {
-      meta.putOption(StorageConstants.TIMEZONE, systemConf.get(SessionVars.TIMEZONE));
-    }
+  public static ShuffleType getShuffleType(String shuffleType) {
+    if (StringUtils.isEmpty(shuffleType)) return ShuffleType.NONE_SHUFFLE;
+    return ShuffleType.valueOf(shuffleType);
   }
 
   public static boolean isFileStorageType(String storageType) {
@@ -843,15 +818,7 @@ public class PlannerUtil {
     }
   }
 
-  public static boolean isFileStorageType(StoreType storageType) {
-    if (storageType== StoreType.HBASE) {
-      return false;
-    } else {
-      return true;
-    }
-  }
-
-  public static StoreType getStoreType(LogicalPlan plan) {
+  public static String getDataFormat(LogicalPlan plan) {
     LogicalRootNode rootNode = plan.getRootBlock().getRoot();
     NodeType nodeType = rootNode.getChild().getType();
     if (nodeType == NodeType.CREATE_TABLE) {
@@ -875,7 +842,27 @@ public class PlannerUtil {
     }
   }
 
-  public static TableDesc getTableDesc(CatalogService catalog, LogicalNode node) throws IOException {
+  public static TableDesc getOutputTableDesc(LogicalPlan plan) {
+    LogicalNode [] found = findAllNodes(plan.getRootNode().getChild(), NodeType.CREATE_TABLE, NodeType.INSERT);
+
+    if (found.length == 0) {
+      return new TableDesc(null, plan.getRootNode().getOutSchema(), "TEXT", new KeyValueSet(), null);
+    } else {
+      StoreTableNode storeNode = (StoreTableNode) found[0];
+      return new TableDesc(
+          storeNode.getTableName(),
+          storeNode.getOutSchema(),
+          storeNode.getStorageType(),
+          storeNode.getOptions(),
+          storeNode.getUri());
+    }
+  }
+
+  public static TableDesc getTableDesc(CatalogService catalog, LogicalNode node) throws UndefinedTableException {
+    if (node.getType() == NodeType.ROOT) {
+      node = ((LogicalRootNode)node).getChild();
+    }
+
     if (node.getType() == NodeType.CREATE_TABLE) {
       return createTableDesc((CreateTableNode)node);
     }
@@ -896,7 +883,7 @@ public class PlannerUtil {
         }
       }
     } else {
-      if (insertNode.getPath() != null) {
+      if (insertNode.getUri() != null) {
         //insert ... location
         return createTableDesc(insertNode);
       }
@@ -912,7 +899,7 @@ public class PlannerUtil {
             createTableNode.getTableName(),
             createTableNode.getTableSchema(),
             meta,
-            createTableNode.getPath() != null ? createTableNode.getPath().toUri() : null);
+            createTableNode.getUri() != null ? createTableNode.getUri() : null);
 
     tableDescTobeCreated.setExternal(createTableNode.isExternal());
 
@@ -931,12 +918,63 @@ public class PlannerUtil {
             insertNode.getTableName(),
             insertNode.getTableSchema(),
             meta,
-            insertNode.getPath() != null ? insertNode.getPath().toUri() : null);
+            insertNode.getUri() != null ? insertNode.getUri() : null);
 
     if (insertNode.hasPartition()) {
       tableDescTobeCreated.setPartitionMethod(insertNode.getPartitionMethod());
     }
 
     return tableDescTobeCreated;
+  }
+
+  /**
+   * Extract all in-subqueries from the given qual.
+   *
+   * @param qual
+   * @return
+   */
+  public static List<Expr> extractInSubquery(Expr qual) {
+    List<Expr> inSubqueries = TUtil.newList();
+    for (Expr eachIn : ExprFinder.findsInOrder(qual, OpType.InPredicate)) {
+      InPredicate inPredicate = (InPredicate) eachIn;
+      if (inPredicate.getInValue().getType() == OpType.SimpleTableSubquery) {
+        inSubqueries.add(eachIn);
+      }
+    }
+    return inSubqueries;
+  }
+
+  /**
+   * Return a list of integers, maps input schema and projected columns.
+   * Each integer value means a column index of input schema corresponding to each project column
+   *
+   * @param inputSchema Input Schema
+   * @param targets Columns to be projected
+   * @return A list of integers, each of which is an index number of input schema corresponding
+   *         to each projected column.
+   */
+  public static int [] getTargetIds(Schema inputSchema, Column...targets) {
+    int [] targetIds = new int[targets.length];
+    for (int i = 0; i < targetIds.length; i++) {
+      targetIds[i] = inputSchema.getColumnId(targets[i].getQualifiedName());
+    }
+    Arrays.sort(targetIds);
+
+    return targetIds;
+  }
+
+  public static List<EvalNode> getAllEqualEvals(EvalNode qual) {
+    EvalTreeUtil.EvalFinder finder = new EvalTreeUtil.EvalFinder(EvalType.EQUAL);
+    finder.visit(null, qual, new Stack<>());
+    return finder.getEvalNodes();
+  }
+
+  public static boolean hasAsterisk(NamedExpr [] namedExprs) {
+    for (NamedExpr eachTarget : namedExprs) {
+      if (eachTarget.getExpr().getType() == OpType.Asterisk) {
+        return true;
+      }
+    }
+    return false;
   }
 }

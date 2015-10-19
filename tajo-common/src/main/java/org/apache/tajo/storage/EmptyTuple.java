@@ -18,14 +18,16 @@
 
 package org.apache.tajo.storage;
 
+import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.datum.ProtobufDatum;
+import org.apache.tajo.util.datetime.TimeMeta;
 
 /* This class doesn’t have content datum. if selected column is zero, this is useful
 *  e.g. select count(*) from table
 * */
-public class EmptyTuple implements Tuple, Cloneable {
+public class EmptyTuple extends NullTuple {
 
   private static EmptyTuple tuple;
   private static Datum[] EMPTY_VALUES = new Datum[0];
@@ -39,6 +41,7 @@ public class EmptyTuple implements Tuple, Cloneable {
   }
 
   private EmptyTuple() {
+    super(0);
   }
 
   @Override
@@ -51,13 +54,13 @@ public class EmptyTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public boolean isNull(int fieldid) {
+  public boolean isBlank(int fieldid) {
     return true;
   }
 
   @Override
-  public boolean isNotNull(int fieldid) {
-    return false;
+  public boolean isBlankOrNull(int fieldid) {
+    return true;
   }
 
   @Override
@@ -70,28 +73,22 @@ public class EmptyTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public void put(int fieldId, Datum[] values) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public void put(int fieldId, Tuple tuple) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public void put(Datum[] values) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public Datum get(int fieldId) {
+  public Datum asDatum(int fieldId) {
     return NullDatum.get();
   }
 
   @Override
-  public void setOffset(long offset) {
+  public TajoDataTypes.Type type(int fieldId) {
+    return null;
+  }
 
+  @Override
+  public int size(int fieldId) {
+    return 0;
+  }
+
+  @Override
+  public void setOffset(long offset) {
   }
 
   @Override
@@ -117,6 +114,11 @@ public class EmptyTuple implements Tuple, Cloneable {
   @Override
   public byte[] getBytes(int fieldId) {
     return NullDatum.get().asByteArray();
+  }
+
+  @Override
+  public byte[] getTextBytes(int fieldId) {
+    return NullDatum.get().asTextBytes();
   }
 
   @Override
@@ -150,6 +152,11 @@ public class EmptyTuple implements Tuple, Cloneable {
   }
 
   @Override
+  public TimeMeta getTimeDate(int fieldId) {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
   public ProtobufDatum getProtobufDatum(int fieldId) {
     throw new UnsupportedOperationException();
   }
@@ -165,12 +172,12 @@ public class EmptyTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public Tuple clone() throws CloneNotSupportedException {
-    return this.clone();
+  public Datum[] getValues() {
+    return EMPTY_VALUES;
   }
 
   @Override
-  public Datum[] getValues() {
-    return EMPTY_VALUES;
+  public Tuple clone() throws CloneNotSupportedException {
+    return this;
   }
 }

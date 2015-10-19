@@ -19,22 +19,25 @@
 package org.apache.tajo.storage;
 
 import com.google.gson.annotations.Expose;
+import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.Inet4Datum;
 import org.apache.tajo.datum.IntervalDatum;
 import org.apache.tajo.datum.ProtobufDatum;
-import org.apache.tajo.exception.UnimplementedException;
+import org.apache.tajo.exception.NotImplementedException;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.util.datetime.TimeMeta;
 
 import java.net.InetAddress;
 import java.util.Arrays;
 
 public class VTuple implements Tuple, Cloneable {
-	@Expose public Datum [] values;
-	@Expose private long offset;
-	
-	public VTuple(int size) {
-		values = new Datum[size];
-	}
+  @Expose public Datum [] values;
+  @Expose private long offset;
+
+  public VTuple(int size) {
+    values = new Datum[size];
+  }
 
   public VTuple(Tuple tuple) {
     this.values = tuple.getValues().clone();
@@ -42,84 +45,97 @@ public class VTuple implements Tuple, Cloneable {
 
   public VTuple(Datum[] datum) {
     this(datum.length);
-    put(datum);
+    this.values = Arrays.copyOf(datum, datum.length);
   }
 
-	@Override
-	public int size() {	
-		return values.length;
-	}
-	
-	public boolean contains(int fieldId) {
-		return values[fieldId] != null;
-	}
+  @Override
+  public int size() {
+    return values.length;
+  }
+
+  public boolean contains(int fieldId) {
+    return values[fieldId] != null;
+  }
 
   @Override
-  public boolean isNull(int fieldid) {
+  public boolean isBlank(int fieldid) {
+    return values[fieldid] == null;
+  }
+
+  @Override
+  public boolean isBlankOrNull(int fieldid) {
     return values[fieldid] == null || values[fieldid].isNull();
   }
 
   @Override
-  public boolean isNotNull(int fieldid) {
-    return !isNull(fieldid);
+  public void insertTuple(int fieldId, Tuple tuple) {
+    this.put(fieldId, tuple.asDatum(fieldId));
   }
 
   @Override
-  public void clear() {   
+  public void clear() {
+    clearOffset();
     for (int i=0; i < values.length; i++) {
       values[i] = null;
     }
   }
-	
-	//////////////////////////////////////////////////////
-	// Setter
-	//////////////////////////////////////////////////////	
-	public void put(int fieldId, Datum value) {
-		values[fieldId] = value;
-	}
 
-  @Override
-  public void put(int fieldId, Datum[] values) {
-    for (int i = fieldId, j = 0; j < values.length; i++, j++) {
-      values[i] = values[j];
-    }
+  //////////////////////////////////////////////////////
+  // Setter
+  //////////////////////////////////////////////////////
+  public void put(int fieldId, Datum value) {
+    values[fieldId] = value;
   }
 
   @Override
-  public void put(int fieldId, Tuple tuple) {
-    for (int i = fieldId, j = 0; j < tuple.size(); i++, j++) {
-      values[i] = tuple.get(j);
-    }
+  public Datum asDatum(int fieldId) {
+    return values[fieldId] == null ? null : values[fieldId];
   }
 
+  @Override
+  public TajoDataTypes.Type type(int fieldId) {
+    return values[fieldId].type();
+  }
+
+  @Override
+  public int size(int fieldId) {
+    return values[fieldId].size();
+  }
+
+  @Override
   public void put(Datum [] values) {
+    clearOffset();
     System.arraycopy(values, 0, this.values, 0, values.length);
-	}
-	
-	//////////////////////////////////////////////////////
-	// Getter
-	//////////////////////////////////////////////////////
-	public Datum get(int fieldId) {
-		return this.values[fieldId];
-	}
-	
-	public void setOffset(long offset) {
-	  this.offset = offset;
-	}
-	
-	public long getOffset() {
-	  return this.offset;
-	}
-	
-	@Override
-	public boolean getBool(int fieldId) {
-		return values[fieldId].asBool();
-	}
+  }
+
+  //////////////////////////////////////////////////////
+  // Getter
+  //////////////////////////////////////////////////////
+  public Datum get(int fieldId) {
+    return this.values[fieldId];
+  }
+
+  public void clearOffset() {
+    this.offset = -1;
+  }
+
+  public void setOffset(long offset) {
+    this.offset = offset;
+  }
+
+  public long getOffset() {
+    return this.offset;
+  }
 
   @Override
-	public byte getByte(int fieldId) {
-		return values[fieldId].asByte();
-	}
+  public boolean getBool(int fieldId) {
+    return values[fieldId].asBool();
+  }
+
+  @Override
+  public byte getByte(int fieldId) {
+    return values[fieldId].asByte();
+  }
 
   @Override
   public char getChar(int fieldId) {
@@ -127,55 +143,65 @@ public class VTuple implements Tuple, Cloneable {
   }
 
   @Override
-	public byte [] getBytes(int fieldId) {
-		return values[fieldId].asByteArray();
-	}
+  public byte [] getBytes(int fieldId) {
+    return values[fieldId].asByteArray();
+  }
 
   @Override
-	public short getInt2(int fieldId) {
-		return values[fieldId].asInt2();
-	}
+  public byte[] getTextBytes(int fieldId) {
+    return values[fieldId].asTextBytes();
+  }
 
   @Override
-	public int getInt4(int fieldId) {
-		return values[fieldId].asInt4();
-	}
+  public short getInt2(int fieldId) {
+    return values[fieldId].asInt2();
+  }
 
   @Override
-	public long getInt8(int fieldId) {
-		return values[fieldId].asInt8();
-	}
+  public int getInt4(int fieldId) {
+    return values[fieldId].asInt4();
+  }
 
   @Override
-	public float getFloat4(int fieldId) {
-		return values[fieldId].asFloat4();
-	}
+  public long getInt8(int fieldId) {
+    return values[fieldId].asInt8();
+  }
 
   @Override
-	public double getFloat8(int fieldId) {
-		return values[fieldId].asFloat8();
-	}
-
-	public Inet4Datum getIPv4(int fieldId) {
-		return (Inet4Datum) values[fieldId];
-	}
-
-	public byte [] getIPv4Bytes(int fieldId) {
-		return values[fieldId].asByteArray();
-	}
-
-	public InetAddress getIPv6(int fieldId) {
-		throw new UnimplementedException("IPv6 is unsupported yet");
-	}
-
-	public byte[] getIPv6Bytes(int fieldId) {
-	  throw new UnimplementedException("IPv6 is unsupported yet");
-	}
+  public float getFloat4(int fieldId) {
+    return values[fieldId].asFloat4();
+  }
 
   @Override
-	public String getText(int fieldId) {
-		return values[fieldId].asChars();
-	}
+  public double getFloat8(int fieldId) {
+    return values[fieldId].asFloat8();
+  }
+
+  public Inet4Datum getIPv4(int fieldId) {
+    return (Inet4Datum) values[fieldId];
+  }
+
+  public byte [] getIPv4Bytes(int fieldId) {
+    return values[fieldId].asByteArray();
+  }
+
+  public InetAddress getIPv6(int fieldId) {
+    throw new TajoRuntimeException(new NotImplementedException());
+  }
+
+  public byte[] getIPv6Bytes(int fieldId) {
+    throw new TajoRuntimeException(new NotImplementedException());
+  }
+
+  @Override
+  public String getText(int fieldId) {
+    return values[fieldId].asChars();
+  }
+
+  @Override
+  public TimeMeta getTimeDate(int fieldId) {
+    return values[fieldId].asTimeMeta();
+  }
 
   @Override
   public ProtobufDatum getProtobufDatum(int fieldId) {
@@ -193,22 +219,23 @@ public class VTuple implements Tuple, Cloneable {
   }
 
   @Override
-  public Tuple clone() throws CloneNotSupportedException {
+  public VTuple clone() throws CloneNotSupportedException {
     VTuple tuple = (VTuple) super.clone();
 
-    tuple.values = new Datum[size()];
-    System.arraycopy(values, 0, tuple.values, 0, size()); //shallow copy
+    tuple.values = new Datum[values.length];
+    System.arraycopy(values, 0, tuple.values, 0, values.length); //shallow copy
     return tuple;
   }
 
+  @Override
   public String toString() {
-		return toDisplayString(getValues());
-	}
+    return toDisplayString(getValues());
+  }
 
-	@Override
-	public int hashCode() {
-	  return Arrays.hashCode(values);
-	}
+  @Override
+  public int hashCode() {
+    return Arrays.hashCode(values);
+  }
 
   @Override
   public Datum[] getValues() {
@@ -225,22 +252,15 @@ public class VTuple implements Tuple, Cloneable {
   }
 
   public static String toDisplayString(Datum [] values) {
-    boolean first = true;
     StringBuilder str = new StringBuilder();
-    str.append("(");
-    for(int i=0; i < values.length; i++) {
-      if(values[i] != null) {
-        if(first) {
-          first = false;
-        } else {
-          str.append(", ");
-        }
-        str.append(i)
-            .append("=>")
-            .append(values[i]);
+    str.append('(');
+    for (Datum datum : values) {
+      if (str.length() > 1) {
+        str.append(',');
       }
+      str.append(datum);
     }
-    str.append(")");
+    str.append(')');
     return str.toString();
   }
 }

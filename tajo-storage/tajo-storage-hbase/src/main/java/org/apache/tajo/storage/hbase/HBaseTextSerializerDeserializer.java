@@ -22,6 +22,7 @@ import org.apache.tajo.catalog.Column;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
+import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.util.NumberUtil;
 
 import java.io.IOException;
@@ -61,11 +62,19 @@ public class HBaseTextSerializerDeserializer {
     return datum;
   }
 
-  public static byte[] serialize(Column col, Datum datum) throws IOException {
+  public static byte[] serialize(Column col, Datum datum) {
     if (datum == null || datum instanceof NullDatum) {
       return null;
     }
 
     return datum.asChars().getBytes();
+  }
+
+  public static byte[] serialize(Column col, Tuple tuple, int index) throws IOException {
+    if (tuple.isBlankOrNull(index)) {
+      return null;
+    }
+
+    return tuple.getBytes(index);
   }
 }

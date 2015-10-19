@@ -19,30 +19,23 @@
 package org.apache.tajo.engine.utils;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SortSpec;
 import org.apache.tajo.catalog.statistics.ColumnStats;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
-import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.storage.RowStoreUtil;
 import org.apache.tajo.storage.RowStoreUtil.RowStoreEncoder;
-import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.storage.TupleRange;
 import org.apache.tajo.storage.VTuple;
-import org.apache.tajo.util.StringUtils;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
-import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -91,19 +84,25 @@ public class TupleUtil {
     }
 
     int i = 0;
-    for (Column col : sortSchema.getColumns()) {
+    for (Column col : sortSchema.getRootColumns()) {
       ColumnStats columnStat = statMap.get(col);
       if (columnStat == null) {
         continue;
       }
       if (columnStat.hasNullValue()) {
-        int rangeIndex = sortSpecs[i].isAscending() ? ranges.length - 1 : 0;
-        VTuple rangeTuple = sortSpecs[i].isAscending() ? (VTuple) ranges[rangeIndex].getEnd() : (VTuple) ranges[rangeIndex].getStart();
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Set null into range: " + col.getQualifiedName() + ", previous tuple is " + rangeTuple);
+        if (sortSpecs[i].isNullFirst()) {
+          int rangeIndex = 0;
+          VTuple rangeTuple = (VTuple) ranges[rangeIndex].getStart();
+          rangeTuple.put(i, NullDatum.get());
+        } else {
+          int rangeIndex = sortSpecs[i].isAscending() ? ranges.length - 1 : 0;
+          VTuple rangeTuple = sortSpecs[i].isAscending() ? (VTuple) ranges[rangeIndex].getEnd() : (VTuple) ranges[rangeIndex].getStart();
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("Set null into range: " + col.getQualifiedName() + ", previous tuple is " + rangeTuple);
+          }
+          rangeTuple.put(i, NullDatum.get());
+          LOG.info("Set null into range: " + col.getQualifiedName() + ", current tuple is " + rangeTuple);
         }
-        rangeTuple.put(i, NullDatum.get());
-        LOG.info("Set null into range: " + col.getQualifiedName() + ", current tuple is " + rangeTuple);
       }
       i++;
     }
@@ -117,20 +116,20 @@ public class TupleUtil {
       statSet.put(stat.getColumn(), stat);
     }
 
-    for (Column col : target.getColumns()) {
+    for (Column col : target.getRootColumns()) {
       Preconditions.checkState(statSet.containsKey(col),
           "ERROR: Invalid Column Stats (column stats: " + colStats + ", there exists not target " + col);
     }
 
-    Tuple startTuple = new VTuple(target.size());
-    Tuple endTuple = new VTuple(target.size());
+    VTuple startTuple = new VTuple(target.size());
+    VTuple endTuple = new VTuple(target.size());
     int i = 0;
     int sortSpecIndex = 0;
 
     // In outer join, empty table could be searched.
     // As a result, min value and max value would be null.
     // So, we should put NullDatum for this case.
-    for (Column col : target.getColumns()) {
+    for (Column col : target.getRootColumns()) {
       if (sortSpecs[sortSpecIndex].isAscending()) {
         if (statSet.get(col).getMinValue() != null)
           startTuple.put(i, statSet.get(col).getMinValue());
@@ -165,59 +164,12 @@ public class TupleUtil {
         else
           endTuple.put(i, DatumFactory.createNullDatum());
       }
-      if (target.getColumns().size() == sortSpecs.length) {
+      if (target.getRootColumns().size() == sortSpecs.length) {
         // Not composite column sort
         sortSpecIndex++;
       }
       i++;
     }
     return new TupleRange(sortSpecs, startTuple, endTuple);
-  }
-
-  /**
-   * It creates a tuple of a given size filled with NULL values in all fields
-   * It is usually used in outer join algorithms.
-   *
-   * @param size The number of columns of a creating tuple
-   * @return The created tuple filled with NULL values
-   */
-  public static Tuple createNullPaddedTuple(int size){
-    VTuple aTuple = new VTuple(size);
-    int i;
-    for(i = 0; i < size; i++){
-      aTuple.put(i, DatumFactory.createNullDatum());
-    }
-    return aTuple;
-  }
-
-  @SuppressWarnings("unused")
-  public static Collection<Tuple> filterTuple(Schema schema, Collection<Tuple> tupleBlock, EvalNode filterCondition) {
-    TupleBlockFilterScanner filter = new TupleBlockFilterScanner(schema, tupleBlock, filterCondition);
-    return filter.nextBlock();
-  }
-
-  private static class TupleBlockFilterScanner {
-    private EvalNode qual;
-    private Iterator<Tuple> iterator;
-    private Schema schema;
-
-    public TupleBlockFilterScanner(Schema schema, Collection<Tuple> tuples, EvalNode qual) {
-      this.schema = schema;
-      this.qual = qual;
-      this.iterator = tuples.iterator();
-    }
-
-    public List<Tuple> nextBlock() {
-      List<Tuple> results = Lists.newArrayList();
-
-      Tuple tuple;
-      while (iterator.hasNext()) {
-        tuple = iterator.next();
-        if (qual.eval(schema, tuple).isTrue()) {
-          results.add(tuple);
-        }
-      }
-      return results;
-    }
   }
 }

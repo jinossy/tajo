@@ -24,8 +24,8 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.Path;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
-import org.apache.tajo.storage.StorageFragmentProtos.*;
+import org.apache.tajo.BuiltinStorages;
+import org.apache.tajo.storage.StorageFragmentProtos.FileFragmentProto;
 import org.apache.tajo.util.TUtil;
 
 import java.io.IOException;
@@ -217,7 +217,7 @@ public class FileFragment implements Fragment, Comparable<FileFragment>, Cloneab
     builder.setLength(this.length);
     builder.setPath(this.uri.toString());
     if(diskIds != null) {
-      List<Integer> idList = new ArrayList<Integer>();
+      List<Integer> idList = new ArrayList<>();
       for(int eachId: diskIds) {
         idList.add(eachId);
       }
@@ -230,7 +230,7 @@ public class FileFragment implements Fragment, Comparable<FileFragment>, Cloneab
 
     FragmentProto.Builder fragmentBuilder = FragmentProto.newBuilder();
     fragmentBuilder.setId(this.tableName);
-    fragmentBuilder.setStoreType(StoreType.CSV.name());
+    fragmentBuilder.setDataFormat(BuiltinStorages.TEXT);
     fragmentBuilder.setContents(builder.buildPartial().toByteString());
     return fragmentBuilder.build();
   }

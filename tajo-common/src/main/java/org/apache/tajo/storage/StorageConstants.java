@@ -18,11 +18,18 @@
 
 package org.apache.tajo.storage;
 
-import org.apache.tajo.TajoConstants;
+import java.net.URI;
 
 public class StorageConstants {
 
+  // Tablespace  -------------------------------------------------
+
+  public static final URI LOCAL_FS_URI = URI.create("file:/");
+
   // Common table properties -------------------------------------------------
+
+  // Insert
+  public static final String INSERT_DIRECTLY = "insert.direct";
 
   // time zone
   public static final String TIMEZONE = "timezone";
@@ -33,16 +40,15 @@ public class StorageConstants {
 
   // Text file properties -------------------------------------------------
   @Deprecated
-  public static final String CSVFILE_DELIMITER = "csvfile.delimiter";
-  @Deprecated
-  public static final String CSVFILE_NULL = "csvfile.null";
-  @Deprecated
   public static final String CSVFILE_SERDE = "csvfile.serde";
 
   public static final String TEXT_DELIMITER = "text.delimiter";
   public static final String TEXT_NULL = "text.null";
   public static final String TEXT_SERDE_CLASS = "text.serde";
   public static final String DEFAULT_TEXT_SERDE_CLASS = "org.apache.tajo.storage.text.CSVLineSerDe";
+
+  public static final String TEXT_SKIP_HEADER_LINE = "text.skip.headerlines";
+
   /**
    * It's the maximum number of parsing error torrence.
    *
@@ -72,6 +78,25 @@ public class StorageConstants {
   public static final String DEFAULT_BINARY_SERDE = "org.apache.tajo.storage.BinarySerializerDeserializer";
   public static final String DEFAULT_TEXT_SERDE = "org.apache.tajo.storage.TextSerializerDeserializer";
 
+  // ORC file properties -------------------------------------------------
+  public static final String ORC_MAX_MERGE_DISTANCE = "orc.max.merge.distance";
+  public static final String DEFAULT_ORC_MAX_MERGE_DISTANCE = "1048576";  // 1MB
+
+  public static final String ORC_STRIPE_SIZE = "orc.stripe.size";
+  public static final String DEFAULT_ORC_STRIPE_SIZE = "67108864"; // 64MB
+
+  public static final String ORC_COMPRESSION = "orc.compress";
+  public static final String ORC_COMPRESSION_KIND_NONE = "none";
+  public static final String ORC_COMPRESSION_KIND_SNAPPY = "snappy";
+  public static final String ORC_COMPRESSION_KIND_LZO = "lzo";
+  public static final String ORC_COMPRESSION_KIND_ZIP = "zlip";
+  public static final String DEFAULT_ORC_COMPRESSION_KIND = ORC_COMPRESSION_KIND_NONE;
+
+  public static final String ORC_BUFFER_SIZE = "orc.buffer.size";
+  public static final String DEFAULT_ORC_BUFFER_SIZE = "262144"; // 256KB
+
+  public static final String ORC_ROW_INDEX_STRIDE = "orc.rowindex.stride";
+  public static final String DEFAULT_ORC_ROW_INDEX_STRIDE = "10000";
 
   // Parquet file properties -------------------------------------------------
   public static final String PARQUET_DEFAULT_BLOCK_SIZE;
@@ -87,6 +112,9 @@ public class StorageConstants {
   // Avro file properties -------------------------------------------------
   public static final String AVRO_SCHEMA_LITERAL = "avro.schema.literal";
   public static final String AVRO_SCHEMA_URL = "avro.schema.url";
+
+  // Internal storage properties -------------------------------------------------
+  public static final String SHUFFLE_TYPE = "shuffle.type";
 
   static {
     PARQUET_DEFAULT_BLOCK_SIZE = Integer.toString(DEFAULT_BLOCK_SIZE);

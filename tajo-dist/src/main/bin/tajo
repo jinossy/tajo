@@ -214,7 +214,8 @@ $HADOOP_HOME/share/hadoop/common
 $HADOOP_HOME/share/hadoop/hdfs
 $HADOOP_HOME/share/hadoop/hdfs/lib
 $HADOOP_HOME/share/hadoop/yarn
-$HADOOP_HOME/share/hadoop/mapreduce"
+$HADOOP_HOME/share/hadoop/mapreduce
+$HADOOP_HOME/share/hadoop/tools/lib"
 
 for d in $HADOOP_MODULE_DIRS; do
   CLASSPATH=${CLASSPATH}:$d/*
@@ -226,16 +227,41 @@ HDFS_LIBRARY_PATH="${HADOOP_HOME}/lib/native/"
 ##############################################################################
 
 ##############################################################################
-# Set HBase CLASSPATH
+# HBase Configuration Start
 ##############################################################################
-if [ "$HBASE_HOME" != "" ]; then
-  for f in ${HBASE_HOME}/lib/hbase-*.jar; do
-    CLASSPATH=${CLASSPATH}:$f;
-  done
-  for f in ${HBASE_HOME}/lib/htrace-*.jar; do
-    CLASSPATH=${CLASSPATH}:$f;
-  done
+
+HBASE_CONF=$HBASE_HOME/conf
+
+if [ ! -z ${HBASE_HOME} ] && [ -d ${HBASE_HOME} ] && [ -d ${HBASE_CONF} ]; then
+  CLASSPATH=${HBASE_CONF}:${CLASSPATH}
 fi
+
+HBASE_LIB=$HBASE_HOME/lib
+
+if [ ! -z ${HBASE_HOME} ] && [ -d ${HBASE_HOME} ] && [ -d ${HBASE_LIB} ]; then
+
+  for f in ${HBASE_LIB}/hbase-server-*.jar; do
+    CLASSPATH=${CLASSPATH}:$f;
+  done
+
+  for f in ${HBASE_LIB}/hbase-client-*.jar; do
+    CLASSPATH=${CLASSPATH}:$f;
+  done
+
+  for f in ${HBASE_LIB}/hbase-common-*.jar; do
+    CLASSPATH=${CLASSPATH}:$f;
+  done
+
+  for f in ${HBASE_LIB}/hbase-protocol-*.jar; do
+    CLASSPATH=${CLASSPATH}:$f;
+  done
+
+  for f in ${HBASE_LIB}/htrace-core-*.jar; do
+    CLASSPATH=${CLASSPATH}:$f;
+  done
+
+fi
+
 ##############################################################################
 # HBase Configuration End
 ##############################################################################
@@ -246,13 +272,13 @@ fi
 
 HIVE_CONF=$HIVE_HOME/conf
 
-if [ -d ${HIVE_CONF} ]; then
+if [ ! -z ${HIVE_HOME} ] && [ -d ${HIVE_HOME} ] && [ -d ${HIVE_CONF} ]; then
   CLASSPATH=${HIVE_CONF}:${CLASSPATH}
 fi
 
 HIVE_LIB=$HIVE_HOME/lib
 
-if [ -d ${HIVE_LIB} ]; then
+if [ ! -z ${HIVE_HOME} ] && [ -d ${HIVE_HOME} ] && [ -d ${HIVE_LIB} ]; then
 
   for f in ${HIVE_LIB}/hive-*.jar; do
     CLASSPATH=${CLASSPATH}:$f;
@@ -273,8 +299,8 @@ if [ -d ${HIVE_LIB} ]; then
   for f in ${HIVE_LIB}/datanucleus-*.jar; do
     CLASSPATH=${CLASSPATH}:$f;
   done
-
-  for f in $HIVE_HOME/hcatalog/share/hcatalog/*hcatalog-core-*.jar; do
+else
+  for f in $TAJO_HOME/hive/*.jar; do
     CLASSPATH=${CLASSPATH}:$f;
   done
 fi
@@ -286,6 +312,7 @@ fi
 ##############################################################################
 # Hive Home Configuration End
 ##############################################################################
+
 
 ##############################################################################
 # Find and Set Tajo CLASSPATH
@@ -315,6 +342,9 @@ for d in $TAJO_JAR_DIRS; do
     TAJO_BASE_CLASSPATH=$TAJO_BASE_CLASSPATH:$j
   done
 done
+
+# add CLASSPATH for common UDFs and third-party libraries like JDBC.
+TAJO_BASE_CLASSPATH=${TAJO_BASE_CLASSPATH}:$TAJO_HOME/extlib
 
 # add user-specified CLASSPATH last
 if [ "$TAJO_CLASSPATH" != "" ]; then
@@ -368,15 +398,6 @@ elif [ "$COMMAND" = "worker" ] ; then
 elif [ "$COMMAND" = "pullserver" ] ; then
   CLASS='org.apache.tajo.pullserver.TajoPullServer'
   TAJO_OPTS="$TAJO_OPTS $JAVA_PULLSERVER_HEAP_MAX $TAJO_PULLSERVER_OPTS"
-elif [ "$COMMAND" = "querymaster" ] ; then
-  CLASS='org.apache.tajo.worker.TajoWorker'
-  TAJO_OPTS="$TAJO_OPTS $JAVA_QUERYMASTER_HEAP_MAX $TAJO_QUERYMASTER_OPTS"
-  TAJO_DAEMON_MODE='standby-qm'
-elif [ "$COMMAND" = "taskrunner" ] ; then
-  CLASS='org.apache.tajo.worker.TajoWorker'
-  TAJO_OPTS="$TAJO_OPTS $TAJO_WORKER_OPTS"
-  TAJO_OPTS="$TAJO_OPTS $JAVA_WORKER_HEAP_MAX $TAJO_WORKER_OPTS"
-  TAJO_DAEMON_MODE='standby-tr'
 elif [ "$COMMAND" = "catalog" ] ; then
   CLASS='org.apache.tajo.catalog.CatalogServer'
   TAJO_OPTS="$TAJO_OPTS $TAJO_CATALOG_OPTS"

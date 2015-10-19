@@ -24,7 +24,6 @@ import org.apache.tajo.exception.InvalidOperationException;
 import org.apache.tajo.util.Bytes;
 import org.apache.tajo.util.MurmurHash;
 import org.apache.tajo.util.NumberUtil;
-import org.apache.tajo.util.datetime.DateTimeUtil;
 import org.apache.tajo.util.datetime.TimeMeta;
 
 import java.nio.ByteBuffer;
@@ -203,10 +202,9 @@ public class Float8Datum extends NumericDatum {
     case FLOAT8:
       return DatumFactory.createFloat8(val + datum.asFloat8());
     case DATE:
-      DateDatum dateDatum = (DateDatum)datum;
-      TimeMeta tm = dateDatum.toTimeMeta();
+      TimeMeta tm = datum.asTimeMeta();
       tm.plusDays(asInt4());
-      return new DateDatum(DateTimeUtil.date2j(tm.years, tm.monthOfYear, tm.dayOfMonth));
+      return new DateDatum(tm);
     case NULL_TYPE:
       return datum;
     default:
@@ -228,10 +226,9 @@ public class Float8Datum extends NumericDatum {
     case FLOAT8:
       return DatumFactory.createFloat8(val - datum.asFloat8());
     case DATE:
-      DateDatum dateDatum = (DateDatum)datum;
-      TimeMeta tm = dateDatum.toTimeMeta();
+      TimeMeta tm = datum.asTimeMeta();
       tm.plusDays(0 - asInt4());
-      return new DateDatum(DateTimeUtil.date2j(tm.years, tm.monthOfYear, tm.dayOfMonth));
+      return new DateDatum(tm);
     case NULL_TYPE:
       return datum;
     default:

@@ -18,15 +18,19 @@
 
 package org.apache.tajo.plan.expr;
 
+import com.google.common.base.Preconditions;
+import org.apache.tajo.algebra.*;
 import org.apache.tajo.catalog.Column;
+import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.plan.util.ExprFinder;
+import org.apache.tajo.plan.visitor.SimpleAlgebraVisitor;
+import org.apache.tajo.util.TUtil;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Stack;
+import java.util.*;
 
 public class AlgebraicUtil {
-  
+
   /**
    * Transpose a given comparison expression into the expression 
    * where the variable corresponding to the target is placed 
@@ -149,20 +153,20 @@ public class AlgebraicUtil {
       }
 
       if (lhs.getType() == EvalType.CONST && rhs.getType() == EvalType.CONST) {
-        return new ConstEval(binaryEval.eval(null, null));
+        return new ConstEval(binaryEval.bind(null, null).eval(null));
       }
 
       return binaryEval;
     }
 
     @Override
-    public EvalNode visitUnaryEval(Object context, Stack<EvalNode> stack, UnaryEval unaryEval) {
+    public EvalNode visitUnaryEval(Object context, UnaryEval unaryEval, Stack<EvalNode> stack) {
       stack.push(unaryEval);
       EvalNode child = visit(context, unaryEval.getChild(), stack);
       stack.pop();
 
       if (child.getType() == EvalType.CONST) {
-        return new ConstEval(unaryEval.eval(null, null));
+        return new ConstEval(unaryEval.bind(null, null).eval(null));
       }
 
       return unaryEval;
@@ -184,7 +188,7 @@ public class AlgebraicUtil {
       }
 
       if (constantOfAllDescendents && evalNode.getType() == EvalType.FUNCTION) {
-        return new ConstEval(evalNode.eval(null, null));
+        return new ConstEval(evalNode.bind(null, null).eval(null));
       } else {
         return evalNode;
       }
@@ -201,7 +205,7 @@ public class AlgebraicUtil {
    * @return the simplified expr
    */
   public static EvalNode eliminateConstantExprs(EvalNode expr) {
-    return algebraicOptimizer.visit(null, expr, new Stack<EvalNode>());
+    return algebraicOptimizer.visit(null, expr, new Stack<>());
   }
   
   /** 
@@ -327,6 +331,10 @@ public class AlgebraicUtil {
         (expr.getType() == EvalType.LIKE && !((LikePredicateEval)expr).isLeadingWildCard());
   }
 
+  public static EvalNode createSingletonExprFromCNF(Collection<EvalNode> cnfExprs) {
+    return createSingletonExprFromCNF(cnfExprs.toArray(new EvalNode[cnfExprs.size()]));
+  }
+
   /**
    * Convert a list of conjunctive normal forms into a singleton expression.
    *
@@ -342,6 +350,11 @@ public class AlgebraicUtil {
   }
 
   private static EvalNode createSingletonExprFromCNFRecursive(EvalNode[] evalNode, int idx) {
+    if (idx >= evalNode.length) {
+      throw new ArrayIndexOutOfBoundsException("index " + idx + " is exceeded the maximum length ("+
+          evalNode.length+") of EvalNode");
+    }
+
     if (idx == evalNode.length - 2) {
       return new BinaryEval(EvalType.AND, evalNode[idx], evalNode[idx + 1]);
     } else {
@@ -356,7 +369,7 @@ public class AlgebraicUtil {
    * @return An array of CNF-formed expressions
    */
   public static EvalNode [] toConjunctiveNormalFormArray(EvalNode expr) {
-    List<EvalNode> list = new ArrayList<EvalNode>();
+    List<EvalNode> list = new ArrayList<>();
     toConjunctiveNormalFormArrayRecursive(expr, list);
     return list.toArray(new EvalNode[list.size()]);
   }
@@ -370,18 +383,22 @@ public class AlgebraicUtil {
     }
   }
 
+  public static EvalNode createSingletonExprFromDNF(Collection<EvalNode> dnfExprs) {
+    return createSingletonExprFromDNF(dnfExprs.toArray(new EvalNode[dnfExprs.size()]));
+  }
+
   /**
    * Convert a list of conjunctive normal forms into a singleton expression.
    *
-   * @param cnfExprs
+   * @param dnfExprs
    * @return The EvalNode object that merges all CNF-formed expressions.
    */
-  public static EvalNode createSingletonExprFromDNF(EvalNode... cnfExprs) {
-    if (cnfExprs.length == 1) {
-      return cnfExprs[0];
+  public static EvalNode createSingletonExprFromDNF(EvalNode... dnfExprs) {
+    if (dnfExprs.length == 1) {
+      return dnfExprs[0];
     }
 
-    return createSingletonExprFromDNFRecursive(cnfExprs, 0);
+    return createSingletonExprFromDNFRecursive(dnfExprs, 0);
   }
 
   private static EvalNode createSingletonExprFromDNFRecursive(EvalNode[] evalNode, int idx) {
@@ -399,7 +416,7 @@ public class AlgebraicUtil {
    * @return An array of CNF-formed expressions
    */
   public static EvalNode [] toDisjunctiveNormalFormArray(EvalNode...exprs) {
-    List<EvalNode> list = new ArrayList<EvalNode>();
+    List<EvalNode> list = new ArrayList<>();
     for (EvalNode expr : exprs) {
       toDisjunctiveNormalFormArrayRecursive(expr, list);
     }
@@ -414,4 +431,212 @@ public class AlgebraicUtil {
       found.add(node);
     }
   }
+
+  public static class IdentifiableNameBuilder extends SimpleAlgebraVisitor<Object, Object> {
+    private Expr expr;
+    private StringBuilder nameBuilder = new StringBuilder();
+
+    public IdentifiableNameBuilder(Expr expr) {
+      this.expr = expr;
+    }
+
+    public String build() {
+      Stack<Expr> stack = new Stack<>();
+      stack.push(expr);
+      try {
+        this.visit(null, stack, expr);
+      } catch (TajoException e) {
+
+      }
+      return nameBuilder.deleteCharAt(nameBuilder.length()-1).toString();
+    }
+
+    @Override
+    public Object visitBinaryOperator(Object ctx, Stack<Expr> stack, BinaryOperator expr) throws TajoException {
+      addIntermExpr(expr);
+      return super.visitBinaryOperator(ctx, stack, expr);
+    }
+
+    private void append(String str) {
+      nameBuilder.append(str).append("_");
+    }
+
+    private void addIntermExpr(Expr expr) {
+      this.append(expr.getType().name());
+    }
+
+    @Override
+    public Object visitColumnReference(Object ctx, Stack<Expr> stack, ColumnReferenceExpr expr)
+        throws TajoException {
+      this.append(expr.getName());
+      return super.visitColumnReference(ctx, stack, expr);
+    }
+
+    @Override
+    public Object visitLiteral(Object ctx, Stack<Expr> stack, LiteralValue expr) throws TajoException {
+      this.append(expr.getValue());
+      return super.visitLiteral(ctx, stack, expr);
+    }
+
+    @Override
+    public Object visitNullLiteral(Object ctx, Stack<Expr> stack, NullLiteral expr) throws TajoException {
+      this.append("null");
+      return super.visitNullLiteral(ctx, stack, expr);
+    }
+
+    @Override
+    public Object visitTimestampLiteral(Object ctx, Stack<Expr> stack, TimestampLiteral expr) throws TajoException {
+      this.append(expr.getDate().toString());
+      this.append(expr.getTime().toString());
+      return super.visitTimestampLiteral(ctx, stack, expr);
+    }
+
+    @Override
+    public Object visitTimeLiteral(Object ctx, Stack<Expr> stack, TimeLiteral expr) throws TajoException {
+      this.append(expr.getTime().toString());
+      return super.visitTimeLiteral(ctx, stack, expr);
+    }
+  }
+
+  /**
+   * Find the top expr matched to type from the given expr
+   *
+   * @param expr start expr
+   * @param type to find
+   * @return a found expr
+   */
+  public static <T extends Expr> T findTopExpr(Expr expr, OpType type) throws TajoException {
+    Preconditions.checkNotNull(expr);
+    Preconditions.checkNotNull(type);
+
+    List<Expr> exprs = ExprFinder.findsInOrder(expr, type);
+    if (exprs.size() == 0) {
+      return null;
+    } else {
+      return (T) exprs.get(0);
+    }
+  }
+
+  /**
+   * Find the most bottom expr matched to type from the given expr
+   *
+   * @param expr start expr
+   * @param type to find
+   * @return a found expr
+   */
+  public static <T extends Expr> T findMostBottomExpr(Expr expr, OpType type) throws TajoException {
+    Preconditions.checkNotNull(expr);
+    Preconditions.checkNotNull(type);
+
+    List<Expr> exprs = ExprFinder.findsInOrder(expr, type);
+    if (exprs.size() == 0) {
+      return null;
+    } else {
+      return (T) exprs.get(exprs.size()-1);
+    }
+  }
+
+  /**
+   * Transforms an algebra expression to an array of conjunctive normal formed algebra expressions.
+   *
+   * @param expr The algebra expression to be transformed to an array of CNF-formed expressions.
+   * @return An array of CNF-formed algebra expressions
+   */
+  public static Expr[] toConjunctiveNormalFormArray(Expr expr) {
+    List<Expr> list = TUtil.newList();
+    toConjunctiveNormalFormArrayRecursive(expr, list);
+    return list.toArray(new Expr[list.size()]);
+  }
+
+  private static void toConjunctiveNormalFormArrayRecursive(Expr node, List<Expr> found) {
+    if (node.getType() == OpType.And) {
+      toConjunctiveNormalFormArrayRecursive(((BinaryOperator) node).getLeft(), found);
+      toConjunctiveNormalFormArrayRecursive(((BinaryOperator) node).getRight(), found);
+    } else {
+      found.add(node);
+    }
+  }
+
+  /**
+   * Build Exprs for all columns with a list of filter conditions.
+   *
+   * For example, consider you have a partitioned table for three columns (i.e., col1, col2, col3).
+   * Then, this methods will create three Exprs for (col1), (col2), (col3).
+   *
+   * Assume that an user gives a condition WHERE col1 ='A' and col3 = 'C'.
+   * There is no filter condition corresponding to col2.
+   * Then, the path filter conditions are corresponding to the followings:
+   *
+   * The first Expr: col1 = 'A'
+   * The second Expr: col2 IS NOT NULL
+   * The third Expr: col3 = 'C'
+   *
+   * 'IS NOT NULL' predicate is always true against the partition path.
+   *
+   *
+   * @param partitionColumns
+   * @param conjunctiveForms
+   * @return
+   */
+  public static Expr[] getRearrangedCNFExpressions(String tableName,
+    List<CatalogProtos.ColumnProto> partitionColumns, Expr[] conjunctiveForms) {
+    Expr[] filters = new Expr[partitionColumns.size()];
+    Column target;
+
+    for (int i = 0; i < partitionColumns.size(); i++) {
+      List<Expr> accumulatedFilters = TUtil.newList();
+      target = new Column(partitionColumns.get(i));
+      ColumnReferenceExpr columnReference = new ColumnReferenceExpr(tableName, target.getSimpleName());
+
+      if (conjunctiveForms == null) {
+        accumulatedFilters.add(new IsNullPredicate(true, columnReference));
+      } else {
+        for (Expr expr : conjunctiveForms) {
+          Set<ColumnReferenceExpr> columnSet = ExprFinder.finds(expr, OpType.Column);
+          if (columnSet.contains(columnReference)) {
+            // Accumulate one qual per level
+            accumulatedFilters.add(expr);
+          }
+        }
+
+        if (accumulatedFilters.size() == 0) {
+          accumulatedFilters.add(new IsNullPredicate(true, columnReference));
+        }
+      }
+
+      Expr filterPerLevel = AlgebraicUtil.createSingletonExprFromCNFByExpr(
+        accumulatedFilters.toArray(new Expr[accumulatedFilters.size()]));
+      filters[i] = filterPerLevel;
+    }
+
+    return filters;
+  }
+
+  /**
+   * Convert a list of conjunctive normal forms into a singleton expression.
+   *
+   * @param cnfExprs
+   * @return The EvalNode object that merges all CNF-formed expressions.
+   */
+  public static Expr createSingletonExprFromCNFByExpr(Expr... cnfExprs) {
+    if (cnfExprs.length == 1) {
+      return cnfExprs[0];
+    }
+
+    return createSingletonExprFromCNFRecursiveByExpr(cnfExprs, 0);
+  }
+
+  private static Expr createSingletonExprFromCNFRecursiveByExpr(Expr[] exprs, int idx) {
+    if (idx >= exprs.length) {
+      throw new ArrayIndexOutOfBoundsException("index " + idx + " is exceeded the maximum length ("+
+        exprs.length+") of EvalNode");
+    }
+
+    if (idx == exprs.length - 2) {
+      return new BinaryOperator(OpType.And, exprs[idx], exprs[idx + 1]);
+    } else {
+      return new BinaryOperator(OpType.And, exprs[idx], createSingletonExprFromCNFRecursiveByExpr(exprs, idx + 1));
+    }
+  }
+
 }

@@ -24,9 +24,13 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.apache.hadoop.io.IOUtils;
-import org.apache.tajo.catalog.*;
-import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.catalog.CatalogUtil;
+import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.catalog.SortSpec;
+import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.engine.planner.KeyProjector;
+import org.apache.tajo.plan.logical.ShuffleFileWriteNode;
 import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.index.bst.BSTIndex;
@@ -41,9 +45,8 @@ import java.io.IOException;
  * specified order of shuffle keys.
  */
 public class RangeShuffleFileWriteExec extends UnaryPhysicalExec {
-  private static Log LOG = LogFactory.getLog(RangeShuffleFileWriteExec.class);
+  private final static Log LOG = LogFactory.getLog(RangeShuffleFileWriteExec.class);
   private final SortSpec[] sortSpecs;
-  private int [] indexKeys = null;
   private Schema keySchema;
 
   private BSTIndex.BSTIndexWriter indexWriter;
@@ -51,34 +54,34 @@ public class RangeShuffleFileWriteExec extends UnaryPhysicalExec {
   private FileAppender appender;
   private TableMeta meta;
 
+  private KeyProjector keyProjector;
+
   public RangeShuffleFileWriteExec(final TaskAttemptContext context,
-                                   final PhysicalExec child, final Schema inSchema, final Schema outSchema,
-                                   final SortSpec[] sortSpecs) throws IOException {
-    super(context, inSchema, outSchema, child);
+                                   final ShuffleFileWriteNode plan,
+                                   final PhysicalExec child, final SortSpec[] sortSpecs) throws IOException {
+    super(context, plan.getInSchema(), plan.getInSchema(), child);
     this.sortSpecs = sortSpecs;
+
+    if (plan.hasOptions()) {
+      this.meta = CatalogUtil.newTableMeta(plan.getStorageType(), plan.getOptions());
+    } else {
+      this.meta = CatalogUtil.newTableMeta(plan.getStorageType());
+    }
   }
 
   public void init() throws IOException {
-    super.init();
 
-    indexKeys = new int[sortSpecs.length];
     keySchema = PlannerUtil.sortSpecsToSchema(sortSpecs);
-
-    Column col;
-    for (int i = 0 ; i < sortSpecs.length; i++) {
-      col = sortSpecs[i].getSortKey();
-      indexKeys[i] = inSchema.getColumnId(col.getQualifiedName());
-    }
+    keyProjector = new KeyProjector(inSchema, keySchema.toArray());
 
     BSTIndex bst = new BSTIndex(new TajoConf());
     this.comp = new BaseTupleComparator(keySchema, sortSpecs);
     Path storeTablePath = new Path(context.getWorkDir(), "output");
     LOG.info("Output data directory: " + storeTablePath);
-    this.meta = CatalogUtil.newTableMeta(context.getDataChannel() != null ?
-        context.getDataChannel().getStoreType() : CatalogProtos.StoreType.RAW);
+
     FileSystem fs = new RawLocalFileSystem();
     fs.mkdirs(storeTablePath);
-    this.appender = (FileAppender) ((FileStorageManager)StorageManager.getFileStorageManager(context.getConf()))
+    this.appender = (FileAppender) ((FileTablespace) TablespaceManager.getDefault())
         .getAppender(meta, outSchema, new Path(storeTablePath, "output"));
     this.appender.enableStats();
     this.appender.init();
@@ -86,24 +89,24 @@ public class RangeShuffleFileWriteExec extends UnaryPhysicalExec {
         BSTIndex.TWO_LEVEL_INDEX, keySchema, comp);
     this.indexWriter.setLoadNum(100);
     this.indexWriter.open();
+
+    super.init();
   }
 
   @Override
   public Tuple next() throws IOException {
     Tuple tuple;
     Tuple keyTuple;
-    Tuple prevKeyTuple = null;
+    Tuple prevKeyTuple = new VTuple(keySchema.size());
     long offset;
 
-
-    while((tuple = child.next()) != null) {
+    while(!context.isStopped() && (tuple = child.next()) != null) {
       offset = appender.getOffset();
       appender.addTuple(tuple);
-      keyTuple = new VTuple(keySchema.size());
-      RowStoreUtil.project(tuple, keyTuple, indexKeys);
-      if (prevKeyTuple == null || !prevKeyTuple.equals(keyTuple)) {
+      keyTuple = keyProjector.project(tuple);
+      if (!prevKeyTuple.equals(keyTuple)) {
         indexWriter.write(keyTuple, offset);
-        prevKeyTuple = keyTuple;
+        prevKeyTuple.put(keyTuple.getValues());
       }
     }
 

@@ -18,6 +18,15 @@
 
 package org.apache.tajo.catalog;
 
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedDataTypeException;
+import org.apache.tajo.util.TUtil;
+
+import java.util.HashMap;
+import java.util.List;
+
 import static org.apache.tajo.common.TajoDataTypes.DataType;
 import static org.apache.tajo.common.TajoDataTypes.Type;
 
@@ -34,12 +43,12 @@ public class SchemaUtil {
   static int tmpColumnSeq = 0;
   public static Schema merge(Schema left, Schema right) {
     Schema merged = new Schema();
-    for(Column col : left.getColumns()) {
+    for(Column col : left.getRootColumns()) {
       if (!merged.containsByQualifiedName(col.getQualifiedName())) {
         merged.addColumn(col);
       }
     }
-    for(Column col : right.getColumns()) {
+    for(Column col : right.getRootColumns()) {
       if (merged.containsByQualifiedName(col.getQualifiedName())) {
         merged.addColumn("?fake" + (tmpColumnSeq++), col.getDataType());
       } else {
@@ -59,7 +68,7 @@ public class SchemaUtil {
    */
   public static Schema getNaturalJoinColumns(Schema left, Schema right) {
     Schema common = new Schema();
-    for (Column outer : left.getColumns()) {
+    for (Column outer : left.getRootColumns()) {
       if (!common.containsByName(outer.getSimpleName()) && right.containsByName(outer.getSimpleName())) {
         common.addColumn(new Column(outer.getSimpleName(), outer.getDataType()));
       }
@@ -107,5 +116,147 @@ public class SchemaUtil {
       names[i] = schema.getColumn(i).getSimpleName();
     }
     return names;
+  }
+
+  public static String [] convertColumnsToPaths(Iterable<Column> columns, boolean onlyLeaves) {
+    List<String> paths = Lists.newArrayList();
+
+    for (Column c : columns) {
+      if (onlyLeaves && c.getDataType().getType() == Type.RECORD) {
+        continue;
+      }
+      paths.add(c.getSimpleName());
+    }
+
+    return paths.toArray(new String [paths.size()]);
+  }
+
+  public static ImmutableMap<String, Type> buildTypeMap(Iterable<Column> schema, String [] targetPaths) {
+
+    HashMap<String, Type> builder = new HashMap<>();
+    for (Column column : schema) {
+
+      // Keep types which only belong to projected paths
+      // For example, assume that a projected path is 'name/first_name', where name is RECORD and first_name is TEXT.
+      // In this case, we should keep two types:
+      // * name - RECORD
+      // * name/first_name TEXT
+      for (String p : targetPaths) {
+        if (p.startsWith(column.getSimpleName())) {
+          builder.put(column.getSimpleName(), column.getDataType().getType());
+        }
+      }
+    }
+
+    return ImmutableMap.copyOf(builder);
+  }
+
+  /**
+   * Column visitor interface
+   */
+  public interface ColumnVisitor {
+    void visit(int depth, List<String> path, Column column);
+  }
+
+  /**
+   * It allows a column visitor to traverse all columns in a schema in a depth-first order.
+   * @param schema
+   * @param function
+   */
+  public static void visitSchema(Schema schema, ColumnVisitor function) {
+      for(Column col : schema.getRootColumns()) {
+        visitInDepthFirstOrder(0, NestedPathUtil.ROOT_PATH, function, col);
+      }
+  }
+
+  /**
+   * A recursive function to traverse all columns in a schema in a depth-first order.
+   *
+   * @param depth Nested depth. 0 is root column.
+   * @param function Visitor
+   * @param column Current visiting column
+   */
+  private static void visitInDepthFirstOrder(int depth,
+                                             final List<String> path,
+                                             ColumnVisitor function,
+                                             Column column) {
+
+    if (column.getDataType().getType() == Type.RECORD) {
+      for (Column nestedColumn : column.typeDesc.nestedRecordSchema.getRootColumns()) {
+        List<String> newPath = TUtil.newList(path);
+        newPath.add(column.getQualifiedName());
+
+        visitInDepthFirstOrder(depth + 1, newPath, function, nestedColumn);
+      }
+      function.visit(depth, path, column);
+    } else {
+      function.visit(depth, path, column);
+    }
+  }
+
+  public static String toDisplayString(Schema schema) {
+    StringBuilder sb = new StringBuilder();
+    DDLBuilder.buildSchema(sb, schema);
+    return sb.toString();
+  }
+
+  /**
+   * Calculate the row size from the given schema.
+   *
+   * @param schema input schema
+   * @return estimated row size in bytes
+   */
+  public static int estimateRowByteSizeWithSchema(Schema schema) {
+    int size = 0;
+    for (Column column : schema.fields) {
+      size += getColByteSize(column);
+    }
+    return size;
+  }
+
+  /**
+   * Return the size of the given column. For the variable-length columns, it returns a prefixed value.
+   *
+   * @param col input column
+   * @return column length in bytes
+   */
+  public static int getColByteSize(Column col) {
+    if (col.getDataType().getLength() > 0) {
+      return col.getDataType().getLength();
+    }
+    switch (col.getDataType().getType()) {
+      case BOOLEAN:
+        return 1;
+      case CHAR:
+        return col.getDataType().getLength();
+      case BIT:
+        return 1;
+      case INT2:
+        return 2;
+      case INT4:
+        return 4;
+      case INT8:
+        return 8;
+      case FLOAT4:
+        return 4;
+      case FLOAT8:
+        return 8;
+      case INET4:
+        return 4;
+      case INET6:
+        return 16;
+      case TEXT:
+        return 256;
+      case BLOB:
+        return 256;
+      case DATE:
+        return 4;
+      case TIME:
+        return 8;
+      case TIMESTAMP:
+        return 8;
+      default:
+        throw new TajoRuntimeException(new UnsupportedDataTypeException(col.getDataType().toString()));
+    }
   }
 }

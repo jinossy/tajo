@@ -62,11 +62,10 @@ public class SumDouble extends AggFunction<Datum> {
 
   @Override
   public void eval(FunctionContext ctx, Tuple params) {
-    Datum datum = params.get(0);
-    if (datum.isNotNull()) {
+    if (!params.isBlankOrNull(0)) {
       SumContext sumCtx = (SumContext)ctx;
       sumCtx.hasNonNull = true;
-      sumCtx.sum += datum.asFloat8();
+      sumCtx.sum += params.getFloat8(0);
     }
   }
 
@@ -95,7 +94,7 @@ public class SumDouble extends AggFunction<Datum> {
     }
   }
 
-  protected class SumContext implements FunctionContext {
+  protected static class SumContext implements FunctionContext {
     boolean hasNonNull = false;
     double sum = 0.0;
   }

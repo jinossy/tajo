@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,9 +22,11 @@ import org.apache.tajo.validation.Validator;
 
 public enum QueryVars implements ConfigKey {
   COMMAND_TYPE,
+  DEFAULT_SPACE_URI,
+  DEFAULT_SPACE_ROOT_URI,
   STAGING_DIR,
   OUTPUT_TABLE_NAME,
-  OUTPUT_TABLE_PATH,
+  OUTPUT_TABLE_URI,
   OUTPUT_PARTITIONS,
   OUTPUT_OVERWRITE,
   OUTPUT_AS_DIRECTORY,

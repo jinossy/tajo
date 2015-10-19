@@ -18,7 +18,6 @@
 package org.apache.tajo.jdbc;
 
 import com.google.common.collect.Lists;
-import com.google.protobuf.ServiceException;
 import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.client.CatalogAdminClient;
@@ -46,6 +45,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
       "abs,acos,asin,atan,atan2,ceiling,cos,degrees,exp,,floor,mod,pi,pow," +
       "radians,round,sign,sin,sqrt,tan";
   private static final String STRING_FUNCTIONS = "ascii,chr,concat,left,length,ltrim,repeat,rtrim,substring";
+  private static final String PROCEDURE_TERM = "UDF";
 
   private final JdbcConnection conn;
 
@@ -157,7 +157,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public String getProcedureTerm()  throws SQLException {
-    return new String("UDF");
+    return PROCEDURE_TERM;
   }
 
   @Override
@@ -300,7 +300,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
         "PROCEDURE_TYPE"),
         Arrays.asList(Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.INT4, Type.INT4, Type.INT4,
             Type.VARCHAR, Type.INT2),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   @Override
@@ -317,7 +317,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
             Type.INT2, Type.VARCHAR, Type.INT4, Type.INT4, Type.INT2,
             Type.INT2, Type.INT2, Type.VARCHAR, Type.VARCHAR, Type.INT2,
             Type.INT2, Type.INT2, Type.INT1, Type.VARCHAR, Type.VARCHAR),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   /**
@@ -364,7 +364,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
   @Override
   public ResultSet getTables(@Nullable String catalog, @Nullable String schemaPattern,
                              @Nullable String tableNamePattern, @Nullable String [] types) throws SQLException {
-    final List<MetaDataTuple> resultTables = new ArrayList<MetaDataTuple>();
+    final List<MetaDataTuple> resultTables = new ArrayList<>();
     String regtableNamePattern = convertPattern(tableNamePattern == null ? null : tableNamePattern);
 
     List<String> targetCatalogs = Lists.newArrayList();
@@ -421,11 +421,8 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
   @Override
   public ResultSet getSchemas() throws SQLException {
     String databaseName;
-    try {
-      databaseName = conn.getQueryClient().getCurrentDatabase();
-    } catch (ServiceException e) {
-      throw new SQLException(e);
-    }
+
+    databaseName = conn.getQueryClient().getCurrentDatabase();
 
     MetaDataTuple tuple = new MetaDataTuple(2);
     tuple.put(0, new TextDatum(DEFAULT_SCHEMA_NAME));
@@ -434,19 +431,16 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     return new TajoMetaDataResultSet(
         Arrays.asList("TABLE_SCHEM", "TABLE_CATALOG"),
         Arrays.asList(Type.VARCHAR, Type.VARCHAR),
-        Arrays.asList(tuple));
+        Collections.singletonList(tuple));
   }
 
   @Override
   public ResultSet getCatalogs() throws SQLException {
     Collection<String> databaseNames;
-    try {
-      databaseNames = conn.getCatalogAdminClient().getAllDatabaseNames();
-    } catch (ServiceException e) {
-      throw new SQLException(e);
-    }
 
-    List<MetaDataTuple> tuples = new ArrayList<MetaDataTuple>();
+    databaseNames = conn.getCatalogAdminClient().getAllDatabaseNames();
+
+    List<MetaDataTuple> tuples = new ArrayList<>();
     for (String databaseName : databaseNames) {
       MetaDataTuple tuple = new MetaDataTuple(1);
       tuple.put(0, new TextDatum(databaseName));
@@ -454,21 +448,21 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     }
 
     return new TajoMetaDataResultSet(
-        Arrays.asList("TABLE_CAT"),
-        Arrays.asList(Type.VARCHAR) ,
+        Collections.singletonList("TABLE_CAT"),
+        Collections.singletonList(Type.VARCHAR),
         tuples);
   }
 
   @Override
   public ResultSet getTableTypes() throws SQLException {
-    List<MetaDataTuple> columns = new ArrayList<MetaDataTuple>();
+    List<MetaDataTuple> columns = new ArrayList<>();
     MetaDataTuple tuple = new MetaDataTuple(2);
     tuple.put(0, new TextDatum("TABLE"));
     columns.add(tuple);
 
     ResultSet result = new TajoMetaDataResultSet(
-        Arrays.asList("TABLE_TYPE")
-        , Arrays.asList(Type.VARCHAR)
+        Collections.singletonList("TABLE_TYPE")
+        , Collections.singletonList(Type.VARCHAR)
         , columns);
 
     return result;
@@ -477,7 +471,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
   @Override
   public ResultSet getUDTs(String catalog, String schemaPattern, String typeNamePattern, int[] types)
       throws SQLException {
-    List<MetaDataTuple> columns = new ArrayList<MetaDataTuple>();
+    List<MetaDataTuple> columns = new ArrayList<>();
 
     return new TajoMetaDataResultSet(
         Arrays.asList("TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "CLASS_NAME", "DATA_TYPE"
@@ -496,7 +490,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
       targetCatalogs.add(catalog);
     }
 
-    List<MetaDataTuple> columns = new ArrayList<MetaDataTuple>();
+    List<MetaDataTuple> columns = new ArrayList<>();
     try {
       if (targetCatalogs.isEmpty()) {
         targetCatalogs.addAll(conn.getCatalogAdminClient().getAllDatabaseNames());
@@ -512,7 +506,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
                 CatalogUtil.buildFQName(databaseName, table));
             int pos = 0;
 
-            for (Column column: tableDesc.getLogicalSchema().getColumns()) {
+            for (Column column: tableDesc.getLogicalSchema().getRootColumns()) {
               if (column.getSimpleName().matches(regcolumnNamePattern)) {
                 MetaDataTuple tuple = new MetaDataTuple(22);
 
@@ -573,7 +567,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
         "IS_GRANTABLE"),
         Arrays.asList(Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR,
             Type.VARCHAR, Type.VARCHAR),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   @Override
@@ -582,7 +576,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     return new TajoMetaDataResultSet(Arrays.asList("TABLE_CAT", "TABLE_SCHEM",
         "TABLE_NAME", "GRANTOR", "GRANTEE", "PRIVILEGE", "IS_GRANTABLE"),
         Arrays.asList(Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR, Type.VARCHAR),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   @Override
@@ -591,7 +585,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     return new TajoMetaDataResultSet(Arrays.asList("SCOPE", "COLUMN_NAME",
         "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "PSEUDO_COLUMN"),
         Arrays.asList(Type.INT2, Type.VARCHAR, Type.INT2, Type.VARCHAR, Type.INT4, Type.INT4, Type.INT2, Type.INT2),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   @Override
@@ -600,7 +594,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     return new TajoMetaDataResultSet(Arrays.asList("SCOPE", "COLUMN_NAME",
         "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "PSEUDO_COLUMN"),
         Arrays.asList(Type.INT2, Type.VARCHAR, Type.INT2, Type.VARCHAR, Type.INT4, Type.INT4, Type.INT2, Type.INT2),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   @Override
@@ -647,7 +641,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
 
   @Override
   public ResultSet getTypeInfo() throws SQLException {
-    List<MetaDataTuple> tuples = new ArrayList<MetaDataTuple>();
+    List<MetaDataTuple> tuples = new ArrayList<>();
     for (Datum[] eachDatums: TajoTypeUtil.getTypeInfos()) {
       MetaDataTuple tuple = new MetaDataTuple(eachDatums.length);
       for (int i = 0; i < eachDatums.length; i++) {
@@ -764,11 +758,8 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
   @Override
   public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
     String databaseName;
-    try {
-      databaseName = conn.getQueryClient().getCurrentDatabase();
-    } catch (ServiceException e) {
-      throw new SQLException(e);
-    }
+
+    databaseName = conn.getQueryClient().getCurrentDatabase();
 
     MetaDataTuple tuple = new MetaDataTuple(2);
     tuple.put(0, new TextDatum(DEFAULT_SCHEMA_NAME));
@@ -777,7 +768,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     return new TajoMetaDataResultSet(
         Arrays.asList("TABLE_SCHEM", "TABLE_CATALOG"),
         Arrays.asList(Type.VARCHAR, Type.VARCHAR),
-        Arrays.asList(tuple));
+        Collections.singletonList(tuple));
   }
 
   @Override
@@ -791,7 +782,7 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
       throws SQLException {
     return new TajoMetaDataResultSet(Arrays.asList("NAME", "MAX_LEN", "DEFAULT_VALUE", "DESCRIPTION"),
         Arrays.asList(Type.VARCHAR, Type.INT4, Type.VARCHAR, Type.VARCHAR),
-        new ArrayList<MetaDataTuple>());
+            new ArrayList<MetaDataTuple>());
   }
 
   @Override
@@ -1265,14 +1256,14 @@ public class TajoDatabaseMetaData implements DatabaseMetaData {
     return iface.isInstance(this);
   }
 
+  @Override
   public boolean generatedKeyAlwaysReturned() throws SQLException {
-    // JDK 1.7
     return false;
   }
 
+  @Override
   public ResultSet getPseudoColumns(String catalog, String schemaPattern,
                                     String tableNamePattern, String columnNamePattern) throws SQLException {
-    // JDK 1.7
     throw new SQLFeatureNotSupportedException("getPseudoColumns not supported");
   }
 }

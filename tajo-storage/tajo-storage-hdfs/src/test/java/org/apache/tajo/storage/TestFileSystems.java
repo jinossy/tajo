@@ -25,7 +25,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
@@ -51,14 +50,14 @@ public class TestFileSystems {
 
   private static String TEST_PATH = "target/test-data/TestFileSystem";
   private TajoConf conf;
-  private FileStorageManager sm;
+  private FileTablespace sm;
   private FileSystem fs;
   private Path testDir;
 
   public TestFileSystems(FileSystem fs) throws IOException {
     this.fs = fs;
     this.conf = new TajoConf(fs.getConf());
-    sm = (FileStorageManager)StorageManager.getFileStorageManager(conf);
+    sm = TablespaceManager.getLocalFs();
     testDir = getTestDir(this.fs, TEST_PATH);
   }
 
@@ -103,15 +102,14 @@ public class TestFileSystems {
     schema.addColumn("age", Type.INT4);
     schema.addColumn("name", Type.TEXT);
 
-    TableMeta meta = CatalogUtil.newTableMeta(StoreType.CSV);
+    TableMeta meta = CatalogUtil.newTableMeta("TEXT");
 
     Tuple[] tuples = new Tuple[4];
     for (int i = 0; i < tuples.length; i++) {
-      tuples[i] = new VTuple(3);
-      tuples[i]
-          .put(new Datum[]{DatumFactory.createInt4(i),
-              DatumFactory.createInt4(i + 32),
-              DatumFactory.createText("name" + i)});
+      tuples[i] = new VTuple(new Datum[]{
+          DatumFactory.createInt4(i),
+          DatumFactory.createInt4(i + 32),
+          DatumFactory.createText("name" + i)});
     }
 
     Path path = StorageUtil.concatPath(testDir, "testGetScannerAndAppender",

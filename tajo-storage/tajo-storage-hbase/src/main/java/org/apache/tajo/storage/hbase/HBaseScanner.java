@@ -18,6 +18,7 @@
 
 package org.apache.tajo.storage.hbase;
 
+import com.google.common.base.Preconditions;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -29,17 +30,16 @@ import org.apache.hadoop.hbase.filter.KeyOnlyFilter;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.catalog.statistics.ColumnStats;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.datum.TextDatum;
-import org.apache.tajo.storage.Scanner;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.Tuple;
-import org.apache.tajo.storage.VTuple;
+import org.apache.tajo.exception.*;
+import org.apache.tajo.plan.expr.EvalNode;
+import org.apache.tajo.plan.logical.LogicalNode;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.util.BytesUtils;
 
@@ -86,8 +86,16 @@ public class HBaseScanner implements Scanner {
   private int[] rowKeyFieldIndexes;
   private char rowKeyDelimiter;
 
+  private Tuple outTuple;
+
   public HBaseScanner (Configuration conf, Schema schema, TableMeta meta, Fragment fragment) throws IOException {
-    this.conf = (TajoConf)conf;
+    Preconditions.checkNotNull(conf);
+    Preconditions.checkNotNull(schema);
+    Preconditions.checkNotNull(meta);
+    Preconditions.checkNotNull(fragment);
+    Preconditions.checkArgument(conf instanceof TajoConf);
+
+    this.conf = (TajoConf) conf;
     this.schema = schema;
     this.meta = meta;
     this.fragment = (HBaseFragment)fragment;
@@ -102,11 +110,10 @@ public class HBaseScanner implements Scanner {
       tableStats.setNumBytes(0);
       tableStats.setNumBlocks(1);
     }
-    if (schema != null) {
-      for(Column eachColumn: schema.getColumns()) {
-        ColumnStats columnStats = new ColumnStats(eachColumn);
-        tableStats.addColumnStat(columnStats);
-      }
+
+    for (Column eachColumn : schema.getRootColumns()) {
+      ColumnStats columnStats = new ColumnStats(eachColumn);
+      tableStats.addColumnStat(columnStats);
     }
 
     scanFetchSize = Integer.parseInt(
@@ -115,7 +122,13 @@ public class HBaseScanner implements Scanner {
       targets = schema.toArray();
     }
 
-    columnMapping = new ColumnMapping(schema, meta);
+    outTuple = new VTuple(targets.length);
+
+    try {
+      columnMapping = new ColumnMapping(schema, meta.getOptions());
+    } catch (TajoException e) {
+      new TajoInternalError(e);
+    }
     targetIndexes = new int[targets.length];
     int index = 0;
     for (Column eachTargetColumn: targets) {
@@ -131,8 +144,8 @@ public class HBaseScanner implements Scanner {
     rowKeyDelimiter = columnMapping.getRowKeyDelimiter();
     rowKeyFieldIndexes = columnMapping.getRowKeyFieldIndexes();
 
-    hbaseConf = HBaseStorageManager.getHBaseConfiguration(conf, meta);
-
+    HBaseTablespace space = (HBaseTablespace) TablespaceManager.get(fragment.getUri());
+    hbaseConf = space.getHbaseConf();
     initScanner();
   }
 
@@ -179,8 +192,7 @@ public class HBaseScanner implements Scanner {
     }
 
     if (htable == null) {
-      HConnection hconn = ((HBaseStorageManager)StorageManager.getStorageManager(conf, StoreType.HBASE))
-          .getConnection(hbaseConf);
+      HConnection hconn = ((HBaseTablespace) TablespaceManager.get(fragment.getUri())).getConnection();
       htable = hconn.getTable(fragment.getHbaseTableName());
     }
     scanner = htable.getScanner(scan);
@@ -203,12 +215,11 @@ public class HBaseScanner implements Scanner {
     }
 
     Result result = scanResults[scanResultIndex++];
-    Tuple resultTuple = new VTuple(schema.size());
     for (int i = 0; i < targetIndexes.length; i++) {
-      resultTuple.put(targetIndexes[i], getDatum(result, targetIndexes[i]));
+      outTuple.put(i, getDatum(result, targetIndexes[i]));
     }
     numRows++;
-    return resultTuple;
+    return outTuple;
   }
 
   private Datum getDatum(Result result, int fieldId) throws IOException {
@@ -218,7 +229,8 @@ public class HBaseScanner implements Scanner {
       if (!isBinaryColumns[fieldId] && rowKeyFieldIndexes[fieldId] >= 0) {
         int rowKeyFieldIndex = rowKeyFieldIndexes[fieldId];
 
-        byte[][] rowKeyFields = BytesUtils.splitPreserveAllTokens(value, rowKeyDelimiter);
+        byte[][] rowKeyFields = BytesUtils.splitPreserveAllTokens(
+            value, rowKeyDelimiter, columnMapping.getNumColumns());
 
         if (rowKeyFields.length < rowKeyFieldIndex) {
           return NullDatum.get();
@@ -404,6 +416,11 @@ public class HBaseScanner implements Scanner {
   }
 
   @Override
+  public void pushOperators(LogicalNode planPart) {
+    throw new TajoRuntimeException(new UnsupportedException());
+  }
+
+  @Override
   public boolean isProjectable() {
     return true;
   }
@@ -422,8 +439,12 @@ public class HBaseScanner implements Scanner {
   }
 
   @Override
-  public void setSearchCondition(Object expr) {
-    // TODO implements adding column filter to scanner.
+  public void setFilter(EvalNode filter) {
+    throw new TajoRuntimeException(new UnsupportedException());
+  }
+
+  @Override
+  public void setLimit(long num) {
   }
 
   @Override

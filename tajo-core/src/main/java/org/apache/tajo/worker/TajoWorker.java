@@ -33,52 +33,50 @@ import org.apache.hadoop.yarn.util.RackResolver;
 import org.apache.tajo.TajoConstants;
 import org.apache.tajo.catalog.CatalogClient;
 import org.apache.tajo.catalog.CatalogService;
+import org.apache.tajo.catalog.FunctionDesc;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.ha.HAServiceUtil;
-import org.apache.tajo.ha.TajoMasterInfo;
-import org.apache.tajo.ipc.QueryCoordinatorProtocol.ClusterResourceSummary;
+import org.apache.tajo.engine.function.FunctionLoader;
+import org.apache.tajo.function.FunctionSignature;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
-import org.apache.tajo.master.rm.TajoWorkerResourceManager;
+import org.apache.tajo.metrics.Node;
+import org.apache.tajo.plan.function.python.PythonScriptEngine;
 import org.apache.tajo.pullserver.TajoPullServerService;
 import org.apache.tajo.querymaster.QueryMaster;
 import org.apache.tajo.querymaster.QueryMasterManagerService;
-import org.apache.tajo.rpc.RpcChannelFactory;
+import org.apache.tajo.rpc.RpcClientManager;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.rule.EvaluationContext;
 import org.apache.tajo.rule.EvaluationFailedException;
 import org.apache.tajo.rule.SelfDiagnosisRuleEngine;
 import org.apache.tajo.rule.SelfDiagnosisRuleSession;
+import org.apache.tajo.service.ServiceTracker;
+import org.apache.tajo.service.ServiceTrackerFactory;
+import org.apache.tajo.service.TajoMasterInfo;
 import org.apache.tajo.storage.HashShuffleAppenderManager;
-import org.apache.tajo.util.CommonTestingUtil;
-import org.apache.tajo.util.JvmPauseMonitor;
-import org.apache.tajo.util.NetUtils;
-import org.apache.tajo.util.StringUtils;
+import org.apache.tajo.storage.OldStorageManager;
+import org.apache.tajo.util.*;
 import org.apache.tajo.util.history.HistoryReader;
 import org.apache.tajo.util.history.HistoryWriter;
 import org.apache.tajo.util.metrics.TajoSystemMetrics;
 import org.apache.tajo.webapp.StaticHttpServer;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.Writer;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.tajo.conf.TajoConf.ConfVars;
 
 public class TajoWorker extends CompositeService {
   public static final PrimitiveProtos.BoolProto TRUE_PROTO = PrimitiveProtos.BoolProto.newBuilder().setValue(true).build();
   public static final PrimitiveProtos.BoolProto FALSE_PROTO = PrimitiveProtos.BoolProto.newBuilder().setValue(false).build();
-
-  public static final String WORKER_MODE_YARN_TASKRUNNER = "tr";
-  public static final String WORKER_MODE_YARN_QUERYMASTER = "qm";
-  public static final String WORKER_MODE_STANDBY = "standby";
-  public static final String WORKER_MODE_QUERY_MASTER = "standby-qm";
-  public static final String WORKER_MODE_TASKRUNNER = "standby-tr";
+  public static final PrimitiveProtos.NullProto NULL_PROTO = PrimitiveProtos.NullProto.newBuilder().build();
+  public static final int SHUTDOWN_HOOK_PRIORITY = 30;
 
   private static final Log LOG = LogFactory.getLog(TajoWorker.class);
 
@@ -98,26 +96,19 @@ public class TajoWorker extends CompositeService {
 
   private WorkerContext workerContext;
 
-  private TaskRunnerManager taskRunnerManager;
+  private TaskManager taskManager;
+
+  private TaskExecutor taskExecutor;
 
   private TajoPullServerService pullService;
 
-  @Deprecated
-  private boolean yarnContainerMode;
+  private ServiceTracker serviceTracker;
 
-  @Deprecated
-  private boolean queryMasterMode;
+  private NodeResourceManager nodeResourceManager;
 
-  @Deprecated
-  private boolean taskRunnerMode;
-
-  private WorkerHeartbeatService workerHeartbeatThread;
+  private NodeStatusUpdater nodeStatusUpdater;
 
   private AtomicBoolean stopped = new AtomicBoolean(false);
-
-  private AtomicInteger numClusterNodes = new AtomicInteger();
-
-  private ClusterResourceSummary clusterResource;
 
   private WorkerConnectionInfo connectionInfo;
 
@@ -148,65 +139,28 @@ public class TajoWorker extends CompositeService {
   public void startWorker(TajoConf systemConf, String[] args) {
     this.systemConf = systemConf;
     this.cmdArgs = args;
-    setWorkerMode(args);
     init(systemConf);
     start();
   }
 
-  private void setWorkerMode(String[] args) {
-    if(args.length < 1) {
-      queryMasterMode = systemConf.getBoolean("tajo.worker.mode.querymaster", true);
-      taskRunnerMode = systemConf.getBoolean("tajo.worker.mode.taskrunner", true);
-    } else {
-      if(WORKER_MODE_STANDBY.equals(args[0])) {
-        queryMasterMode = true;
-        taskRunnerMode = true;
-      } else if(WORKER_MODE_YARN_TASKRUNNER.equals(args[0])) {
-        yarnContainerMode = true;
-        queryMasterMode = true;
-      } else if(WORKER_MODE_YARN_QUERYMASTER.equals(args[0])) {
-        yarnContainerMode = true;
-        taskRunnerMode = true;
-      } else if(WORKER_MODE_QUERY_MASTER.equals(args[0])) {
-        yarnContainerMode = false;
-        queryMasterMode = true;
-      } else {
-        yarnContainerMode = false;
-        taskRunnerMode = true;
-      }
-    }
-    if(!queryMasterMode && !taskRunnerMode) {
-      LOG.fatal("Worker daemon exit cause no worker mode(querymaster/taskrunner) property");
-      System.exit(0);
-    }
-  }
-  
+
   @Override
   public void serviceInit(Configuration conf) throws Exception {
-    Runtime.getRuntime().addShutdownHook(new Thread(new ShutdownHook()));
+    ShutdownHookManager.get().addShutdownHook(new ShutdownHook(), SHUTDOWN_HOOK_PRIORITY);
 
-    this.systemConf = (TajoConf)conf;
+    this.systemConf = TUtil.checkTypeAndGet(conf, TajoConf.class);
     RackResolver.init(systemConf);
 
-    this.workerContext = new WorkerContext();
+    serviceTracker = ServiceTrackerFactory.get(systemConf);
+
+    this.workerContext = new TajoWorkerContext();
     this.lDirAllocator = new LocalDirAllocator(ConfVars.WORKER_TEMPORAL_DIR.varname);
 
-    String resourceManagerClassName = systemConf.getVar(ConfVars.RESOURCE_MANAGER_CLASS);
 
-    boolean randomPort = true;
-    if(resourceManagerClassName.indexOf(TajoWorkerResourceManager.class.getName()) >= 0) {
-      randomPort = false;
-    }
     int clientPort = systemConf.getSocketAddrVar(ConfVars.WORKER_CLIENT_RPC_ADDRESS).getPort();
     int peerRpcPort = systemConf.getSocketAddrVar(ConfVars.WORKER_PEER_RPC_ADDRESS).getPort();
     int qmManagerPort = systemConf.getSocketAddrVar(ConfVars.WORKER_QM_RPC_ADDRESS).getPort();
 
-    if(randomPort) {
-      clientPort = 0;
-      peerRpcPort = 0;
-      qmManagerPort = 0;
-      systemConf.setIntVar(ConfVars.PULLSERVER_PORT, 0);
-    }
 
     this.dispatcher = new AsyncDispatcher();
     addIfService(dispatcher);
@@ -221,20 +175,27 @@ public class TajoWorker extends CompositeService {
     queryMasterManagerService = new QueryMasterManagerService(workerContext, qmManagerPort);
     addIfService(queryMasterManagerService);
 
-    // taskrunner worker
-    taskRunnerManager = new TaskRunnerManager(workerContext, dispatcher);
-    addService(taskRunnerManager);
+    this.taskManager = new TaskManager(dispatcher, workerContext);
+    addService(taskManager);
 
-    workerHeartbeatThread = new WorkerHeartbeatService(workerContext);
-    addIfService(workerHeartbeatThread);
+    this.taskExecutor = new TaskExecutor(workerContext);
+    addService(taskExecutor);
+
+    AsyncDispatcher rmDispatcher = new AsyncDispatcher();
+    addService(rmDispatcher);
+    this.nodeResourceManager = new NodeResourceManager(rmDispatcher, workerContext);
+    addService(nodeResourceManager);
+
+    this.nodeStatusUpdater = new NodeStatusUpdater(workerContext);
+    addService(nodeStatusUpdater);
 
     int httpPort = 0;
-    if(taskRunnerMode && !TajoPullServerService.isStandalone()) {
+    if(!TajoPullServerService.isStandalone()) {
       pullService = new TajoPullServerService();
       addIfService(pullService);
     }
 
-    if (!systemConf.get(CommonTestingUtil.TAJO_TEST_KEY, "FALSE").equalsIgnoreCase("TRUE")) {
+    if (!systemConf.getBoolVar(ConfVars.$TEST_MODE)) {
       httpPort = initWebServer();
     }
 
@@ -255,8 +216,7 @@ public class TajoWorker extends CompositeService {
         queryMasterManagerService.getBindAddr().getPort(),
         httpPort);
 
-    LOG.info("Tajo Worker is initialized. \r\nQueryMaster=" + queryMasterMode + " TaskRunner=" + taskRunnerMode
-        + " connection :" + connectionInfo.toString());
+    LOG.info("Tajo Worker is initialized." + " connection :" + connectionInfo.toString());
 
     try {
       hashShuffleAppenderManager = new HashShuffleAppenderManager(systemConf);
@@ -270,15 +230,19 @@ public class TajoWorker extends CompositeService {
     taskHistoryWriter.init(conf);
 
     historyReader = new HistoryReader(workerContext.getWorkerName(), this.systemConf);
+
+    FunctionLoader.loadUserDefinedFunctions(systemConf, new HashMap<>());
+
+    PythonScriptEngine.initPythonScriptEngineFiles();
     
     diagnoseTajoWorker();
   }
 
   private void initWorkerMetrics() {
-    workerSystemMetrics = new TajoSystemMetrics(systemConf, "worker", workerContext.getWorkerName());
+    workerSystemMetrics = new TajoSystemMetrics(systemConf, Node.class, workerContext.getWorkerName());
     workerSystemMetrics.start();
 
-    workerSystemMetrics.register("querymaster", "runningQueries", new Gauge<Integer>() {
+    workerSystemMetrics.register(Node.QueryMaster.RUNNING_QM, new Gauge<Integer>() {
       @Override
       public Integer getValue() {
         if(queryMasterManagerService != null) {
@@ -289,11 +253,11 @@ public class TajoWorker extends CompositeService {
       }
     });
 
-    workerSystemMetrics.register("task", "runningTasks", new Gauge<Integer>() {
+    workerSystemMetrics.register(Node.Tasks.RUNNING_TASKS, new Gauge<Integer>() {
       @Override
       public Integer getValue() {
-        if(taskRunnerManager != null) {
-          return taskRunnerManager.getNumTasks();
+        if(taskExecutor != null) {
+          return taskExecutor.getRunningTasks();
         } else {
           return 0;
         }
@@ -304,10 +268,6 @@ public class TajoWorker extends CompositeService {
   private int initWebServer() {
     int httpPort = systemConf.getSocketAddrVar(ConfVars.WORKER_INFO_ADDRESS).getPort();
     try {
-      if (queryMasterMode && !taskRunnerMode) {
-        //If QueryMaster and TaskRunner run on single host, http port conflicts
-        httpPort = systemConf.getSocketAddrVar(ConfVars.WORKER_QM_INFO_ADDRESS).getPort();
-      }
       webServer = StaticHttpServer.getInstance(this, "worker", null, httpPort,
           true, null, systemConf, null);
       webServer.start();
@@ -320,7 +280,8 @@ public class TajoWorker extends CompositeService {
   }
 
   private void initCleanupService() throws IOException {
-    deletionService = new DeletionService(getMountPath().size(), 0);
+    String[] localDirs = systemConf.getVar(ConfVars.WORKER_TEMPORAL_DIR).trim().split("\\s*,\\s*");
+    deletionService = new DeletionService(localDirs.length, 0);
     if (systemConf.getBoolVar(ConfVars.WORKER_TEMPORAL_DIR_CLEANUP)) {
       getWorkerContext().cleanupTemporalDirectories();
     }
@@ -350,9 +311,10 @@ public class TajoWorker extends CompositeService {
     startJvmPauseMonitor();
 
     tajoMasterInfo = new TajoMasterInfo();
+
     if (systemConf.getBoolVar(TajoConf.ConfVars.TAJO_MASTER_HA_ENABLE)) {
-      tajoMasterInfo.setTajoMasterAddress(HAServiceUtil.getMasterUmbilicalAddress(systemConf));
-      tajoMasterInfo.setWorkerResourceTrackerAddr(HAServiceUtil.getResourceTrackerAddress(systemConf));
+      tajoMasterInfo.setTajoMasterAddress(serviceTracker.getUmbilicalAddress());
+      tajoMasterInfo.setWorkerResourceTrackerAddr(serviceTracker.getResourceTrackerAddress());
     } else {
       tajoMasterInfo.setTajoMasterAddress(NetUtils.createSocketAddr(systemConf.getVar(ConfVars
           .TAJO_MASTER_UMBILICAL_RPC_ADDRESS)));
@@ -361,7 +323,7 @@ public class TajoWorker extends CompositeService {
     }
     connectToCatalog();
 
-    if (!systemConf.get(CommonTestingUtil.TAJO_TEST_KEY, "FALSE").equalsIgnoreCase("TRUE")) {
+    if (!systemConf.getBoolVar(ConfVars.$TEST_MODE)) {
       initCleanupService();
     }
 
@@ -399,6 +361,12 @@ public class TajoWorker extends CompositeService {
       }
     }
 
+    try {
+      OldStorageManager.shutdown();
+    } catch (IOException ie) {
+      LOG.error(ie.getMessage(), ie);
+    }
+
     if(workerSystemMetrics != null) {
       workerSystemMetrics.stop();
     }
@@ -410,7 +378,43 @@ public class TajoWorker extends CompositeService {
     LOG.info("TajoWorker main thread exiting");
   }
 
-  public class WorkerContext {
+  public interface WorkerContext {
+    QueryMaster getQueryMaster();
+
+    TajoConf getConf();
+
+    ServiceTracker getServiceTracker();
+
+    QueryMasterManagerService getQueryMasterManagerService();
+
+    TaskManager getTaskManager();
+
+    TaskExecutor getTaskExecuor();
+
+    NodeResourceManager getNodeResourceManager();
+
+    CatalogService getCatalog();
+
+    WorkerConnectionInfo getConnectionInfo();
+
+    String getWorkerName();
+
+    LocalDirAllocator getLocalDirAllocator();
+
+    TajoSystemMetrics getMetrics();
+
+    HashShuffleAppenderManager getHashShuffleAppenderManager();
+
+    HistoryWriter getTaskHistoryWriter();
+
+    HistoryReader getHistoryReader();
+
+    void cleanup(String strPath);
+
+    void cleanupTemporalDirectories();
+  }
+
+  class TajoWorkerContext implements WorkerContext {
     public QueryMaster getQueryMaster() {
       if (queryMasterManagerService == null) {
         return null;
@@ -422,20 +426,27 @@ public class TajoWorker extends CompositeService {
       return systemConf;
     }
 
-    public TajoWorkerManagerService getTajoWorkerManagerService() {
-      return tajoWorkerManagerService;
+    public ServiceTracker getServiceTracker() {
+      return serviceTracker;
     }
 
     public QueryMasterManagerService getQueryMasterManagerService() {
       return queryMasterManagerService;
     }
 
-    public TajoWorkerClientService getTajoWorkerClientService() {
-      return tajoWorkerClientService;
+    @Override
+    public TaskManager getTaskManager(){
+      return taskManager;
     }
 
-    public TaskRunnerManager getTaskRunnerManager() {
-      return taskRunnerManager;
+    @Override
+    public TaskExecutor getTaskExecuor() {
+      return taskExecutor;
+    }
+
+    @Override
+    public NodeResourceManager getNodeResourceManager() {
+      return nodeResourceManager;
     }
 
     public CatalogService getCatalog() {
@@ -451,25 +462,14 @@ public class TajoWorker extends CompositeService {
     }
 
     public String getWorkerName() {
-      if (queryMasterMode) {
-        return getQueryMasterManagerService().getHostAndPort();
-      } else {
-        return connectionInfo.getHostAndPeerRpcPort();
-      }
-    }
-
-    public void stopWorker(boolean force) {
-      stop();
-      if (force) {
-        System.exit(0);
-      }
+      return connectionInfo.getHostAndPeerRpcPort();
     }
 
     public LocalDirAllocator getLocalDirAllocator(){
       return lDirAllocator;
     }
 
-    protected void cleanup(String strPath) {
+    public void cleanup(String strPath) {
       if (deletionService == null) return;
 
       LocalDirAllocator lDirAllocator = new LocalDirAllocator(ConfVars.WORKER_TEMPORAL_DIR.varname);
@@ -485,7 +485,7 @@ public class TajoWorker extends CompositeService {
       }
     }
 
-    protected void cleanupTemporalDirectories() {
+    public void cleanupTemporalDirectories() {
       if (deletionService == null) return;
 
       LocalDirAllocator lDirAllocator = new LocalDirAllocator(ConfVars.WORKER_TEMPORAL_DIR.varname);
@@ -496,7 +496,7 @@ public class TajoWorker extends CompositeService {
         for (Path path : iter) {
           PathData[] items = PathData.expandAsGlob(localFS.makeQualified(new Path(path, "*")).toString(), systemConf);
 
-          ArrayList<Path> paths = new ArrayList<Path>();
+          ArrayList<Path> paths = new ArrayList<>();
           for (PathData pd : items) {
             paths.add(pd.path);
           }
@@ -509,60 +509,7 @@ public class TajoWorker extends CompositeService {
       }
     }
 
-    @Deprecated
-    public boolean isYarnContainerMode() {
-      return yarnContainerMode;
-    }
-
-    public void setNumClusterNodes(int numClusterNodes) {
-      TajoWorker.this.numClusterNodes.set(numClusterNodes);
-    }
-
-    public int getNumClusterNodes() {
-      return TajoWorker.this.numClusterNodes.get();
-    }
-
-    public void setClusterResource(ClusterResourceSummary clusterResource) {
-      synchronized (numClusterNodes) {
-        TajoWorker.this.clusterResource = clusterResource;
-      }
-    }
-
-    public ClusterResourceSummary getClusterResource() {
-      synchronized (numClusterNodes) {
-        return TajoWorker.this.clusterResource;
-      }
-    }
-
-    public InetSocketAddress getTajoMasterAddress() {
-      return tajoMasterInfo.getTajoMasterAddress();
-    }
-
-    public void setTajoMasterAddress(InetSocketAddress tajoMasterAddress) {
-      tajoMasterInfo.setTajoMasterAddress(tajoMasterAddress);
-    }
-
-    public InetSocketAddress getResourceTrackerAddress() {
-      return tajoMasterInfo.getWorkerResourceTrackerAddr();
-    }
-
-    public void setWorkerResourceTrackerAddr(InetSocketAddress workerResourceTrackerAddr) {
-      tajoMasterInfo.setWorkerResourceTrackerAddr(workerResourceTrackerAddr);
-    }
-
-    public int getPeerRpcPort() {
-      return getTajoWorkerManagerService() == null ? 0 : getTajoWorkerManagerService().getBindAddr().getPort();
-    }
-
-    public boolean isQueryMasterMode() {
-      return queryMasterMode;
-    }
-
-    public boolean isTaskRunnerMode() {
-      return taskRunnerMode;
-    }
-
-    public TajoSystemMetrics getWorkerSystemMetrics() {
+    public TajoSystemMetrics getMetrics() {
       return workerSystemMetrics;
     }
 
@@ -622,7 +569,7 @@ public class TajoWorker extends CompositeService {
         LOG.info("TajoWorker received SIGINT Signal");
         LOG.info("============================================");
         stop();
-        RpcChannelFactory.shutdown();
+        RpcClientManager.shutdown();
       }
     }
   }
@@ -668,41 +615,8 @@ public class TajoWorker extends CompositeService {
     }
   }
 
-  public static List<File> getMountPath() throws IOException {
-    BufferedReader mountOutput = null;
-    Process mountProcess = null;
-    try {
-      mountProcess = Runtime.getRuntime ().exec("mount");
-      mountOutput = new BufferedReader(new InputStreamReader(mountProcess.getInputStream()));
-      List<File> mountPaths = new ArrayList<File>();
-      while (true) {
-        String line = mountOutput.readLine();
-        if (line == null) {
-          break;
-        }
-
-        int indexStart = line.indexOf(" on /");
-        int indexEnd = line.indexOf(" ", indexStart + 4);
-
-        mountPaths.add(new File(line.substring (indexStart + 4, indexEnd)));
-      }
-      return mountPaths;
-    } catch (IOException e) {
-      e.printStackTrace();
-      throw e;
-    } finally {
-      if(mountOutput != null) {
-        mountOutput.close();
-      }
-      if (mountProcess != null) {
-        org.apache.commons.io.IOUtils.closeQuietly(mountProcess.getInputStream());
-        org.apache.commons.io.IOUtils.closeQuietly(mountProcess.getOutputStream());
-        org.apache.commons.io.IOUtils.closeQuietly(mountProcess.getErrorStream());
-      }
-    }
-  }
-
   public static void main(String[] args) throws Exception {
+    Thread.setDefaultUncaughtExceptionHandler(new TajoUncaughtExceptionHandler());
     StringUtils.startupShutdownMessage(TajoWorker.class, args, LOG);
 
     TajoConf tajoConf = new TajoConf();

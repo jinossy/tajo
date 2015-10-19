@@ -24,13 +24,16 @@ import io.netty.util.CharsetUtil;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.tajo.TajoConstants;
 import org.apache.tajo.catalog.Column;
+import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.common.TajoDataTypes;
-import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.*;
 import org.apache.tajo.datum.protobuf.ProtobufJsonFormat;
+import org.apache.tajo.exception.ValueTooLongForTypeCharactersException;
 import org.apache.tajo.storage.FieldSerializerDeserializer;
 import org.apache.tajo.storage.StorageConstants;
+import org.apache.tajo.storage.Tuple;
+import org.apache.tajo.util.Bytes;
 import org.apache.tajo.util.NumberUtil;
 
 import java.io.IOException;
@@ -39,13 +42,15 @@ import java.nio.charset.CharsetDecoder;
 import java.util.TimeZone;
 
 public class TextFieldSerializerDeserializer implements FieldSerializerDeserializer {
-  public static final byte[] trueBytes = "true".getBytes();
-  public static final byte[] falseBytes = "false".getBytes();
+  private static final byte[] trueBytes = "true".getBytes(Bytes.UTF8_CHARSET);
+  private static final byte[] falseBytes = "false".getBytes(Bytes.UTF8_CHARSET);
   private static ProtobufJsonFormat protobufJsonFormat = ProtobufJsonFormat.getInstance();
   private final CharsetDecoder decoder = CharsetUtil.getDecoder(CharsetUtil.UTF_8);
 
   private final boolean hasTimezone;
   private final TimeZone timezone;
+
+  private Schema schema;
 
   public TextFieldSerializerDeserializer(TableMeta meta) {
     hasTimezone = meta.containsOption(StorageConstants.TIMEZONE);
@@ -61,13 +66,19 @@ public class TextFieldSerializerDeserializer implements FieldSerializerDeseriali
   }
 
   @Override
-  public int serialize(OutputStream out, Datum datum, Column col, int columnIndex, byte[] nullChars)
+  public void init(Schema schema) {
+    this.schema = schema;
+  }
+
+  @Override
+  public int serialize(int columnIndex, Tuple tuple, OutputStream out, byte[] nullChars)
       throws IOException {
     byte[] bytes;
     int length = 0;
+    Column col = schema.getColumn(columnIndex);
     TajoDataTypes.DataType dataType = col.getDataType();
 
-    if (datum == null || datum instanceof NullDatum) {
+    if (tuple.isBlankOrNull(columnIndex)) {
       switch (dataType.getType()) {
         case CHAR:
         case TEXT:
@@ -82,12 +93,17 @@ public class TextFieldSerializerDeserializer implements FieldSerializerDeseriali
 
     switch (dataType.getType()) {
       case BOOLEAN:
-        out.write(datum.asBool() ? trueBytes : falseBytes);
+        out.write(tuple.getBool(columnIndex) ? trueBytes : falseBytes);
         length = trueBytes.length;
         break;
       case CHAR:
-        byte[] pad = new byte[dataType.getLength() - datum.size()];
-        bytes = datum.asTextBytes();
+        int size = dataType.getLength() - tuple.size(columnIndex);
+        if (size < 0){
+          throw new ValueTooLongForTypeCharactersException(dataType.getLength());
+        }
+
+        byte[] pad = new byte[size];
+        bytes = tuple.getBytes(columnIndex);
         out.write(bytes);
         out.write(pad);
         length = bytes.length + pad.length;
@@ -102,37 +118,37 @@ public class TextFieldSerializerDeserializer implements FieldSerializerDeseriali
       case INET4:
       case DATE:
       case INTERVAL:
-        bytes = datum.asTextBytes();
+        bytes = tuple.getTextBytes(columnIndex);
         length = bytes.length;
         out.write(bytes);
         break;
       case TIME:
         if (hasTimezone) {
-          bytes = ((TimeDatum) datum).asChars(timezone, true).getBytes();
+          bytes = TimeDatum.asChars(tuple.getTimeDate(columnIndex), timezone, false).getBytes(Bytes.UTF8_CHARSET);
         } else {
-          bytes = datum.asTextBytes();
+          bytes = tuple.getTextBytes(columnIndex);
         }
         length = bytes.length;
         out.write(bytes);
         break;
       case TIMESTAMP:
         if (hasTimezone) {
-          bytes = ((TimestampDatum) datum).asChars(timezone, true).getBytes();
+          bytes = TimestampDatum.asChars(tuple.getTimeDate(columnIndex), timezone, false).getBytes(Bytes.UTF8_CHARSET);
         } else {
-          bytes = datum.asTextBytes();
+          bytes = tuple.getTextBytes(columnIndex);
         }
         length = bytes.length;
         out.write(bytes);
         break;
       case INET6:
       case BLOB:
-        bytes = Base64.encodeBase64(datum.asByteArray(), false);
+        bytes = Base64.encodeBase64(tuple.getBytes(columnIndex), false);
         length = bytes.length;
         out.write(bytes, 0, length);
         break;
       case PROTOBUF:
-        ProtobufDatum protobuf = (ProtobufDatum) datum;
-        byte[] protoBytes = protobufJsonFormat.printToString(protobuf.get()).getBytes();
+        ProtobufDatum protobuf = (ProtobufDatum) tuple.getProtobufDatum(columnIndex);
+        byte[] protoBytes = protobufJsonFormat.printToString(protobuf.get()).getBytes(Bytes.UTF8_CHARSET);
         length = protoBytes.length;
         out.write(protoBytes, 0, protoBytes.length);
         break;
@@ -144,8 +160,10 @@ public class TextFieldSerializerDeserializer implements FieldSerializerDeseriali
   }
 
   @Override
-  public Datum deserialize(ByteBuf buf, Column col, int columnIndex, ByteBuf nullChars) throws IOException {
+  public Datum deserialize(int columnIndex, ByteBuf buf, ByteBuf nullChars) throws IOException {
     Datum datum;
+
+    Column col = schema.getColumn(columnIndex);
     TajoDataTypes.Type type = col.getDataType().getType();
     boolean nullField;
     if (type == TajoDataTypes.Type.TEXT || type == TajoDataTypes.Type.CHAR) {
@@ -226,7 +244,7 @@ public class TextFieldSerializerDeserializer implements FieldSerializerDeseriali
             byte[] bytes = new byte[buf.readableBytes()];
             buf.readBytes(bytes);
             protobufJsonFormat.merge(bytes, builder);
-            datum = factory.createDatum(builder.build());
+            datum = ProtobufDatumFactory.createDatum(builder.build());
           } catch (IOException e) {
             e.printStackTrace();
             throw new RuntimeException(e);

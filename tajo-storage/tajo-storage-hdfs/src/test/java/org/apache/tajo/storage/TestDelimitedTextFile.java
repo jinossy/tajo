@@ -19,6 +19,8 @@
 package org.apache.tajo.storage;
 
 import com.google.common.base.Preconditions;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -26,7 +28,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
@@ -42,10 +43,11 @@ import java.net.URL;
 import static org.junit.Assert.*;
 
 public class TestDelimitedTextFile {
+  private static final Log LOG = LogFactory.getLog(TestDelimitedTextFile.class);
 
   private static Schema schema = new Schema();
 
-  private static Tuple baseTuple = new VTuple(10);
+  private static Tuple baseTuple;
 
   static {
     schema.addColumn("col1", Type.BOOLEAN);
@@ -59,7 +61,7 @@ public class TestDelimitedTextFile {
     schema.addColumn("col9", Type.BLOB);
     schema.addColumn("col10", Type.INET4);
 
-    baseTuple.put(new Datum[] {
+    baseTuple = new VTuple(new Datum[] {
         DatumFactory.createBool(true),                // 0
         DatumFactory.createChar("hyunsik"),           // 1
         DatumFactory.createInt2((short) 17),          // 2
@@ -101,10 +103,10 @@ public class TestDelimitedTextFile {
   public void testIgnoreAllErrors() throws IOException {
     TajoConf conf = new TajoConf();
 
-    TableMeta meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.JSON);
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
     meta.putOption(StorageUtil.TEXT_ERROR_TOLERANCE_MAXNUM, "-1");
     FileFragment fragment =  getFileFragment("testErrorTolerance1.json");
-    Scanner scanner =  StorageManager.getFileStorageManager(conf).getScanner(meta, schema, fragment);
+    Scanner scanner =  TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
     scanner.init();
 
     Tuple tuple;
@@ -123,10 +125,10 @@ public class TestDelimitedTextFile {
 
     TajoConf conf = new TajoConf();
 
-    TableMeta meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.JSON);
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
     meta.putOption(StorageUtil.TEXT_ERROR_TOLERANCE_MAXNUM, "1");
     FileFragment fragment =  getFileFragment("testErrorTolerance1.json");
-    Scanner scanner =  StorageManager.getFileStorageManager(conf).getScanner(meta, schema, fragment);
+    Scanner scanner =  TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
     scanner.init();
 
     assertNotNull(scanner.next());
@@ -134,7 +136,7 @@ public class TestDelimitedTextFile {
     try {
       scanner.next();
     } catch (IOException ioe) {
-      System.out.println(ioe);
+      LOG.error(ioe);
       return;
     } finally {
       scanner.close();
@@ -145,10 +147,10 @@ public class TestDelimitedTextFile {
   @Test
   public void testNoErrorTolerance() throws IOException {
     TajoConf conf = new TajoConf();
-    TableMeta meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.JSON);
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
     meta.putOption(StorageUtil.TEXT_ERROR_TOLERANCE_MAXNUM, "0");
     FileFragment fragment =  getFileFragment("testErrorTolerance2.json");
-    Scanner scanner =  StorageManager.getFileStorageManager(conf).getScanner(meta, schema, fragment);
+    Scanner scanner =  TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
     scanner.init();
 
     try {
@@ -164,16 +166,69 @@ public class TestDelimitedTextFile {
   @Test
   public void testIgnoreTruncatedValueErrorTolerance() throws IOException {
     TajoConf conf = new TajoConf();
-    TableMeta meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.JSON);
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
     meta.putOption(StorageUtil.TEXT_ERROR_TOLERANCE_MAXNUM, "1");
     FileFragment fragment = getFileFragment("testErrorTolerance3.json");
-    Scanner scanner = StorageManager.getFileStorageManager(conf).getScanner(meta, schema, fragment);
+    Scanner scanner = TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
     scanner.init();
 
     try {
       Tuple tuple = scanner.next();
       assertNull(tuple);
     } finally {
+      scanner.close();
+    }
+  }
+
+  @Test
+  public void testSkippingHeaderWithJson() throws IOException {
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
+    meta.putOption(StorageConstants.TEXT_SKIP_HEADER_LINE, "2");
+    FileFragment fragment = getFileFragment("testNormal.json");
+    Scanner scanner = TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
+
+    scanner.init();
+
+    int lines = 0;
+
+    try {
+      while (true) {
+        Tuple tuple = scanner.next();
+        if (tuple != null) {
+          assertEquals(19+lines, tuple.getInt2(2));
+          lines++;
+        }
+        else break;
+      }
+    } finally {
+      assertEquals(4, lines);
+      scanner.close();
+    }
+  }
+
+  @Test
+  public void testSkippingHeaderWithText() throws IOException {
+    TableMeta meta = CatalogUtil.newTableMeta("TEXT");
+    meta.putOption(StorageConstants.TEXT_SKIP_HEADER_LINE, "1");
+    meta.putOption(StorageConstants.TEXT_DELIMITER, ",");
+    FileFragment fragment = getFileFragment("testSkip.txt");
+    Scanner scanner = TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
+    
+    scanner.init();
+
+    int lines = 0;
+
+    try {
+      while (true) {
+        Tuple tuple = scanner.next();
+        if (tuple != null) {
+          assertEquals(17+lines, tuple.getInt2(2));
+          lines++;
+        }
+        else break;
+      }
+    } finally {
+      assertEquals(6, lines);
       scanner.close();
     }
   }

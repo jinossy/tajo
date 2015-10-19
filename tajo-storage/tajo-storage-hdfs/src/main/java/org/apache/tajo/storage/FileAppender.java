@@ -51,16 +51,17 @@ public abstract class FileAppender implements Appender {
     this.workDir = workDir;
     this.taskAttemptId = taskAttemptId;
 
-    try {
-      if (taskAttemptId != null) {
-        this.path = ((FileStorageManager)StorageManager.getFileStorageManager((TajoConf) conf))
-            .getAppenderFilePath(taskAttemptId, workDir);
-      } else {
-        this.path = workDir;
+
+    if (taskAttemptId != null) {
+      if (!(conf instanceof TajoConf)) {
+        throw new IllegalArgumentException("Configuration must be an instance of TajoConf");
       }
-    } catch (IOException e) {
-      LOG.error(e.getMessage(), e);
-      throw new IllegalStateException("Error while opeining FileAppender: " + e.getMessage(), e);
+
+      FileTablespace space = TablespaceManager.get(workDir.toUri());
+      this.path = space.getAppenderFilePath(taskAttemptId, workDir);
+
+    } else {
+      this.path = workDir;
     }
   }
 

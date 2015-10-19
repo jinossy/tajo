@@ -22,349 +22,339 @@ import com.google.protobuf.ServiceException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.annotation.Nullable;
-import org.apache.tajo.catalog.CatalogProtocol.CatalogProtocolService;
-import org.apache.tajo.catalog.exception.NoSuchFunctionException;
+import org.apache.tajo.catalog.CatalogProtocol.CatalogProtocolService.BlockingInterface;
+import org.apache.tajo.catalog.CatalogProtocol.*;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
-import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.proto.CatalogProtos.*;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.ha.HAServiceUtil;
-import org.apache.tajo.rpc.NettyClientBase;
-import org.apache.tajo.rpc.RpcConnectionPool;
-import org.apache.tajo.rpc.ServerCallable;
-import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
+import org.apache.tajo.exception.*;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.NullProto;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.ReturnState;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.StringListResponse;
 import org.apache.tajo.util.ProtoUtil;
+import org.apache.tajo.util.TUtil;
 
-import java.net.InetSocketAddress;
+import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+import static org.apache.tajo.catalog.CatalogUtil.buildTableIdentifier;
+import static org.apache.tajo.error.Errors.ResultCode.*;
+import static org.apache.tajo.exception.ExceptionUtil.throwsIfThisError;
+import static org.apache.tajo.exception.ReturnStateUtil.*;
+
 /**
  * CatalogClient provides a client API to access the catalog server.
  */
-public abstract class AbstractCatalogClient implements CatalogService {
-  private final Log LOG = LogFactory.getLog(AbstractCatalogClient.class);
+public abstract class AbstractCatalogClient implements CatalogService, Closeable {
+  protected final Log LOG = LogFactory.getLog(AbstractCatalogClient.class);
 
-  protected RpcConnectionPool pool;
-  protected InetSocketAddress catalogServerAddr;
   protected TajoConf conf;
 
-  abstract CatalogProtocolService.BlockingInterface getStub(NettyClientBase client);
-
-  public AbstractCatalogClient(TajoConf conf, InetSocketAddress catalogServerAddr) {
-    this.pool = RpcConnectionPool.getPool();
-    this.catalogServerAddr = catalogServerAddr;
+  public AbstractCatalogClient(TajoConf conf) {
     this.conf = conf;
   }
 
-  private InetSocketAddress getCatalogServerAddr() {
-    if (catalogServerAddr == null) {
-      return null;
-    } else {
-      if (!conf.getBoolVar(TajoConf.ConfVars.TAJO_MASTER_HA_ENABLE)) {
-        return catalogServerAddr;
-      } else {
-        if (!HAServiceUtil.isMasterAlive(catalogServerAddr, conf)) {
-          return HAServiceUtil.getCatalogAddress(conf);
-        } else {
-          return catalogServerAddr;
-        }
+  abstract BlockingInterface getStub() throws ServiceException;
+
+  @Override
+  public final void createTablespace(final String tablespaceName, final String tablespaceUri)
+      throws DuplicateTablespaceException {
+
+    try {
+      final BlockingInterface stub = getStub();
+      final CreateTablespaceRequest request = CreateTablespaceRequest.newBuilder()
+          .setTablespaceName(tablespaceName)
+          .setTablespaceUri(tablespaceUri)
+          .build();
+      final ReturnState state = stub.createTablespace(null, request);
+
+      throwsIfThisError(state, DuplicateTablespaceException.class);
+      ensureOk(state);
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public final void dropTablespace(final String tablespaceName)
+      throws UndefinedTablespaceException, InsufficientPrivilegeException {
+
+    try {
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.dropTablespace(null, ProtoUtil.convertString(tablespaceName));
+
+      throwsIfThisError(state, UndefinedTablespaceException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      ensureOk(state);
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public final boolean existTablespace(final String tablespaceName) {
+
+    try {
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.existTablespace(null, ProtoUtil.convertString(tablespaceName));
+
+      if (isThisError(state, UNDEFINED_TABLESPACE)) {
+        return false;
       }
-    }
-  }
+      ensureOk(state);
+      return true;
 
-  @Override
-  public final Boolean createTablespace(final String tablespaceName, final String tablespaceUri) {
-    try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-
-          CreateTablespaceRequest.Builder builder = CreateTablespaceRequest.newBuilder();
-          builder.setTablespaceName(tablespaceName);
-          builder.setTablespaceUri(tablespaceUri);
-          return stub.createTablespace(null, builder.build()).getValue();
-        }
-      }.withRetries();
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return Boolean.FALSE;
-    }
-  }
-
-  @Override
-  public final Boolean dropTablespace(final String tablespaceName) {
-    try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.dropTablespace(null, ProtoUtil.convertString(tablespaceName)).getValue();
-        }
-      }.withRetries();
-    } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return Boolean.FALSE;
-    }
-  }
-
-  @Override
-  public final Boolean existTablespace(final String tablespaceName) {
-    try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.existTablespace(null, ProtoUtil.convertString(tablespaceName)).getValue();
-        }
-      }.withRetries();
-    } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return Boolean.FALSE;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public final Collection<String> getAllTablespaceNames() {
+
     try {
-      return new ServerCallable<Collection<String>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Collection<String> call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          PrimitiveProtos.StringListProto response = stub.getAllTablespaceNames(null, ProtoUtil.NULL_PROTO);
-          return ProtoUtil.convertStrings(response);
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final StringListResponse response = stub.getAllTablespaceNames(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getValuesList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
-  
+
   @Override
   public List<TablespaceProto> getAllTablespaces() {
-    try {
-      return new ServerCallable<List<TablespaceProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
 
-        @Override
-        public List<TablespaceProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          CatalogProtos.GetTablespacesProto response = stub.getAllTablespaces(null, ProtoUtil.NULL_PROTO);
-          return response.getTablespaceList();
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final GetTablespaceListResponse response = stub.getAllTablespaces(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getTablespaceList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public TablespaceProto getTablespace(final String tablespaceName) {
+  public TablespaceProto getTablespace(final String tablespaceName) throws UndefinedTablespaceException {
+
     try {
-      return new ServerCallable<TablespaceProto>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public TablespaceProto call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.getTablespace(null, ProtoUtil.convertString(tablespaceName));
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final GetTablespaceResponse response = stub.getTablespace(null, ProtoUtil.convertString(tablespaceName));
+
+      throwsIfThisError(response.getState(), UndefinedTablespaceException.class);
+      ensureOk(response.getState());
+      return response.getTablespace();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public Boolean alterTablespace(final AlterTablespaceProto alterTablespace) {
+  public void alterTablespace(final AlterTablespaceProto alterTablespace) throws UndefinedTablespaceException {
+
     try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.alterTablespace(null, alterTablespace).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.alterTablespace(null, alterTablespace);
+
+      throwsIfThisError(state, UndefinedTablespaceException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final Boolean createDatabase(final String databaseName, @Nullable final String tablespaceName) {
-    try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
+  public final void createDatabase(final String databaseName, @Nullable final String tablespaceName)
+      throws DuplicateDatabaseException {
 
-          CreateDatabaseRequest.Builder builder = CreateDatabaseRequest.newBuilder();
-          builder.setDatabaseName(databaseName);
-          if (tablespaceName != null) {
-            builder.setTablespaceName(tablespaceName);
-          }
-          return stub.createDatabase(null, builder.build()).getValue();
-        }
-      }.withRetries();
+    try {
+
+      final BlockingInterface stub = getStub();
+      final CreateDatabaseRequest.Builder builder = CreateDatabaseRequest.newBuilder();
+      builder.setDatabaseName(databaseName);
+      if (tablespaceName != null) {
+        builder.setTablespaceName(tablespaceName);
+      }
+      final ReturnState state = stub.createDatabase(null, builder.build());
+
+      throwsIfThisError(state, DuplicateDatabaseException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return Boolean.FALSE;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final Boolean dropDatabase(final String databaseName) {
+  public final void dropDatabase(final String databaseName)
+      throws UndefinedDatabaseException, InsufficientPrivilegeException {
+
     try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.dropDatabase(null, ProtoUtil.convertString(databaseName)).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.dropDatabase(null, ProtoUtil.convertString(databaseName));
+
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return Boolean.FALSE;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final Boolean existDatabase(final String databaseName) {
+  public final boolean existDatabase(final String databaseName) {
+
     try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.existDatabase(null, ProtoUtil.convertString(databaseName)).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.existDatabase(null, ProtoUtil.convertString(databaseName));
+
+      if (isThisError(state, UNDEFINED_DATABASE)) {
+        return false;
+      }
+      ensureOk(state);
+      return true;
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return Boolean.FALSE;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public final Collection<String> getAllDatabaseNames() {
+
     try {
-      return new ServerCallable<Collection<String>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Collection<String> call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          PrimitiveProtos.StringListProto response = stub.getAllDatabaseNames(null, ProtoUtil.NULL_PROTO);
-          return ProtoUtil.convertStrings(response);
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final StringListResponse response = stub.getAllDatabaseNames(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getValuesList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
-  
+
   @Override
   public List<DatabaseProto> getAllDatabases() {
-    try {
-      return new ServerCallable<List<DatabaseProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
 
-        @Override
-        public List<DatabaseProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetDatabasesProto response = stub.getAllDatabases(null, ProtoUtil.NULL_PROTO);
-          return response.getDatabaseList();
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final GetDatabasesResponse response = stub.getAllDatabases(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getDatabaseList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final TableDesc getTableDesc(final String databaseName, final String tableName) {
-    try {
-      return new ServerCallable<TableDesc>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public TableDesc call(NettyClientBase client) throws ServiceException {
-          TableIdentifierProto.Builder builder = TableIdentifierProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setTableName(tableName);
+  public final TableDesc getTableDesc(final String databaseName, final String tableName)
+      throws UndefinedTableException {
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return CatalogUtil.newTableDesc(stub.getTableDesc(null, builder.build()));
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, tableName);
+      final TableResponse response = stub.getTableDesc(null, request);
+
+      throwsIfThisError(response.getState(), UndefinedTableException.class);
+      ensureOk(response.getState());
+      return CatalogUtil.newTableDesc(response.getTable());
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public TableDesc getTableDesc(String qualifiedName) {
-    String [] splitted = CatalogUtil.splitFQTableName(qualifiedName);
+  public TableDesc getTableDesc(String qualifiedName) throws UndefinedTableException {
+    String[] splitted = CatalogUtil.splitFQTableName(qualifiedName);
     return getTableDesc(splitted[0], splitted[1]);
   }
-  
+
   @Override
   public List<TableDescriptorProto> getAllTables() {
-    try {
-      return new ServerCallable<List<TableDescriptorProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
 
-        @Override
-        public List<TableDescriptorProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetTablesProto response = stub.getAllTables(null, ProtoUtil.NULL_PROTO);
-          return response.getTableList();
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final GetTablesResponse response = stub.getAllTables(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getTableList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
-  
+
   @Override
   public List<TableOptionProto> getAllTableOptions() {
-    try {
-      return new ServerCallable<List<TableOptionProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
 
-        @Override
-        public List<TableOptionProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetTableOptionsProto response = stub.getAllTableOptions(null, ProtoUtil.NULL_PROTO);
-          return response.getTableOptionList();
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final GetTablePropertiesResponse response = stub.getAllTableProperties(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getPropertiesList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
-  
+
   @Override
   public List<TableStatsProto> getAllTableStats() {
-    try {
-      return new ServerCallable<List<TableStatsProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
 
-        @Override
-        public List<TableStatsProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetTableStatsProto response = stub.getAllTableStats(null, ProtoUtil.NULL_PROTO);
-          return response.getStatList();
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final GetTableStatsResponse response = stub.getAllTableStats(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getStatsList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
-  
+
   @Override
   public List<ColumnProto> getAllColumns() {
-    try {
-      return new ServerCallable<List<ColumnProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
 
-        @Override
-        public List<ColumnProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetColumnsProto response = stub.getAllColumns(null, ProtoUtil.NULL_PROTO);
-          return response.getColumnList();
-        }
-      }.withRetries();
+    try {
+      final BlockingInterface stub = getStub();
+      final GetColumnsResponse response = stub.getAllColumns(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getColumnList();
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public List<IndexDescProto> getAllIndexes() {
+    try {
+      final BlockingInterface stub = getStub();
+      final IndexListResponse response = stub.getAllIndexes(null, ProtoUtil.NULL_PROTO);
+
+      ensureOk(response.getState());
+      return response.getIndexDescList();
+
     } catch (ServiceException e) {
       LOG.error(e.getMessage(), e);
       return null;
@@ -372,142 +362,257 @@ public abstract class AbstractCatalogClient implements CatalogService {
   }
 
   @Override
-  public final PartitionMethodDesc getPartitionMethod(final String databaseName, final String tableName) {
+  public final PartitionMethodDesc getPartitionMethod(final String databaseName, final String tableName)
+      throws UndefinedPartitionMethodException, UndefinedDatabaseException, UndefinedTableException {
+
     try {
-      return new ServerCallable<PartitionMethodDesc>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public PartitionMethodDesc call(NettyClientBase client) throws ServiceException {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, tableName);
+      final GetPartitionMethodResponse response = stub.getPartitionMethodByTableName(null, request);
 
-          TableIdentifierProto.Builder builder = TableIdentifierProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setTableName(tableName);
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return CatalogUtil.newPartitionMethodDesc(stub.getPartitionMethodByTableName(null,  builder.build()));
-        }
-      }.withRetries();
+      throwsIfThisError(response.getState(), UndefinedPartitionMethodException.class);
+      throwsIfThisError(response.getState(), UndefinedDatabaseException.class);
+      throwsIfThisError(response.getState(), UndefinedTableException.class);
+      ensureOk(response.getState());
+      return CatalogUtil.newPartitionMethodDesc(response.getPartition());
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public final boolean existPartitionMethod(final String databaseName, final String tableName)
+      throws UndefinedDatabaseException, UndefinedTableException {
+
+    try {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, tableName);
+      final ReturnState state = stub.existPartitionMethod(null, request);
+
+      if (isThisError(state, UNDEFINED_PARTITION_METHOD)) {
+        return false;
+      }
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, UndefinedTableException.class);
+      ensureOk(state);
+      return true;
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public boolean existPartitions(String databaseName, String tableName) throws UndefinedDatabaseException,
+    UndefinedTableException, UndefinedPartitionMethodException {
+
+    try {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, tableName);
+      final ReturnState state = stub.existsPartitions(null, request);
+
+      if (isThisError(state, UNDEFINED_PARTITIONS)) {
+        return false;
+      }
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, UndefinedTableException.class);
+      throwsIfThisError(state, UndefinedPartitionMethodException.class);
+      ensureOk(state);
+      return true;
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public final PartitionDescProto getPartition(final String databaseName, final String tableName,
+                                               final String partitionName)
+      throws UndefinedDatabaseException, UndefinedTableException, UndefinedPartitionException,
+      UndefinedPartitionMethodException {
+
+    try {
+      final BlockingInterface stub = getStub();
+      final PartitionIdentifierProto request = PartitionIdentifierProto.newBuilder()
+          .setDatabaseName(databaseName)
+          .setTableName(tableName)
+          .setPartitionName(partitionName)
+          .build();
+      final GetPartitionDescResponse response = stub.getPartitionByPartitionName(null, request);
+
+      throwsIfThisError(response.getState(), UndefinedDatabaseException.class);
+      throwsIfThisError(response.getState(), UndefinedTableException.class);
+      throwsIfThisError(response.getState(), UndefinedPartitionMethodException.class);
+      throwsIfThisError(response.getState(), UndefinedPartitionException.class);
+      ensureOk(response.getState());
+      return response.getPartition();
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public final List<PartitionDescProto> getPartitionsOfTable(final String databaseName, final String tableName) throws
+    UndefinedDatabaseException, UndefinedTableException, UndefinedPartitionMethodException {
+    try {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, tableName);
+      final GetPartitionsResponse response = stub.getPartitionsByTableName(null, request);
+
+      throwsIfThisError(response.getState(), UndefinedDatabaseException.class);
+      throwsIfThisError(response.getState(), UndefinedTableException.class);
+      throwsIfThisError(response.getState(), UndefinedPartitionMethodException.class);
+      ensureOk(response.getState());
+      return response.getPartitionList();
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public List<PartitionDescProto> getPartitionsByAlgebra(PartitionsByAlgebraProto request) throws
+    UndefinedDatabaseException, UndefinedTableException, UndefinedPartitionMethodException,
+    UnsupportedException {
+    try {
+      final BlockingInterface stub = getStub();
+      GetPartitionsResponse response = stub.getPartitionsByAlgebra(null, request);
+
+      throwsIfThisError(response.getState(), UndefinedDatabaseException.class);
+      throwsIfThisError(response.getState(), UndefinedTableException.class);
+      throwsIfThisError(response.getState(), UndefinedPartitionMethodException.class);
+      throwsIfThisError(response.getState(), UnsupportedException.class);
+      ensureOk(response.getState());
+      return response.getPartitionList();
     } catch (ServiceException e) {
       LOG.error(e.getMessage(), e);
       return null;
     }
   }
 
-  @Override
-  public final boolean existPartitionMethod(final String databaseName, final String tableName) {
-    try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-
-          TableIdentifierProto.Builder builder = TableIdentifierProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setTableName(tableName);
-
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.existPartitionMethod(null, builder.build()).getValue();
-        }
-      }.withRetries();
-    } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
-    }
-  }
-  
   @Override
   public List<TablePartitionProto> getAllPartitions() {
     try {
-      return new ServerCallable<List<TablePartitionProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
+      final BlockingInterface stub = getStub();
+      final GetTablePartitionsResponse response = stub.getAllPartitions(null, ProtoUtil.NULL_PROTO);
 
-        @Override
-        public List<TablePartitionProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetTablePartitionsProto response = stub.getAllPartitions(null, ProtoUtil.NULL_PROTO);
-          return response.getPartList();
-        }
-      }.withRetries();
+      ensureOk(response.getState());
+      return response.getPartList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public void addPartitions(String databaseName, String tableName, List<PartitionDescProto> partitions,
+                               boolean ifNotExists)
+      throws UndefinedDatabaseException, UndefinedTableException, DuplicatePartitionException,
+      UndefinedPartitionMethodException {
+
+    try {
+      final BlockingInterface stub = getStub();
+
+      final AddPartitionsProto.Builder builder = AddPartitionsProto.newBuilder();
+      final TableIdentifierProto.Builder identifier = TableIdentifierProto.newBuilder()
+          .setDatabaseName(databaseName)
+          .setTableName(tableName);
+      builder.setTableIdentifier(identifier.build());
+
+      for (PartitionDescProto partition: partitions) {
+        builder.addPartitionDesc(partition);
+      }
+      builder.setIfNotExists(ifNotExists);
+
+      ReturnState state = stub.addPartitions(null, builder.build());
+      throwsIfThisError(state, UndefinedTableException.class);
+      throwsIfThisError(state, UndefinedPartitionMethodException.class);
+      throwsIfThisError(state, DuplicatePartitionException.class);
+      ensureOk(state);
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public final Collection<String> getAllTableNames(final String databaseName) {
     try {
-      return new ServerCallable<Collection<String>>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Collection<String> call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          PrimitiveProtos.StringListProto response = stub.getAllTableNames(null, ProtoUtil.convertString(databaseName));
-          return ProtoUtil.convertStrings(response);
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final StringListResponse response = stub.getAllTableNames(null, ProtoUtil.convertString(databaseName));
+
+      ensureOk(response.getState());
+      return response.getValuesList();
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public final Collection<FunctionDesc> getFunctions() {
+    List<FunctionDesc> list = new ArrayList<>();
+
     try {
-      return new ServerCallable<Collection<FunctionDesc>>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Collection<FunctionDesc> call(NettyClientBase client) throws ServiceException {
-          List<FunctionDesc> list = new ArrayList<FunctionDesc>();
-          GetFunctionsResponse response;
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          response = stub.getFunctions(null, NullProto.newBuilder().build());
-          int size = response.getFunctionDescCount();
-          for (int i = 0; i < size; i++) {
-            try {
-              list.add(new FunctionDesc(response.getFunctionDesc(i)));
-            } catch (ClassNotFoundException e) {
-              LOG.error(e);
-              return null;
-            }
-          }
-          return list;
+      final BlockingInterface stub = getStub();
+      final GetFunctionsResponse response = stub.getFunctions(null, NullProto.newBuilder().build());
+
+      ensureOk(response.getState());
+      for (int i = 0; i < response.getFunctionDescCount(); i++) {
+        try {
+          list.add(new FunctionDesc(response.getFunctionDesc(i)));
+        } catch (ClassNotFoundException e) {
+          throw new RuntimeException(e);
         }
-      }.withRetries();
+      }
+      return list;
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final boolean createTable(final TableDesc desc) {
+  public final void createTable(final TableDesc desc)
+      throws UndefinedDatabaseException, DuplicateTableException, InsufficientPrivilegeException {
+
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.createTable(null, desc.getProto()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.createTable(null, desc.getProto());
+
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, DuplicateTableException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public boolean dropTable(String tableName) {
-    String [] splitted = CatalogUtil.splitFQTableName(tableName);
+  public void dropTable(String tableName)
+      throws UndefinedDatabaseException, UndefinedTableException, InsufficientPrivilegeException {
+
+    String[] splitted = CatalogUtil.splitFQTableName(tableName);
     final String databaseName = splitted[0];
     final String simpleName = splitted[1];
 
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, simpleName);
+      final ReturnState state = stub.dropTable(null, request);
 
-          TableIdentifierProto.Builder builder = TableIdentifierProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setTableName(simpleName);
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, UndefinedTableException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      ensureOk(state);
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.dropTable(null, builder.build()).getValue();
-        }
-      }.withRetries();
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
@@ -517,204 +622,242 @@ public abstract class AbstractCatalogClient implements CatalogService {
       throw new IllegalArgumentException(
           "tableName cannot be composed of multiple parts, but it is \"" + tableName + "\"");
     }
+
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
+      final BlockingInterface stub = getStub();
+      final TableIdentifierProto request = buildTableIdentifier(databaseName, tableName);
+      final ReturnState state = stub.existsTable(null, request);
 
-          TableIdentifierProto.Builder builder = TableIdentifierProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setTableName(tableName);
+      if (isThisError(state, UNDEFINED_TABLE)) {
+        return false;
+      }
+      ensureOk(state);
+      return true;
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.existsTable(null, builder.build()).getValue();
-        }
-      }.withRetries();
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
+
   @Override
   public final boolean existsTable(final String tableName) {
-    String [] splitted = CatalogUtil.splitFQTableName(tableName);
+    String[] splitted = CatalogUtil.splitFQTableName(tableName);
     return existsTable(splitted[0], splitted[1]);
   }
 
   @Override
-  public final boolean createIndex(final IndexDesc index) {
+  public final void createIndex(final IndexDesc index)
+      throws DuplicateIndexException, UndefinedDatabaseException, UndefinedTableException {
+
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.createIndex(null, index.getProto()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+
+      final ReturnState state = stub.createIndex(null, index.getProto());
+
+      throwsIfThisError(state, DuplicateIndexException.class);
+      throwsIfThisError(state, UndefinedTableException.class);
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public final boolean existIndexByName(final String databaseName, final String indexName) {
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          IndexNameProto.Builder builder = IndexNameProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setIndexName(indexName);
+      final IndexNameProto request = IndexNameProto.newBuilder()
+          .setDatabaseName(databaseName)
+          .setIndexName(indexName)
+          .build();
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.existIndexByName(null, builder.build()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+
+      return isSuccess(stub.existIndexByName(null, request));
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public boolean existIndexByColumn(final String databaseName, final String tableName, final String columnName) {
+  public boolean existIndexByColumns(final String databaseName, final String tableName, final Column [] columns) {
+    return existIndexByColumnNames(databaseName, tableName, extractColumnNames(columns));
+  }
+
+  @Override
+  public boolean existIndexByColumnNames(final String databaseName, final String tableName, final String [] columnNames) {
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
 
-          GetIndexByColumnRequest.Builder builder = GetIndexByColumnRequest.newBuilder();
-          builder.setTableIdentifier(CatalogUtil.buildTableIdentifier(databaseName, tableName));
-          builder.setColumnName(columnName);
+      GetIndexByColumnNamesRequest.Builder builder = GetIndexByColumnNamesRequest.newBuilder();
+      builder.setTableIdentifier(CatalogUtil.buildTableIdentifier(databaseName, tableName));
+      for (String colunName : columnNames) {
+        builder.addColumnNames(colunName);
+      }
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.existIndexByColumn(null, builder.build()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+
+      return isSuccess(stub.existIndexByColumnNames(null, builder.build()));
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public boolean existIndexesByTable(final String databaseName, final String tableName) {
+    try {
+      final BlockingInterface stub = getStub();
+
+      return isSuccess(
+          stub.existIndexesByTable(null, CatalogUtil.buildTableIdentifier(databaseName, tableName)));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
     }
   }
 
   @Override
   public final IndexDesc getIndexByName(final String databaseName, final String indexName) {
+
     try {
-      return new ServerCallable<IndexDesc>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public IndexDesc call(NettyClientBase client) throws ServiceException {
+      final IndexNameProto request = IndexNameProto.newBuilder()
+          .setDatabaseName(databaseName)
+          .setIndexName(indexName)
+          .build();
 
-          IndexNameProto.Builder builder = IndexNameProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setIndexName(indexName);
+      final BlockingInterface stub = getStub();
+      final IndexResponse response = stub.getIndexByName(null, request);
+      ensureOk(response.getState());
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return new IndexDesc(stub.getIndexByName(null, builder.build()));
-        }
-      }.withRetries();
+      return new IndexDesc(response.getIndexDesc());
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
+    }
+  }
+
+  private static String[] extractColumnNames(Column[] columns) {
+    String[] columnNames = new String [columns.length];
+    for (int i = 0; i < columnNames.length; i++) {
+      columnNames[i] = columns[i].getSimpleName();
+    }
+    return columnNames;
+  }
+
+  @Override
+  public final IndexDesc getIndexByColumns(final String databaseName,
+                                               final String tableName,
+                                               final Column [] columns) {
+    return getIndexByColumnNames(databaseName, tableName, extractColumnNames(columns));
+  }
+
+  @Override
+  public final IndexDesc getIndexByColumnNames(final String databaseName,
+                                           final String tableName,
+                                           final String [] columnNames) {
+    try {
+      GetIndexByColumnNamesRequest.Builder builder = GetIndexByColumnNamesRequest.newBuilder();
+      builder.setTableIdentifier(CatalogUtil.buildTableIdentifier(databaseName, tableName));
+      for (String columnName : columnNames) {
+        builder.addColumnNames(columnName);
+      }
+
+      final BlockingInterface stub = getStub();
+      final IndexResponse response = stub.getIndexByColumnNames(null, builder.build());
+      ensureOk(response.getState());
+
+      return new IndexDesc(response.getIndexDesc());
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final IndexDesc getIndexByColumn(final String databaseName,
-                                          final String tableName,
-                                          final String columnName) {
+  public final Collection<IndexDesc> getAllIndexesByTable(final String databaseName,
+                                                          final String tableName) {
     try {
-      return new ServerCallable<IndexDesc>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public IndexDesc call(NettyClientBase client) throws ServiceException {
+      TableIdentifierProto proto = CatalogUtil.buildTableIdentifier(databaseName, tableName);
 
-          GetIndexByColumnRequest.Builder builder = GetIndexByColumnRequest.newBuilder();
-          builder.setTableIdentifier(CatalogUtil.buildTableIdentifier(databaseName, tableName));
-          builder.setColumnName(columnName);
+      final BlockingInterface stub = getStub();
+      final IndexListResponse response = stub.getAllIndexesByTable(null, proto);
+      ensureOk(response.getState());
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return new IndexDesc(stub.getIndexByColumn(null, builder.build()));
-        }
-      }.withRetries();
+      List<IndexDesc> indexDescs = TUtil.newList();
+      for (IndexDescProto descProto : response.getIndexDescList()) {
+        indexDescs.add(new IndexDesc(descProto));
+      }
+      return indexDescs;
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public boolean dropIndex(final String databaseName,
-                           final String indexName) {
+  public void dropIndex(final String dbName, final String indexName)
+      throws UndefinedIndexException, UndefinedDatabaseException {
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
+      final IndexNameProto request = IndexNameProto.newBuilder()
+          .setDatabaseName(dbName)
+          .setIndexName(indexName)
+          .build();
 
-          IndexNameProto.Builder builder = IndexNameProto.newBuilder();
-          builder.setDatabaseName(databaseName);
-          builder.setIndexName(indexName);
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.dropIndex(null, request);
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.dropIndex(null, builder.build()).getValue();
-        }
-      }.withRetries();
+      throwsIfThisError(state, UndefinedIndexException.class);
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
-    }
-  }
-  
-  @Override
-  public List<IndexProto> getAllIndexes() {
-    try {
-      return new ServerCallable<List<IndexProto>>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-
-        @Override
-        public List<IndexProto> call(NettyClientBase client) throws Exception {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          GetIndexesProto response = stub.getAllIndexes(null, ProtoUtil.NULL_PROTO);
-          return response.getIndexList();
-        }
-      }.withRetries();
-    } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return null;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final boolean createFunction(final FunctionDesc funcDesc) {
+  public final void createFunction(final FunctionDesc funcDesc) throws DuplicateFunctionException {
+
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.createFunction(null, funcDesc.getProto()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.createFunction(null, funcDesc.getProto());
+
+      throwsIfThisError(state, DuplicateFunctionException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final boolean dropFunction(final String signature) {
-    try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          UnregisterFunctionRequest.Builder builder = UnregisterFunctionRequest.newBuilder();
-          builder.setSignature(signature);
+  public final void dropFunction(final String signature) throws UndefinedFunctionException,
+      InsufficientPrivilegeException {
 
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.dropFunction(null, builder.build()).getValue();
-        }
-      }.withRetries();
+    try {
+      final UnregisterFunctionRequest request = UnregisterFunctionRequest.newBuilder()
+          .setSignature(signature)
+          .build();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.dropFunction(null, request);
+
+      throwsIfThisError(state, UndefinedFunctionException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final FunctionDesc getFunction(final String signature, DataType... paramTypes) {
+  public final FunctionDesc getFunction(final String signature, DataType... paramTypes)
+      throws AmbiguousFunctionException, UndefinedFunctionException {
     return getFunction(signature, null, paramTypes);
   }
 
   @Override
-  public final FunctionDesc getFunction(final String signature, FunctionType funcType, DataType... paramTypes) {
+  public final FunctionDesc getFunction(final String signature, FunctionType funcType, DataType... paramTypes)
+      throws AmbiguousFunctionException, UndefinedFunctionException {
+
     final GetFunctionMetaRequest.Builder builder = GetFunctionMetaRequest.newBuilder();
     builder.setSignature(signature);
     if (funcType != null) {
@@ -724,37 +867,18 @@ public abstract class AbstractCatalogClient implements CatalogService {
       builder.addParameterTypes(type);
     }
 
-    FunctionDescProto descProto = null;
     try {
-      descProto = new ServerCallable<FunctionDescProto>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public FunctionDescProto call(NettyClientBase client) throws ServiceException {
-          try {
-            CatalogProtocolService.BlockingInterface stub = getStub(client);
-            return stub.getFunctionMeta(null, builder.build());
-          } catch (NoSuchFunctionException e) {
-            abort();
-            throw e;
-          }
-        }
-      }.withRetries();
-    } catch(ServiceException e) {
-      // this is not good. we need to define user massage exception
-      if(e.getCause() instanceof NoSuchFunctionException){
-        LOG.debug(e.getMessage());
-      } else {
-        LOG.error(e.getMessage(), e);
-      }
-    }
+      final BlockingInterface stub = getStub();
+      final FunctionResponse response = stub.getFunctionMeta(null, builder.build());
 
-    if (descProto == null) {
-      throw new NoSuchFunctionException(signature, paramTypes);
-    }
+      throwsIfThisError(response.getState(), UndefinedFunctionException.class);
+      ensureOk(response.getState());
+      return new FunctionDesc(response.getFunction());
 
-    try {
-      return new FunctionDesc(descProto);
+    } catch (ServiceException se) {
+      throw new RuntimeException(se);
     } catch (ClassNotFoundException e) {
-      LOG.error(e);
-      throw new NoSuchFunctionException(signature, paramTypes);
+      throw new TajoInternalError(e);
     }
   }
 
@@ -765,8 +889,9 @@ public abstract class AbstractCatalogClient implements CatalogService {
 
   @Override
   public final boolean containFunction(final String signature, FunctionType funcType, DataType... paramTypes) {
-    final ContainFunctionRequest.Builder builder =
-        ContainFunctionRequest.newBuilder();
+
+    final ContainFunctionRequest.Builder builder = ContainFunctionRequest.newBuilder();
+
     if (funcType != null) {
       builder.setFunctionType(funcType);
     }
@@ -776,45 +901,61 @@ public abstract class AbstractCatalogClient implements CatalogService {
     }
 
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.containFunction(null, builder.build()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state  = stub.containFunction(null, builder.build());
+
+      if (isThisError(state, UNDEFINED_FUNCTION)) {
+        return false;
+      }
+      ensureOk(state);
+      return true;
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public final boolean alterTable(final AlterTableDesc desc) {
+  public final void alterTable(final AlterTableDesc desc) throws DuplicateDatabaseException,
+      DuplicateTableException, DuplicateColumnException, DuplicatePartitionException,
+      UndefinedDatabaseException, UndefinedTableException, UndefinedColumnException, UndefinedPartitionMethodException,
+      InsufficientPrivilegeException, UndefinedPartitionException, NotImplementedException {
+
     try {
-      return new ServerCallable<Boolean>(this.pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.alterTable(null, desc.getProto()).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.alterTable(null, desc.getProto());
+
+      throwsIfThisError(state, DuplicateTableException.class);
+      throwsIfThisError(state, DuplicateColumnException.class);
+      throwsIfThisError(state, DuplicatePartitionException.class);
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, UndefinedTableException.class);
+      throwsIfThisError(state, UndefinedColumnException.class);
+      throwsIfThisError(state, UndefinedPartitionException.class);
+      throwsIfThisError(state, UndefinedPartitionMethodException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      throwsIfThisError(state, NotImplementedException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 
   @Override
-  public boolean updateTableStats(final UpdateTableStatsProto updateTableStatsProto) {
+  public void updateTableStats(final UpdateTableStatsProto updateTableStatsProto)
+      throws InsufficientPrivilegeException, UndefinedTableException {
+
     try {
-      return new ServerCallable<Boolean>(pool, getCatalogServerAddr(), CatalogProtocol.class, false) {
-        public Boolean call(NettyClientBase client) throws ServiceException {
-          CatalogProtocolService.BlockingInterface stub = getStub(client);
-          return stub.updateTableStats(null, updateTableStatsProto).getValue();
-        }
-      }.withRetries();
+      final BlockingInterface stub = getStub();
+      final ReturnState state = stub.updateTableStats(null, updateTableStatsProto);
+
+      throwsIfThisError(state, UndefinedTableException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      ensureOk(state);
+
     } catch (ServiceException e) {
-      LOG.error(e.getMessage(), e);
-      return false;
+      throw new RuntimeException(e);
     }
   }
 }

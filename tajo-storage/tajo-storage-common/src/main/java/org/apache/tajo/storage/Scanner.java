@@ -21,6 +21,8 @@ package org.apache.tajo.storage;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.SchemaObject;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.plan.expr.EvalNode;
+import org.apache.tajo.plan.logical.LogicalNode;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -28,8 +30,8 @@ import java.io.IOException;
 /**
  * Scanner Interface
  */
-public interface Scanner extends SchemaObject, Closeable {
 
+public interface Scanner extends SchemaObject, Closeable {
   void init() throws IOException;
 
   /**
@@ -57,9 +59,24 @@ public interface Scanner extends SchemaObject, Closeable {
    */
   void close() throws IOException;
 
+  /**
+   * Push a plan part into scanner. It will be used in future issues.
+   *
+   * @param planPart
+   */
+  void pushOperators(LogicalNode planPart);
 
   /**
    * It returns if the projection is executed in the underlying scanner layer.
+   *
+   * If TRUE, the upper layers (i.e., SeqScanExec) assume that next()
+   * will return a tuple which contains only projected fields. In other words,
+   * the field number of a retrieved tuple is equivalent tothe number of targets.
+   *
+   * If FALSE, the upper layers assume that next() will return a tuple which
+   * contains projected fields and non-projected fields, padded by NullDatum.
+   * In other words, the width of tuple is equivalent to the field number
+   * of the table schema.
    *
    * @return true if this scanner can project the given columns.
    */
@@ -79,12 +96,21 @@ public interface Scanner extends SchemaObject, Closeable {
   boolean isSelectable();
 
   /**
-   * Set a search condition
-   * @param expr to be searched
+   * Set a filter condition
+   * @param filter to be searched
    *
    * TODO - to be changed Object type
    */
-  void setSearchCondition(Object expr);
+  void setFilter(EvalNode filter);
+
+
+  /**
+   * This method does not guarantee that the scanner will retrieve the specified number of rows.
+   * This information is used for a hint.
+   *
+   * @param num The number of rows to be retrieved.
+   */
+  void setLimit(long num);
 
   /**
    * It returns if the file is splittable.

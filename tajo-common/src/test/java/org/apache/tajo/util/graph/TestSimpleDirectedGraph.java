@@ -18,6 +18,8 @@
 
 package org.apache.tajo.util.graph;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.util.graph.DirectedGraphVisitor;
 import org.apache.tajo.util.graph.SimpleDirectedGraph;
 import org.junit.Test;
@@ -29,10 +31,11 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class TestSimpleDirectedGraph {
+  private static final Log LOG = LogFactory.getLog(TestSimpleDirectedGraph.class);
 
   @Test
   public final void test() {
-    SimpleDirectedGraph<String, Integer> graph = new SimpleDirectedGraph<String, Integer>();
+    SimpleDirectedGraph<String, Integer> graph = new SimpleDirectedGraph<>();
 
     //     root
     //     /  \
@@ -73,7 +76,9 @@ public class TestSimpleDirectedGraph {
 
     @Override
     public void visit(Stack<String> stack, String s) {
-      System.out.println("===> " + s);
+      if(LOG.isDebugEnabled()) {
+        LOG.debug("Element:" + s);
+      }
     }
   }
 }

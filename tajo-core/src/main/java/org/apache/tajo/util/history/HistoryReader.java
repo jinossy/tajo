@@ -18,16 +18,23 @@
 
 package org.apache.tajo.util.history;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IOUtils;
+import org.apache.tajo.QueryId;
+import org.apache.tajo.ResourceProtos.TaskHistoryProto;
 import org.apache.tajo.TaskAttemptId;
+import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.ipc.TajoWorkerProtocol.TaskHistoryProto;
 import org.apache.tajo.master.QueryInfo;
+import org.apache.tajo.util.Bytes;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -52,75 +59,122 @@ public class HistoryReader {
     taskHistoryParentPath = tajoConf.getTaskHistoryDir(tajoConf);
   }
 
-  public List<QueryInfo> getQueries(String keyword) throws IOException {
-    List<QueryInfo> queryInfos = new ArrayList<QueryInfo>();
+  @Deprecated
+  public List<QueryInfo> getQueriesInHistory() throws IOException {
+    return getQueriesInHistory(-1, Integer.MAX_VALUE);
+  }
+
+  /**
+   * Get desc ordered query histories in persistent storage
+   * @param page index of page
+   * @param size size of page
+   */
+  public List<QueryInfo> getQueriesInHistory(int page, int size) throws IOException {
+    return findQueryInfoInStorage(page, size, null);
+  }
+
+  private synchronized List<QueryInfo> findQueryInfoInStorage(int page, int size, @Nullable QueryId queryId)
+      throws IOException {
+    List<QueryInfo> result = Lists.newLinkedList();
 
     FileSystem fs = HistoryWriter.getNonCrcFileSystem(historyParentPath, tajoConf);
-    if (!fs.exists(historyParentPath)) {
-      return queryInfos;
-    }
-    FileStatus[] files = fs.listStatus(historyParentPath);
-    if (files == null || files.length == 0) {
-      return queryInfos;
+    try {
+      if (!fs.exists(historyParentPath)) {
+        return result;
+      }
+    } catch (Throwable e) {
+      return result;
     }
 
-    for (FileStatus eachDateFile: files) {
-      if (eachDateFile.isFile()) {
+    FileStatus[] files = fs.listStatus(historyParentPath);
+    if (files == null || files.length == 0) {
+      return result;
+    }
+
+    Set<QueryInfo> queryInfos = Sets.newTreeSet(Collections.reverseOrder());
+    int startIndex = page < 1 ? page : ((page - 1) * size) + 1;
+    int currentIndex = 0;
+    int skipSize = 0;
+
+    ArrayUtils.reverse(files);
+    for (FileStatus eachDateFile : files) {
+      Path queryListPath = new Path(eachDateFile.getPath(), HistoryWriter.QUERY_LIST);
+      if (eachDateFile.isFile() || !fs.exists(queryListPath)) {
         continue;
       }
-      FileStatus[] dateFiles = fs.listStatus(new Path(eachDateFile.getPath(), HistoryWriter.QUERY_LIST));
+
+      FileStatus[] dateFiles = fs.listStatus(queryListPath);
       if (dateFiles == null || dateFiles.length == 0) {
         continue;
       }
 
-      for (FileStatus eachFile: dateFiles) {
-        if (eachFile.isDirectory()) {
-          continue;
-        }
-
+      ArrayUtils.reverse(dateFiles);
+      for (FileStatus eachFile : dateFiles) {
         Path path = eachFile.getPath();
-        if (!path.getName().endsWith(HistoryWriter.HISTORY_FILE_POSTFIX)) {
+        if (eachFile.isDirectory() || !path.getName().endsWith(HistoryWriter.HISTORY_FILE_POSTFIX)) {
           continue;
         }
 
         FSDataInputStream in = null;
+
+        List<String> jsonList = Lists.newArrayList();
         try {
           in = fs.open(path);
 
-          byte[] buf = new byte[100 * 1024];
+          //If history file does not close, FileStatus.getLen() are not being updated
+          //So, this code block should check the EOFException
           while (true) {
             int length = in.readInt();
-            if (length > buf.length) {
-              buf = new byte[length];
-            }
+
+            byte[] buf = new byte[length];
             in.readFully(buf, 0, length);
-            String queryInfoJson = new String(buf, 0, length);
-            QueryInfo queryInfo = QueryInfo.fromJson(queryInfoJson);
-            if (keyword != null) {
-              if (queryInfo.getSql().indexOf(keyword) >= 0) {
-                queryInfos.add(queryInfo);
+
+            jsonList.add(new String(buf, 0, length, Bytes.UTF8_CHARSET));
+            currentIndex++;
+          }
+        } catch (EOFException eof) {
+        } catch (Throwable e) {
+          LOG.warn("Reading error:" + path + ", " + e.getMessage());
+        } finally {
+          IOUtils.cleanup(LOG, in);
+        }
+
+        //skip previous page
+        if (startIndex > currentIndex) {
+          skipSize += jsonList.size();
+        } else {
+          for (String json : jsonList) {
+            QueryInfo queryInfo = QueryInfo.fromJson(json);
+            if (queryId != null) {
+              if (queryInfo.getQueryId().equals(queryId)) {
+                result.add(queryInfo);
+                return result;
               }
             } else {
               queryInfos.add(queryInfo);
             }
           }
-        } catch (EOFException e) {
-        } catch (Exception e) {
-          LOG.error("Reading error:" + path + ", " +e.getMessage(), e);
-        } finally {
-          in.close();
+        }
+
+        if (currentIndex - (startIndex - 1) >= size) {
+          result.addAll(queryInfos);
+          int fromIndex = (startIndex - 1) - skipSize;
+          return result.subList(fromIndex, fromIndex + size);
         }
       }
     }
 
-    Collections.sort(queryInfos, new Comparator<QueryInfo>() {
-      @Override
-      public int compare(QueryInfo query1, QueryInfo query2) {
-        return query2.getQueryIdStr().toString().compareTo(query1.getQueryIdStr().toString());
-      }
-    });
+    result.addAll(queryInfos);
+    return result;
+  }
 
-    return queryInfos;
+  public QueryInfo getQueryByQueryId(QueryId queryId) throws IOException {
+    List<QueryInfo> queryInfoList = findQueryInfoInStorage(-1, Integer.MAX_VALUE, queryId);
+    if (queryInfoList.size() > 0) {
+      return queryInfoList.get(0);
+    } else {
+      return null;
+    }
   }
 
   private Path getQueryHistoryFilePath(String queryId, long startTime) throws IOException {
@@ -178,7 +232,7 @@ public class HistoryReader {
 
       in.readFully(buf, 0, buf.length);
 
-      return QueryHistory.fromJson(new String(buf));
+      return QueryHistory.fromJson(new String(buf, Bytes.UTF8_CHARSET));
     } finally {
       if (in != null) {
         in.close();
@@ -187,15 +241,19 @@ public class HistoryReader {
   }
 
   public List<TaskHistory> getTaskHistory(String queryId, String ebId) throws IOException {
-    Path queryHistoryFile = getQueryHistoryFilePath(queryId, 0);
+    return getTaskHistory(queryId, ebId, 0);
+  }
+
+  public List<TaskHistory> getTaskHistory(String queryId, String ebId, long startTime) throws IOException {
+    Path queryHistoryFile = getQueryHistoryFilePath(queryId, startTime);
     if (queryHistoryFile == null) {
-      return new ArrayList<TaskHistory>();
+      return new ArrayList<>();
     }
     Path detailFile = new Path(queryHistoryFile.getParent(), ebId + HistoryWriter.HISTORY_FILE_POSTFIX);
     FileSystem fs = HistoryWriter.getNonCrcFileSystem(detailFile, tajoConf);
 
     if (!fs.exists(detailFile)) {
-      return new ArrayList<TaskHistory>();
+      return new ArrayList<>();
     }
 
     FileStatus fileStatus = fs.getFileStatus(detailFile);
@@ -210,7 +268,7 @@ public class HistoryReader {
 
       in.readFully(buf, 0, buf.length);
 
-      return StageHistory.fromJsonTasks(new String(buf));
+      return StageHistory.fromJsonTasks(new String(buf, Bytes.UTF8_CHARSET));
     } finally {
       if (in != null) {
         in.close();
@@ -287,20 +345,6 @@ public class HistoryReader {
         }
       }
     }
-    return null;
-  }
-
-  public QueryInfo getQueryInfo(String queryId) throws IOException {
-    List<QueryInfo> queries = getQueries(null);
-
-    if (queries != null) {
-      for (QueryInfo queryInfo: queries) {
-        if (queryId.equals(queryInfo.getQueryId().toString())) {
-          return queryInfo;
-        }
-      }
-    }
-
     return null;
   }
 }

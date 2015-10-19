@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Copyright 2012 Database Lab., Korea Univ.
-
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
 
       http://www.apache.org/licenses/LICENSE-2.0
 
@@ -20,7 +22,7 @@
   <parent>
     <artifactId>tajo-project</artifactId>
     <groupId>org.apache.tajo</groupId>
-    <version>0.10.0-SNAPSHOT</version>
+    <version>0.12.0-SNAPSHOT</version>
     <relativePath>../tajo-project</relativePath>
   </parent>
   <artifactId>tajo-plan</artifactId>
@@ -37,11 +39,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
-          <encoding>${project.build.sourceEncoding}</encoding>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.rat</groupId>

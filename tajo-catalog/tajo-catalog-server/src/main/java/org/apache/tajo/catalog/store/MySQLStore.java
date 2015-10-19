@@ -22,32 +22,34 @@
 package org.apache.tajo.catalog.store;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.tajo.catalog.exception.CatalogException;
-import org.apache.tajo.exception.InternalException;
 
-public class MySQLStore extends AbstractMySQLMariaDBStore  {
-  /** 2014-03-20: First versioning */
-  private static final int MYSQL_CATALOG_STORE_VERSION_2 = 2;
-  /** Before 2013-03-20 */
-  private static final int MYSQL_CATALOG_STORE_VERSION_1 = 1;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 
+public class MySQLStore extends AbstractDBStore {
   private static final String CATALOG_DRIVER = "com.mysql.jdbc.Driver";
-  @Override
-  protected String getCatalogDriverName(){
-    return CATALOG_DRIVER;
-  }
 
-  public MySQLStore(final Configuration conf) throws InternalException {
+  public MySQLStore(Configuration conf) {
     super(conf);
   }
 
   @Override
-  public int getDriverVersion() {
-    return MYSQL_CATALOG_STORE_VERSION_2;
+  protected String getCatalogDriverName() {
+    return CATALOG_DRIVER;
   }
 
   @Override
-  public String readSchemaFile(String filename) throws CatalogException {
-    return super.readSchemaFile("mysql/" + filename);
+  protected String getCatalogSchemaPath() {
+    return "schemas/mysql";
+  }
+
+  @Override
+  protected Connection createConnection(Configuration conf) throws SQLException {
+    return DriverManager.getConnection(getCatalogUri(), this.connectionId, this.connectionPassword);
+  }
+
+  @Override
+  protected void createDatabaseDependants() {
   }
 }

@@ -18,8 +18,7 @@
 
 package org.apache.tajo.jdbc;
 
-import com.google.protobuf.ServiceException;
-
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.TajoConstants;
@@ -27,12 +26,15 @@ import org.apache.tajo.client.CatalogAdminClient;
 import org.apache.tajo.client.QueryClient;
 import org.apache.tajo.client.TajoClient;
 import org.apache.tajo.client.TajoClientImpl;
-import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.error.Errors.ResultCode;
+import org.apache.tajo.exception.*;
 import org.apache.tajo.jdbc.util.QueryStringDecoder;
+import org.apache.tajo.rpc.RpcUtils;
+import org.apache.tajo.util.KeyValueSet;
 
-import java.io.IOException;
 import java.net.URI;
 import java.sql.*;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -55,22 +57,26 @@ public class JdbcConnection implements Connection {
   /** it will be used soon. */
   private final Map<String, List<String>> params;
 
+  private final KeyValueSet clientProperties;
+
   public JdbcConnection(String rawURI, Properties properties) throws SQLException {
     this.rawURI = rawURI;
     this.properties = properties;
 
     try {
+
       if (!rawURI.startsWith(TajoDriver.TAJO_JDBC_URL_PREFIX)) {
-        throw new SQLException("Invalid URL: " + rawURI, "TAJO-001");
+        // its impossible case
+        throw new TajoInternalError("Invalid URL: " + rawURI);
       }
 
       // URI form: jdbc:tajo://hostname:port/databasename
       int startIdx = rawURI.indexOf(":");
       if (startIdx < 0) {
-        throw new SQLException("Invalid URL: " + rawURI, "TAJO-001");
+        throw new TajoInternalError("Invalid URL: " + rawURI);
       }
 
-      String uri = rawURI.substring(startIdx+1, rawURI.length());
+      String uri = rawURI.substring(startIdx + 1, rawURI.length());
       try {
         this.uri = URI.create(uri);
       } catch (IllegalArgumentException iae) {
@@ -95,23 +101,32 @@ public class JdbcConnection implements Connection {
       }
 
       params = new QueryStringDecoder(rawURI).getParameters();
+      properties.putAll(params);
     } catch (SQLException se) {
       throw se;
     } catch (Throwable t) { // for unexpected exceptions like ArrayIndexOutOfBoundsException.
       throw new SQLException("Invalid JDBC URI: " + rawURI, "TAJO-001");
     }
 
-    TajoConf tajoConf = new TajoConf();
+    clientProperties = new KeyValueSet();
     if(properties != null) {
       for(Map.Entry<Object, Object> entry: properties.entrySet()) {
-        tajoConf.set(entry.getKey().toString(), entry.getValue().toString());
+        if(entry.getValue() instanceof Collection) {
+          clientProperties.set(entry.getKey().toString(), StringUtils.join((Collection) entry.getValue(), ","));
+        } else {
+          clientProperties.set(entry.getKey().toString(), entry.getValue().toString());
+        }
       }
     }
 
     try {
-      tajoClient = new TajoClientImpl(hostName, port, databaseName);
-    } catch (Exception e) {
-      throw new SQLException("Cannot create TajoClient instance:" + e.getMessage(), "TAJO-002");
+      tajoClient = new TajoClientImpl(RpcUtils.createSocketAddr(hostName, port), databaseName, clientProperties);
+    } catch (Throwable t) {
+      if (t instanceof DefaultTajoException) {
+        throw SQLExceptionUtil.toSQLException((DefaultTajoException) t);
+      } else {
+        throw new TajoSQLException(ResultCode.INTERNAL_ERROR, t, t.getMessage());
+      }
     }
     closed.set(false);
   }
@@ -176,7 +191,7 @@ public class JdbcConnection implements Connection {
   @Override
   public Statement createStatement() throws SQLException {
     if (isClosed()) {
-      throw new SQLException("Can't create Statement, connection is closed");
+      throw new TajoSQLException(ResultCode.CLIENT_CONNECTION_DOES_NOT_EXIST);
     }
     return new TajoStatement(this, tajoClient);
   }
@@ -213,11 +228,7 @@ public class JdbcConnection implements Connection {
 
   @Override
   public String getCatalog() throws SQLException {
-    try {
-      return tajoClient.getCurrentDatabase();
-    } catch (ServiceException e) {
-      throw new SQLException(e);
-    }
+    return tajoClient.getCurrentDatabase();
   }
 
   @Override
@@ -277,12 +288,8 @@ public class JdbcConnection implements Connection {
       } else {
         return false;
       }
-    } catch (ServiceException e) {
-      LOG.error("TajoMaster is not available.");
-      return false;
-    } catch (IOException e) {
-      LOG.error("JDBC connection is not valid.");
-      return false;
+    } catch (TajoException e) {
+      throw SQLExceptionUtil.toSQLException(e);
     }
   }
 
@@ -360,27 +367,25 @@ public class JdbcConnection implements Connection {
 
   @Override
   public void setAutoCommit(boolean autoCommit) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setAutoCommit");
+    LOG.warn("Tajo does not support setAutoCommit, so this invocation is ignored.");
   }
 
   @Override
   public void setCatalog(String catalog) throws SQLException {
     try {
       tajoClient.selectDatabase(catalog);
-    } catch (ServiceException e) {
-      throw new SQLException(e);
+    } catch (TajoException e) {
+      throw SQLExceptionUtil.toSQLException(e);
     }
   }
 
   @Override
-  public void setClientInfo(Properties properties)
-      throws SQLClientInfoException {
+  public void setClientInfo(Properties properties) throws SQLClientInfoException {
     throw new UnsupportedOperationException("setClientInfo");
   }
 
   @Override
-  public void setClientInfo(String name, String value)
-      throws SQLClientInfoException {
+  public void setClientInfo(String name, String value) throws SQLClientInfoException {
     throw new UnsupportedOperationException("setClientInfo");
   }
 
@@ -428,24 +433,25 @@ public class JdbcConnection implements Connection {
   }
 
   public void abort(Executor executor) throws SQLException {
-    // JDK 1.7
     throw new SQLFeatureNotSupportedException("abort is not supported");
   }
 
+  @Override
   public int getNetworkTimeout() throws SQLException {
-    // JDK 1.7
     throw new SQLFeatureNotSupportedException("getNetworkTimeout is not supported");
   }
 
+  @Override
   public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
-    // JDK 1.7
     throw new SQLFeatureNotSupportedException("setNetworkTimeout not supported");
   }
 
+  @Override
   public String getSchema() throws SQLException {
     return TajoConstants.DEFAULT_SCHEMA_NAME;
   }
 
+  @Override
   public void setSchema(String schema) throws SQLException {
     throw new SQLFeatureNotSupportedException("setSchema() is not supported yet");
   }

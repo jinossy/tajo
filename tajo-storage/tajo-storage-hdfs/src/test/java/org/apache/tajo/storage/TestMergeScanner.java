@@ -24,7 +24,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
@@ -50,7 +49,7 @@ import static org.junit.Assert.*;
 @RunWith(Parameterized.class)
 public class TestMergeScanner {
   private TajoConf conf;
-  StorageManager sm;
+  Tablespace sm;
   private static String TEST_PATH = "target/test-data/TestMergeScanner";
 
   private static String TEST_MULTIPLE_FILES_AVRO_SCHEMA =
@@ -67,24 +66,24 @@ public class TestMergeScanner {
       "}\n";
 
   private Path testDir;
-  private StoreType storeType;
+  private String dataFormat;
   private FileSystem fs;
 
-  public TestMergeScanner(StoreType storeType) {
-    this.storeType = storeType;
+  public TestMergeScanner(String dataFormat) {
+    this.dataFormat = dataFormat;
   }
 
   @Parameters
   public static Collection<Object[]> generateParameters() {
     return Arrays.asList(new Object[][] {
-        {StoreType.CSV},
-        {StoreType.RAW},
-        {StoreType.RCFILE},
-        {StoreType.PARQUET},
-        {StoreType.SEQUENCEFILE},
-        {StoreType.AVRO},
+        {"TEXT"},
+        {"RAW"},
+        {"RCFILE"},
+        {"PARQUET"},
+        {"SEQUENCEFILE"},
+        {"AVRO"},
         // RowFile requires Byte-buffer read support, so we omitted RowFile.
-        //{StoreType.ROWFILE},
+        //{DataFormat.ROWFILE},
     });
   }
 
@@ -95,7 +94,7 @@ public class TestMergeScanner {
     conf.setStrings("tajo.storage.projectable-scanner", "rcfile", "parquet", "avro");
     testDir = CommonTestingUtil.getTestDir(TEST_PATH);
     fs = testDir.getFileSystem(conf);
-    sm = StorageManager.getFileStorageManager(conf, testDir);
+    sm = TablespaceManager.getLocalFs();
   }
 
   @Test
@@ -107,15 +106,14 @@ public class TestMergeScanner {
     schema.addColumn("age", Type.INT8);
 
     KeyValueSet options = new KeyValueSet();
-    TableMeta meta = CatalogUtil.newTableMeta(storeType, options);
-    meta.setOptions(CatalogUtil.newPhysicalProperties(storeType));
-    if (storeType == StoreType.AVRO) {
-      meta.putOption(StorageConstants.AVRO_SCHEMA_LITERAL,
-                     TEST_MULTIPLE_FILES_AVRO_SCHEMA);
+    TableMeta meta = CatalogUtil.newTableMeta(dataFormat, options);
+    meta.setOptions(CatalogUtil.newDefaultProperty(dataFormat));
+    if (dataFormat.equalsIgnoreCase("AVRO")) {
+      meta.putOption(StorageConstants.AVRO_SCHEMA_LITERAL, TEST_MULTIPLE_FILES_AVRO_SCHEMA);
     }
 
-    Path table1Path = new Path(testDir, storeType + "_1.data");
-    Appender appender1 = StorageManager.getFileStorageManager(conf).getAppender(null, null, meta, schema, table1Path);
+    Path table1Path = new Path(testDir, dataFormat + "_1.data");
+    Appender appender1 = TablespaceManager.getLocalFs().getAppender(null, null, meta, schema, table1Path);
     appender1.enableStats();
     appender1.init();
     int tupleNum = 10000;
@@ -136,8 +134,8 @@ public class TestMergeScanner {
       assertEquals(tupleNum, stat1.getNumRows().longValue());
     }
 
-    Path table2Path = new Path(testDir, storeType + "_2.data");
-    Appender appender2 = StorageManager.getFileStorageManager(conf).getAppender(null, null, meta, schema, table2Path);
+    Path table2Path = new Path(testDir, dataFormat + "_2.data");
+    Appender appender2 = TablespaceManager.getLocalFs().getAppender(null, null, meta, schema, table2Path);
     appender2.enableStats();
     appender2.init();
 
@@ -168,18 +166,30 @@ public class TestMergeScanner {
     targetSchema.addColumn(schema.getColumn(2));
 
     Scanner scanner = new MergeScanner(conf, schema, meta, TUtil.newList(fragment), targetSchema);
-    assertEquals(isProjectableStorage(meta.getStoreType()), scanner.isProjectable());
+    assertEquals(isProjectableStorage(meta.getDataFormat()), scanner.isProjectable());
 
     scanner.init();
     int totalCounts = 0;
     Tuple tuple;
     while ((tuple = scanner.next()) != null) {
       totalCounts++;
-      if (isProjectableStorage(meta.getStoreType())) {
-        assertNotNull(tuple.get(0));
-        assertNull(tuple.get(1));
-        assertNotNull(tuple.get(2));
-        assertNull(tuple.get(3));
+
+      if (dataFormat.equalsIgnoreCase("RAW")) {
+        assertEquals(4, tuple.size());
+        assertFalse(tuple.isBlankOrNull(0));
+        assertFalse(tuple.isBlankOrNull(1));
+        assertFalse(tuple.isBlankOrNull(2));
+        assertFalse(tuple.isBlankOrNull(3));
+      } else if (scanner.isProjectable()) {
+        assertEquals(2, tuple.size());
+        assertFalse(tuple.isBlankOrNull(0));
+        assertFalse(tuple.isBlankOrNull(1));
+      } else {
+        assertEquals(4, tuple.size());
+        assertFalse(tuple.isBlankOrNull(0));
+        assertTrue(tuple.isBlankOrNull(1));
+        assertFalse(tuple.isBlankOrNull(2));
+        assertTrue(tuple.isBlankOrNull(3));
       }
     }
     scanner.close();
@@ -187,16 +197,15 @@ public class TestMergeScanner {
     assertEquals(tupleNum * 2, totalCounts);
 	}
 
-  private static boolean isProjectableStorage(StoreType type) {
-    switch (type) {
-      case RCFILE:
-      case PARQUET:
-      case SEQUENCEFILE:
-      case CSV:
-      case AVRO:
-        return true;
-      default:
-        return false;
+  private static boolean isProjectableStorage(String type) {
+    if (type.equalsIgnoreCase("RCFILE") ||
+        type.equalsIgnoreCase("PARQUET") ||
+        type.equalsIgnoreCase("TEXT") ||
+        type.equalsIgnoreCase("SEQUENCEFILE") ||
+        type.equalsIgnoreCase("AVRO")) {
+      return true;
+    } else {
+      return false;
     }
   }
 }

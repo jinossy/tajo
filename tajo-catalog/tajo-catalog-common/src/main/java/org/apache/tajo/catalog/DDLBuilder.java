@@ -18,11 +18,17 @@
 
 package org.apache.tajo.catalog;
 
+import com.google.common.base.Function;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
-import org.apache.tajo.common.TajoDataTypes;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
 import org.apache.tajo.util.KeyValueSet;
+import org.apache.tajo.util.StringUtils;
 
-import java.util.Map;
+import java.io.File;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map.Entry;
 
 public class DDLBuilder {
 
@@ -31,8 +37,8 @@ public class DDLBuilder {
 
     sb.append("--\n")
       .append("-- Name: ").append(CatalogUtil.denormalizeIdentifier(desc.getName())).append("; Type: TABLE;")
-      .append(" Storage: ").append(CatalogUtil.getStoreTypeString(desc.getMeta().getStoreType()));
-    sb.append("\n-- Path: ").append(desc.getPath());
+      .append(" Storage: ").append(desc.getMeta().getDataFormat());
+    sb.append("\n-- Path: ").append(desc.getUri());
     sb.append("\n--\n");
     sb.append("CREATE EXTERNAL TABLE ").append(CatalogUtil.denormalizeIdentifier(desc.getName()));
     buildSchema(sb, desc.getSchema());
@@ -54,7 +60,7 @@ public class DDLBuilder {
 
     sb.append("--\n")
         .append("-- Name: ").append(CatalogUtil.denormalizeIdentifier(desc.getName())).append("; Type: TABLE;")
-        .append(" Storage: ").append(CatalogUtil.getStoreTypeString(desc.getMeta().getStoreType()));
+        .append(" Storage: ").append(desc.getMeta().getDataFormat());
     sb.append("\n--\n");
     sb.append("CREATE TABLE ").append(CatalogUtil.denormalizeIdentifier(desc.getName()));
     buildSchema(sb, desc.getSchema());
@@ -69,7 +75,29 @@ public class DDLBuilder {
     return sb.toString();
   }
 
-  private static void buildSchema(StringBuilder sb, Schema schema) {
+  public static String buildDDLForIndex(IndexDesc desc) {
+    StringBuilder sb = new StringBuilder();
+
+    sb.append("--\n")
+        .append("-- Name: ").append(CatalogUtil.denormalizeIdentifier(desc.getName())).append("; Type: INDEX;")
+        .append(" Index Method: ").append(desc.getIndexMethod());
+    sb.append("\n--\n");
+    sb.append("CREATE INDEX ").append(CatalogUtil.denormalizeIdentifier(desc.getName()));
+    sb.append(" on ").append(CatalogUtil.denormalizeIdentifier(desc.getTableName())).append(" ( ");
+
+    for (SortSpec sortSpec : desc.getKeySortSpecs()) {
+      sb.append(sortSpec.getSortKey().getQualifiedName()).append(" ");
+      sb.append(sortSpec.isAscending() ? "asc" : "desc").append(" ");
+      sb.append(sortSpec.isNullFirst() ? "null first" : "null last").append(", ");
+    }
+    sb.replace(sb.length() - 2, sb.length() - 1, " )");
+
+    sb.append(" location '").append(desc.getIndexPath()).append("';");
+
+    return sb.toString();
+  }
+
+  public static void buildSchema(StringBuilder sb, Schema schema) {
     boolean first = true;
 
     sb.append(" (");
@@ -81,38 +109,47 @@ public class DDLBuilder {
       }
 
       sb.append(CatalogUtil.denormalizeIdentifier(column.getSimpleName())).append(" ");
-      TajoDataTypes.DataType dataType = column.getDataType();
-      sb.append(dataType.getType().name());
-      if (column.getDataType().hasLength() && column.getDataType().getLength() > 0) {
-        sb.append(" (").append(column.getDataType().getLength()).append(")");
-      }
+      TypeDesc typeDesc = column.getTypeDesc();
+      sb.append(typeDesc);
     }
     sb.append(")");
   }
 
   private static void buildUsingClause(StringBuilder sb, TableMeta meta) {
-    sb.append(" USING " + CatalogUtil.getStoreTypeString(meta.getStoreType()));
+    sb.append(" USING " +  CatalogUtil.getBackwardCompitableDataFormat(meta.getDataFormat()));
   }
 
-  private static void buildWithClause(StringBuilder sb, TableMeta meta) {
+  private static void buildWithClause(final StringBuilder sb, TableMeta meta) {
     KeyValueSet options = meta.getOptions();
     if (options != null && options.size() > 0) {
-      boolean first = true;
+
       sb.append(" WITH (");
-      for (Map.Entry<String, String> entry : meta.getOptions().getAllKeyValus().entrySet()) {
-        if (first) {
-          first = false;
-        } else {
-          sb.append(", ");
+
+      // sort table properties in an lexicographic order of the property keys.
+      Entry<String, String> [] entries = meta.getOptions().getAllKeyValus().entrySet().toArray(
+          new Entry[meta.getOptions().size()]);
+
+      Arrays.sort(entries, new Comparator<Entry<String, String>>() {
+        @Override
+        public int compare(Entry<String, String> o1, Entry<String, String> o2) {
+          return o1.getKey().compareTo(o2.getKey());
         }
-        sb.append("'").append(entry.getKey()).append("'='").append(entry.getValue()).append("'");
-      }
+      });
+
+      // Join all properties by comma (',')
+      sb.append(StringUtils.join(entries, ", ", new Function<Entry<String, String>, String>() {
+        @Override
+        public String apply(Entry<String, String> e) {
+          return "'" + e.getKey() + "'='" + e.getValue() + "'";
+        }
+      }));
+
       sb.append(")");
     }
   }
 
   private static void buildLocationClause(StringBuilder sb, TableDesc desc) {
-    sb.append(" LOCATION '").append(desc.getPath()).append("'");
+    sb.append(" LOCATION '").append(desc.getUri()).append("'");
   }
 
   private static void buildPartitionClause(StringBuilder sb, TableDesc desc) {
@@ -129,5 +166,43 @@ public class DDLBuilder {
       prefix = ", ";
     }
     sb.append(")");
+  }
+
+  /**
+   * Build alter table add partition statement
+   *
+   * @param table TableDesc to be build
+   * @param partition PartitionDescProto to be build
+   * @return
+   */
+  public static String buildDDLForAddPartition(TableDesc table, PartitionDescProto partition) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("ALTER TABLE ").append(CatalogUtil.denormalizeIdentifier(table.getName()))
+      .append(" ADD IF NOT EXISTS PARTITION (");
+
+
+    List<Column> colums = table.getPartitionMethod().getExpressionSchema().getAllColumns();
+
+    String[] splitPartitionName = partition.getPartitionName().split(File.separator);
+    for(int i = 0; i < splitPartitionName.length; i++) {
+      String[] partitionColumnValue = splitPartitionName[i].split("=");
+      if (i > 0) {
+        sb.append(",");
+      }
+
+      switch (colums.get(i).getDataType().getType()) {
+        case TEXT:
+        case TIME:
+        case TIMESTAMP:
+        case DATE:
+          sb.append(partitionColumnValue[0]).append("='").append(partitionColumnValue[1]).append("'");
+          break;
+        default:
+          sb.append(partitionColumnValue[0]).append("=").append(partitionColumnValue[1]);
+          break;
+      }
+    }
+    sb.append(") LOCATION '").append(partition.getPath()).append("';\n");
+    return sb.toString();
   }
 }

@@ -21,7 +21,7 @@
   <parent>
     <artifactId>tajo-project</artifactId>
     <groupId>org.apache.tajo</groupId>
-    <version>0.10.0-SNAPSHOT</version>
+    <version>0.12.0-SNAPSHOT</version>
 	  <relativePath>../../tajo-project</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
@@ -39,8 +39,8 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
+          <source>1.7</source> <!-- for keeping tajo-client and tajo-jdbc available in 1.7-->
+          <target>1.7</target> <!-- for keeping tajo-client and tajo-jdbc available in 1.7-->
           <encoding>${project.build.sourceEncoding}</encoding>
         </configuration>
       </plugin>

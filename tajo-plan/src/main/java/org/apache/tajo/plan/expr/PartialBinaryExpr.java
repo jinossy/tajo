@@ -18,7 +18,6 @@
 
 package org.apache.tajo.plan.expr;
 
-import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.exception.InvalidOperationException;
@@ -48,18 +47,15 @@ public class PartialBinaryExpr extends BinaryEval {
   }
 
   @Override
-  public Datum eval(Schema schema, Tuple tuple) {
-    throw new InvalidOperationException("ERROR: the partial binary expression cannot be evluated: "
+  public Datum eval(Tuple tuple) {
+    throw new InvalidOperationException("ERROR: the partial binary expression cannot be evaluated: "
             + this.toString());
   }
 
   @Override
   public boolean equals(Object obj) {
     if (obj instanceof PartialBinaryExpr) {
-      PartialBinaryExpr other = (PartialBinaryExpr) obj;
-      return type.equals(other.type) &&
-          leftExpr.equals(other.leftExpr) &&
-          rightExpr.equals(other.rightExpr);
+      return super.equals(obj);
     }
     return false;
   }

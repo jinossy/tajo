@@ -1,0 +1,3 @@
+ERROR: syntax error at or near "-"
+LINE 1: select * from unknown-table
+                             ^

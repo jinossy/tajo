@@ -24,9 +24,6 @@ import java.util.Stack;
 
 public interface PhysicalExecutorVisitor<CONTEXT, RESULT> {
 
-  RESULT visitBNLJoin(CONTEXT context, BNLJoinExec exec, Stack<PhysicalExec> stack)
-      throws PhysicalPlanningException;
-
   RESULT visitBSTIndexScan(CONTEXT context, BSTIndexScanExec exec, Stack<PhysicalExec> stack)
       throws PhysicalPlanningException;
 
@@ -76,12 +73,6 @@ public interface PhysicalExecutorVisitor<CONTEXT, RESULT> {
   RESULT visitMergeJoin(CONTEXT context, MergeJoinExec exec, Stack<PhysicalExec> stack)
       throws PhysicalPlanningException;
 
-  RESULT visitNLJoin(CONTEXT context, NLJoinExec exec, Stack<PhysicalExec> stack)
-      throws PhysicalPlanningException;
-
-  RESULT visitNLLeftOuterJoin(CONTEXT context, NLLeftOuterJoinExec exec, Stack<PhysicalExec> stack)
-      throws PhysicalPlanningException;
-
   RESULT visitProjection(CONTEXT context, ProjectionExec exec, Stack<PhysicalExec> stack)
       throws PhysicalPlanningException;
 
@@ -105,5 +96,8 @@ public interface PhysicalExecutorVisitor<CONTEXT, RESULT> {
       throws PhysicalPlanningException;
 
   RESULT visitStoreTable(CONTEXT context, StoreTableExec exec, Stack<PhysicalExec> stack)
+      throws PhysicalPlanningException;
+
+  RESULT visitStoreIndex(CONTEXT context, StoreIndexExec exec, Stack<PhysicalExec> stack)
       throws PhysicalPlanningException;
 }

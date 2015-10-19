@@ -31,8 +31,8 @@ import org.apache.tajo.plan.logical.InsertNode;
 import org.apache.tajo.plan.logical.PersistentStoreNode;
 import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.storage.Appender;
-import org.apache.tajo.storage.FileStorageManager;
-import org.apache.tajo.storage.StorageManager;
+import org.apache.tajo.storage.FileTablespace;
+import org.apache.tajo.storage.TablespaceManager;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.unit.StorageUnit;
 import org.apache.tajo.worker.TaskAttemptContext;
@@ -48,7 +48,6 @@ public class StoreTableExec extends UnaryPhysicalExec {
   private PersistentStoreNode plan;
   private TableMeta meta;
   private Appender appender;
-  private Tuple tuple;
 
   // for file punctuation
   private TableStats sumStats;                  // for aggregating all stats of written files
@@ -83,7 +82,7 @@ public class StoreTableExec extends UnaryPhysicalExec {
   public void openNewFile(int suffixId) throws IOException {
     Schema appenderSchema = (plan instanceof InsertNode) ? ((InsertNode) plan).getTableSchema() : outSchema;
 
-    if (PlannerUtil.isFileStorageType(meta.getStoreType())) {
+    if (PlannerUtil.isFileStorageType(meta.getDataFormat())) {
       String prevFile = null;
 
       lastFileName = context.getOutputPath();
@@ -93,17 +92,21 @@ public class StoreTableExec extends UnaryPhysicalExec {
         lastFileName = new Path(lastFileName + "_" + suffixId);
       }
 
-      appender = ((FileStorageManager)StorageManager.getFileStorageManager(context.getConf()))
-          .getAppender(meta, appenderSchema, lastFileName);
+      FileTablespace space = TablespaceManager.get(lastFileName.toUri());
+      appender = space.getAppender(meta, appenderSchema, lastFileName);
 
       if (suffixId > 0) {
         LOG.info(prevFile + " exceeds " + SessionVars.MAX_OUTPUT_FILE_SIZE.keyname() + " (" + maxPerFileSize + " MB), " +
             "The remain output will be written into " + lastFileName.toString());
       }
     } else {
-      appender = StorageManager.getStorageManager(context.getConf(), meta.getStoreType()).getAppender(
+      Path stagingDir = context.getQueryContext().getStagingDir();
+      appender = TablespaceManager.get(stagingDir.toUri()).getAppender(
           context.getQueryContext(),
-          context.getTaskId(), meta, appenderSchema, context.getQueryContext().getStagingDir());
+          context.getTaskId(),
+          meta,
+          appenderSchema,
+          stagingDir);
     }
 
     appender.enableStats();
@@ -115,7 +118,8 @@ public class StoreTableExec extends UnaryPhysicalExec {
    */
   @Override
   public Tuple next() throws IOException {
-    while((tuple = child.next()) != null) {
+    Tuple tuple;
+    while(!context.isStopped() && (tuple = child.next()) != null) {
       appender.addTuple(tuple);
 
       if (maxPerFileSize > 0 && maxPerFileSize <= appender.getEstimatedOutputSize()) {

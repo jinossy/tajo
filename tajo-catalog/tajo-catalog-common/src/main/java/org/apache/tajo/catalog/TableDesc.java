@@ -18,15 +18,14 @@
 
 package org.apache.tajo.catalog;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.annotations.Expose;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.catalog.json.CatalogGsonHelper;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
-import org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import org.apache.tajo.catalog.proto.CatalogProtos.TableDescProto;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.common.ProtoObject;
@@ -37,25 +36,23 @@ import org.apache.tajo.util.TUtil;
 import java.net.URI;
 
 public class TableDesc implements ProtoObject<TableDescProto>, GsonObject, Cloneable {
-  private final Log LOG = LogFactory.getLog(TableDesc.class);
-
 	@Expose protected String tableName;                        // required
-  @Expose protected Schema schema;
+  @Expose protected Schema schema;                           // optional for self-describing tables
   @Expose protected TableMeta meta;                          // required
   /** uri is set if external flag is TRUE. */
-  @Expose protected URI uri;                                // optional
+  @Expose protected URI uri;                                 // required
   @Expose	protected TableStats stats;                        // optional
   /** the description of table partition */
   @Expose protected PartitionMethodDesc partitionMethodDesc; // optional
   /** True if it is an external table. False if it is a managed table. */
   @Expose protected Boolean external;                        // optional
 
+  @VisibleForTesting
 	public TableDesc() {
 	}
 
-  public TableDesc(String tableName, Schema schema, TableMeta meta,
-                   URI uri, boolean external) {
-    this();
+  public TableDesc(String tableName, @Nullable Schema schema, TableMeta meta,
+                   @Nullable URI uri, boolean external) {
     this.tableName = tableName;
     this.schema = schema;
     this.meta = meta;
@@ -63,16 +60,17 @@ public class TableDesc implements ProtoObject<TableDescProto>, GsonObject, Clone
     this.external = external;
   }
 
-	public TableDesc(String tableName, Schema schema, TableMeta meta, URI path) {
+	public TableDesc(String tableName, @Nullable Schema schema, TableMeta meta, @Nullable URI path) {
 		this(tableName, schema, meta, path, true);
 	}
 	
-	public TableDesc(String tableName, Schema schema, StoreType type, KeyValueSet options, URI path) {
-	  this(tableName, schema, new TableMeta(type, options), path);
+	public TableDesc(String tableName, @Nullable Schema schema, String dataFormat, KeyValueSet options,
+                   @Nullable URI path) {
+	  this(tableName, schema, new TableMeta(dataFormat, options), path);
 	}
 	
 	public TableDesc(TableDescProto proto) {
-	  this(proto.getTableName(), new Schema(proto.getSchema()),
+	  this(proto.getTableName(), proto.hasSchema() ? new Schema(proto.getSchema()) : null,
         new TableMeta(proto.getMeta()), proto.hasPath() ? URI.create(proto.getPath()) : null, proto.getIsExternal());
     if(proto.hasStats()) {
       this.stats = new TableStats(proto.getStats());
@@ -90,11 +88,11 @@ public class TableDesc implements ProtoObject<TableDescProto>, GsonObject, Clone
     return this.tableName;
   }
 	
-	public void setPath(URI uri) {
+	public void setUri(URI uri) {
 		this.uri = uri;
 	}
 	
-  public URI getPath() {
+  public URI getUri() {
     return this.uri;
   }
 
@@ -108,6 +106,14 @@ public class TableDesc implements ProtoObject<TableDescProto>, GsonObject, Clone
 
   public void setSchema(Schema schem) {
     this.schema = schem;
+  }
+
+  public boolean hasSchema() {
+    return schema != null;
+  }
+
+  public boolean hasEmptySchema() {
+    return schema.size() == 0;
   }
 	
   public Schema getSchema() {
@@ -171,7 +177,8 @@ public class TableDesc implements ProtoObject<TableDescProto>, GsonObject, Clone
       eq = eq && TUtil.checkEquals(uri, other.uri);
       eq = eq && TUtil.checkEquals(partitionMethodDesc, other.partitionMethodDesc);
       eq = eq && TUtil.checkEquals(external, other.external);
-      return eq && TUtil.checkEquals(stats, other.stats);
+      eq = eq && TUtil.checkEquals(stats, other.stats);
+      return eq;
     }
     
     return false;   
@@ -180,7 +187,7 @@ public class TableDesc implements ProtoObject<TableDescProto>, GsonObject, Clone
 	public Object clone() throws CloneNotSupportedException {
 	  TableDesc desc = (TableDesc) super.clone();
 	  desc.tableName = tableName;
-    desc.schema = (Schema) schema.clone();
+    desc.schema = schema != null ? (Schema) schema.clone() : null;
     desc.meta = (TableMeta) meta.clone();
     desc.uri = uri;
     desc.stats = stats != null ? (TableStats) stats.clone() : null;

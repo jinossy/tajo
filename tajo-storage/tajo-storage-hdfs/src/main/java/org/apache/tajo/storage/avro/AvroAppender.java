@@ -30,15 +30,12 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.tajo.TaskAttemptId;
-import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStats;
-import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.storage.FileAppender;
 import org.apache.tajo.storage.TableStatistics;
 import org.apache.tajo.storage.Tuple;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -73,17 +70,15 @@ public class AvroAppender extends FileAppender {
    */
   public void init() throws IOException {
     FileSystem fs = path.getFileSystem(conf);
-    if (!fs.exists(path.getParent())) {
-      throw new FileNotFoundException(path.toString());
-    }
-    FSDataOutputStream outputStream = fs.create(path);
+
+    FSDataOutputStream outputStream = fs.create(path, false);
 
     avroSchema = AvroUtil.getAvroSchema(meta, conf);
     avroFields = avroSchema.getFields();
 
     DatumWriter<GenericRecord> datumWriter =
-        new GenericDatumWriter<GenericRecord>(avroSchema);
-    dataFileWriter = new DataFileWriter<GenericRecord>(datumWriter);
+            new GenericDatumWriter<>(avroSchema);
+    dataFileWriter = new DataFileWriter<>(datumWriter);
     dataFileWriter.create(avroSchema, outputStream);
 
     if (enabledStats) {
@@ -104,7 +99,7 @@ public class AvroAppender extends FileAppender {
   }
 
   private Object getPrimitive(Tuple tuple, int i, Schema.Type avroType) {
-    if (tuple.get(i) instanceof NullDatum) {
+    if (tuple.isBlankOrNull(i)) {
       return null;
     }
     switch (avroType) {
@@ -139,10 +134,7 @@ public class AvroAppender extends FileAppender {
   public void addTuple(Tuple tuple) throws IOException {
     GenericRecord record = new GenericData.Record(avroSchema);
     for (int i = 0; i < schema.size(); ++i) {
-      Column column = schema.getColumn(i);
-      if (enabledStats) {
-        stats.analyzeField(i, tuple.get(i));
-      }
+
       Object value;
       Schema.Field avroField = avroFields.get(i);
       Schema.Type avroType = avroField.schema().getType();

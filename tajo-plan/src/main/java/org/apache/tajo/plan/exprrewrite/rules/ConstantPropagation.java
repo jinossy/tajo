@@ -46,7 +46,7 @@ public class ConstantPropagation extends SimpleEvalNodeVisitor<LogicalPlanner.Pl
         return evalNode; // otherwise, it just returns.
       }
     } else {
-      return visit(context, evalNode, new Stack<EvalNode>());
+      return visit(context, evalNode, new Stack<>());
     }
   }
 
@@ -72,7 +72,7 @@ public class ConstantPropagation extends SimpleEvalNodeVisitor<LogicalPlanner.Pl
   }
 
   @Override
-  public EvalNode visitUnaryEval(LogicalPlanner.PlanContext context, Stack<EvalNode> stack, UnaryEval unaryEval) {
+  public EvalNode visitUnaryEval(LogicalPlanner.PlanContext context, UnaryEval unaryEval, Stack<EvalNode> stack) {
     stack.push(unaryEval);
 
     if (unaryEval.getChild().getType() == EvalType.FIELD) {

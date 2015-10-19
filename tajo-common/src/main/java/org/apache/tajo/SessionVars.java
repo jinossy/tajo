@@ -71,7 +71,7 @@ public enum SessionVars implements ConfigKey {
   ON_ERROR_STOP(ConfVars.$CLI_ERROR_STOP, "tsql will exist if an error occurs.", CLI_SIDE_VAR),
 
   // Timezone & Date ----------------------------------------------------------
-  TIMEZONE(ConfVars.$TIMEZONE, "Sets timezone", CLI_SIDE_VAR),
+  TIMEZONE(ConfVars.$TIMEZONE, "Sets timezone", DEFAULT),
   DATE_ORDER(ConfVars.$DATE_ORDER, "date order (default is YMD)", CLI_SIDE_VAR),
 
   // Locales and Character set ------------------------------------------------
@@ -89,12 +89,17 @@ public enum SessionVars implements ConfigKey {
   // Query and Optimization ---------------------------------------------------
 
   // for distributed query strategies
-  BROADCAST_TABLE_SIZE_LIMIT(ConfVars.$DIST_QUERY_BROADCAST_JOIN_THRESHOLD, "limited size (bytes) of broadcast table",
-      DEFAULT, Long.class, Validators.min("0")),
+  BROADCAST_NON_CROSS_JOIN_THRESHOLD(ConfVars.$DIST_QUERY_BROADCAST_NON_CROSS_JOIN_THRESHOLD,
+      "restriction for the total size of broadcasted table for non-cross join (kb)", DEFAULT, Long.class,
+      Validators.min("0")),
+  BROADCAST_CROSS_JOIN_THRESHOLD(ConfVars.$DIST_QUERY_BROADCAST_CROSS_JOIN_THRESHOLD,
+      "restriction for the total size of broadcasted table for cross join (kb)", DEFAULT, Long.class,
+      Validators.min("0")),
 
   JOIN_TASK_INPUT_SIZE(ConfVars.$DIST_QUERY_JOIN_TASK_VOLUME, "join task input size (mb) ", DEFAULT,
       Integer.class, Validators.min("1")),
-  SORT_TASK_INPUT_SIZE(ConfVars.$DIST_QUERY_SORT_TASK_VOLUME, "sort task input size (mb)", DEFAULT),
+  SORT_TASK_INPUT_SIZE(ConfVars.$DIST_QUERY_SORT_TASK_VOLUME, "sort task input size (mb)", DEFAULT,
+      Integer.class, Validators.min("1")),
   GROUPBY_TASK_INPUT_SIZE(ConfVars.$DIST_QUERY_GROUPBY_TASK_VOLUME, "group by task input size (mb)", DEFAULT),
 
   JOIN_PER_SHUFFLE_SIZE(ConfVars.$DIST_QUERY_JOIN_PARTITION_VOLUME, "shuffle output size for join (mb)", DEFAULT,
@@ -102,10 +107,13 @@ public enum SessionVars implements ConfigKey {
   GROUPBY_PER_SHUFFLE_SIZE(ConfVars.$DIST_QUERY_GROUPBY_PARTITION_VOLUME, "shuffle output size for sort (mb)", DEFAULT,
       Integer.class, Validators.min("1")),
   TABLE_PARTITION_PER_SHUFFLE_SIZE(ConfVars.$DIST_QUERY_TABLE_PARTITION_VOLUME,
-      "shuffle output size for partition table write (mb)", DEFAULT, Long.class, Validators.min("1")),
+      "shuffle output size for partition table write (mb)", DEFAULT, Integer.class, Validators.min("1")),
 
   GROUPBY_MULTI_LEVEL_ENABLED(ConfVars.$GROUPBY_MULTI_LEVEL_ENABLED, "Multiple level groupby enabled", DEFAULT,
       Boolean.class, Validators.bool()),
+
+  QUERY_EXECUTE_PARALLEL(ConfVars.$QUERY_EXECUTE_PARALLEL_MAX, "Maximum parallel running of execution blocks for a query",
+      DEFAULT, Integer.class, Validators.min("1")),
 
   // for physical Executors
   EXTSORT_BUFFER_SIZE(ConfVars.$EXECUTOR_EXTERNAL_SORT_BUFFER_SIZE, "sort buffer size for external sort (mb)", DEFAULT,
@@ -123,6 +131,15 @@ public enum SessionVars implements ConfigKey {
   NULL_CHAR(ConfVars.$TEXT_NULL, "null char of text file output", DEFAULT),
   CODEGEN(ConfVars.$CODEGEN, "Runtime code generation enabled (experiment)", DEFAULT),
 
+  // for index
+  INDEX_ENABLED(ConfVars.$INDEX_ENABLED, "index scan enabled", DEFAULT),
+  INDEX_SELECTIVITY_THRESHOLD(ConfVars.$INDEX_SELECTIVITY_THRESHOLD, "the selectivity threshold for index scan", DEFAULT),
+
+  // for partition overwrite
+  PARTITION_NO_RESULT_OVERWRITE_ENABLED(ConfVars.$PARTITION_NO_RESULT_OVERWRITE_ENABLED,
+    "If True, a partitioned table is overwritten even if a sub query leads to no result. "
+    + "Otherwise, the table data will be kept if there is no result", DEFAULT),
+
   // Behavior Control ---------------------------------------------------------
   ARITHABORT(ConfVars.$BEHAVIOR_ARITHMETIC_ABORT,
       "If true, a running query will be terminated when an overflow or divide-by-zero occurs.", DEFAULT),
@@ -130,6 +147,10 @@ public enum SessionVars implements ConfigKey {
   // ResultSet ----------------------------------------------------------------
   FETCH_ROWNUM(ConfVars.$RESULT_SET_FETCH_ROWNUM, "Sets the number of rows at a time from Master", DEFAULT,
       Integer.class, Validators.min("0")),
+  BLOCK_ON_RESULT(ConfVars.$RESULT_SET_BLOCK_WAIT, "Whether to block result set on query execution", DEFAULT,
+      Boolean.class, Validators.bool()),
+  COMPRESSED_RESULT_TRANSFER(ConfVars.$COMPRESSED_RESULT_TRANSFER, "Use compression to optimize result transmission.",
+      CLI_SIDE_VAR, Boolean.class, Validators.bool()),
 
   //-------------------------------------------------------------------------------
   // Only for Unit Testing
@@ -139,10 +160,11 @@ public enum SessionVars implements ConfigKey {
   TEST_JOIN_OPT_ENABLED(ConfVars.$TEST_JOIN_OPT_ENABLED, "(test only) join optimization enabled", TEST_VAR),
   TEST_FILTER_PUSHDOWN_ENABLED(ConfVars.$TEST_FILTER_PUSHDOWN_ENABLED, "filter push down enabled", TEST_VAR),
   TEST_MIN_TASK_NUM(ConfVars.$TEST_MIN_TASK_NUM, "(test only) min task num", TEST_VAR),
+  TEST_PLAN_SHAPE_FIX_ENABLED(ConfVars.$TEST_PLAN_SHAPE_FIX_ENABLED, "(test only) plan shape fix enabled", TEST_VAR),
   ;
 
-  public static Map<String, SessionVars> SESSION_VARS = Maps.newHashMap();
-  public static Map<String, SessionVars> DEPRECATED_SESSION_VARS = Maps.newHashMap();
+  public static final Map<String, SessionVars> SESSION_VARS = Maps.newHashMap();
+  public static final Map<String, SessionVars> DEPRECATED_SESSION_VARS = Maps.newHashMap();
 
   static {
     for (SessionVars var : SessionVars.values()) {

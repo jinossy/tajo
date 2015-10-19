@@ -18,7 +18,6 @@
 
 package org.apache.tajo.master.exec.prehook;
 
-import org.apache.hadoop.fs.Path;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.plan.LogicalPlan;
 import org.apache.tajo.plan.logical.InsertNode;
@@ -39,23 +38,21 @@ public class InsertIntoHook implements DistributedQueryHook {
 
     // Set QueryContext settings, such as output table name and output path.
     // It also remove data files if overwrite is true.
-    Path outputPath;
     if (insertNode.hasTargetTable()) { // INSERT INTO [TB_NAME]
       queryContext.setOutputTable(insertNode.getTableName());
-      queryContext.setOutputPath(insertNode.getPath());
       if (insertNode.hasPartition()) {
         queryContext.setPartitionMethod(insertNode.getPartitionMethod());
       }
     } else { // INSERT INTO LOCATION ...
       // When INSERT INTO LOCATION, must not set output table.
-      outputPath = insertNode.getPath();
       queryContext.setFileOutput();
-      queryContext.setOutputPath(outputPath);
     }
+
+    // Set the final output table uri
+    queryContext.setOutputPath(insertNode.getUri());
 
     if (insertNode.isOverwrite()) {
       queryContext.setOutputOverwrite();
     }
-
   }
 }

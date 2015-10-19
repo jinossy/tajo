@@ -20,18 +20,19 @@ package org.apache.tajo.storage.hbase;
 
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.tajo.catalog.Schema;
-import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.exception.InvalidTablePropertyException;
+import org.apache.tajo.exception.MissingTablePropertyException;
 import org.apache.tajo.util.BytesUtils;
+import org.apache.tajo.util.KeyValueSet;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class ColumnMapping {
-  private TableMeta tableMeta;
   private Schema schema;
-  private char rowKeyDelimiter;
+  private KeyValueSet tableProperty;
 
+  private char rowKeyDelimiter;
   private String hbaseTableName;
 
   private int[] rowKeyFieldIndexes;
@@ -45,16 +46,16 @@ public class ColumnMapping {
 
   private int numRowKeys;
 
-  public ColumnMapping(Schema schema, TableMeta tableMeta) throws IOException {
+  public ColumnMapping(Schema schema, KeyValueSet tableProperty)
+      throws MissingTablePropertyException, InvalidTablePropertyException {
     this.schema = schema;
-    this.tableMeta = tableMeta;
-
+    this.tableProperty = tableProperty;
     init();
   }
 
-  public void init() throws IOException {
-    hbaseTableName = tableMeta.getOption(HBaseStorageConstants.META_TABLE_KEY);
-    String delim = tableMeta.getOption(HBaseStorageConstants.META_ROWKEY_DELIMITER, "").trim();
+  public void init() throws MissingTablePropertyException, InvalidTablePropertyException {
+    hbaseTableName = tableProperty.get(HBaseStorageConstants.META_TABLE_KEY);
+    String delim = tableProperty.get(HBaseStorageConstants.META_ROWKEY_DELIMITER, "").trim();
     if (delim.length() > 0) {
       rowKeyDelimiter = delim.charAt(0);
     }
@@ -70,28 +71,30 @@ public class ColumnMapping {
       rowKeyFieldIndexes[i] = -1;
     }
 
-    String columnMapping = tableMeta.getOption(HBaseStorageConstants.META_COLUMNS_KEY, "");
+    String columnMapping = tableProperty.get(HBaseStorageConstants.META_COLUMNS_KEY, "");
     if (columnMapping == null || columnMapping.isEmpty()) {
-      throw new IOException("'columns' property is required.");
+      throw new MissingTablePropertyException(HBaseStorageConstants.META_COLUMNS_KEY, hbaseTableName);
     }
 
     String[] columnMappingTokens = columnMapping.split(",");
 
-    if (columnMappingTokens.length != schema.getColumns().size()) {
-      throw new IOException("The number of mapped HBase columns is great than the number of Tajo table columns");
+    if (columnMappingTokens.length != schema.getRootColumns().size()) {
+      throw new InvalidTablePropertyException(
+          "mapping column pairs must be more than number of columns in the schema", hbaseTableName);
     }
 
     int index = 0;
     for (String eachToken: columnMappingTokens) {
       mappingColumns[index] = new byte[2][];
 
-      byte[][] mappingTokens = BytesUtils.splitPreserveAllTokens(eachToken.trim().getBytes(), ':');
+      byte[][] mappingTokens = BytesUtils.splitTrivial(eachToken.trim().getBytes(), (byte)':');
 
       if (mappingTokens.length == 3) {
         if (mappingTokens[0].length == 0) {
           // cfname
-          throw new IOException(eachToken + " 'column' attribute should be '<cfname>:key:' or '<cfname>:key:#b' " +
-              "or '<cfname>:value:' or '<cfname>:value:#b'");
+          throw new InvalidTablePropertyException(eachToken +
+              " 'column' attribute should be '<cfname>:key:' or '<cfname>:key:#b' " +
+              "or '<cfname>:value:' or '<cfname>:value:#b'", hbaseTableName);
         }
         //<cfname>:key: or <cfname>:value:
         if (mappingTokens[2].length != 0) {
@@ -99,8 +102,9 @@ public class ColumnMapping {
           if ("#b".equals(binaryOption)) {
             isBinaryColumns[index] = true;
           } else {
-            throw new IOException(eachToken + " 'column' attribute should be '<cfname>:key:' or '<cfname>:key:#b' " +
-                "or '<cfname>:value:' or '<cfname>:value:#b'");
+            throw new InvalidTablePropertyException(eachToken +
+                " 'column' attribute should be '<cfname>:key:' or '<cfname>:key:#b' " +
+                "or '<cfname>:value:' or '<cfname>:value:#b'", hbaseTableName);
           }
         }
         mappingColumns[index][0] = mappingTokens[0];
@@ -110,7 +114,9 @@ public class ColumnMapping {
         } else if (HBaseStorageConstants.VALUE_COLUMN_MAPPING.equalsIgnoreCase(keyOrValue)) {
           isColumnValues[index] = true;
         } else {
-          throw new IOException(eachToken + " 'column' attribute should be '<cfname>:key:' or '<cfname>:value:'");
+          throw new InvalidTablePropertyException(eachToken +
+              " 'column' attribute should be '<cfname>:key:' or '<cfname>:value:'",
+              hbaseTableName);
         }
       } else if (mappingTokens.length == 2) {
         //<cfname>: or <cfname>:<qualifier> or :key
@@ -123,7 +129,8 @@ public class ColumnMapping {
           isBinaryColumns[index] = rowKeyMapping.isBinary();
           if (!cfName.isEmpty()) {
             if (rowKeyDelimiter == 0) {
-              throw new IOException("hbase.rowkey.delimiter is required.");
+              throw new InvalidTablePropertyException("hbase.rowkey.delimiter is required.",
+                  hbaseTableName);
             }
             rowKeyFieldIndexes[index] = Integer.parseInt(cfName);
           } else {
@@ -131,7 +138,9 @@ public class ColumnMapping {
           }
         } else {
           if (cfName.isEmpty()) {
-            throw new IOException(eachToken + " 'column' attribute should be '<cfname>:key:' or '<cfname>:value:'");
+            throw new InvalidTablePropertyException(eachToken +
+                " 'column' attribute should be '<cfname>:key:' or '<cfname>:value:'",
+                hbaseTableName);
           }
           if (cfName != null) {
             mappingColumns[index][0] = Bytes.toBytes(cfName);
@@ -150,7 +159,8 @@ public class ColumnMapping {
           }
         }
       } else {
-        throw new IOException(eachToken + " 'column' attribute '[cfname]:[qualfier]:'");
+        throw new InvalidTablePropertyException(eachToken + " 'column' attribute '[cfname]:[qualfier]:'"
+            , hbaseTableName);
       }
 
       index++;
@@ -158,7 +168,7 @@ public class ColumnMapping {
   }
 
   public List<String> getColumnFamilyNames() {
-    List<String> cfNames = new ArrayList<String>();
+    List<String> cfNames = new ArrayList<>();
 
     for (byte[][] eachCfName: mappingColumns) {
       if (eachCfName != null && eachCfName.length > 0 && eachCfName[0] != null) {
@@ -230,6 +240,10 @@ public class ColumnMapping {
     return numRowKeys;
   }
 
+  public int getNumColumns() {
+    return schema.size();
+  }
+  
   public boolean[] getIsColumnValues() {
     return isColumnValues;
   }

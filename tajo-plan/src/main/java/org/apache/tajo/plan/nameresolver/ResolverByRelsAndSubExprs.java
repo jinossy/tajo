@@ -20,23 +20,30 @@ package org.apache.tajo.plan.nameresolver;
 
 import org.apache.tajo.algebra.ColumnReferenceExpr;
 import org.apache.tajo.catalog.Column;
-import org.apache.tajo.catalog.exception.NoSuchColumnException;
+import org.apache.tajo.exception.AmbiguousTableException;
+import org.apache.tajo.exception.UndefinedColumnException;
+import org.apache.tajo.exception.UndefinedTableException;
+import org.apache.tajo.exception.AmbiguousColumnException;
 import org.apache.tajo.plan.LogicalPlan;
-import org.apache.tajo.plan.PlanningException;
 
 public class ResolverByRelsAndSubExprs extends NameResolver {
   @Override
-  public Column resolve(LogicalPlan plan, LogicalPlan.QueryBlock block, ColumnReferenceExpr columnRef)
-      throws PlanningException {
+  public Column resolve(LogicalPlan plan,
+                        LogicalPlan.QueryBlock block,
+                        ColumnReferenceExpr columnRef,
+                        boolean includeSeflDescTable)
+      throws AmbiguousColumnException, AmbiguousTableException, UndefinedColumnException, UndefinedTableException {
 
-    Column column = resolveFromRelsWithinBlock(plan, block, columnRef);
-    if (column == null) {
-      column =  resolveFromCurrentAndChildNode(block, columnRef);
+    Column column = resolveFromRelsWithinBlock(plan, block, columnRef, includeSeflDescTable);
+    if (column != null) {
+      return column;
     }
 
-    if (column == null) {
-      throw new NoSuchColumnException(columnRef.getCanonicalName());
+    column = resolveFromCurrentAndChildNode(block, columnRef);
+    if (column != null) {
+      return column;
     }
-    return column;
+
+    throw new UndefinedColumnException(columnRef.getCanonicalName());
   }
 }

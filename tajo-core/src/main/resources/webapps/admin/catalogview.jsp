@@ -24,14 +24,20 @@
 <%@ page import="org.apache.tajo.catalog.TableDesc" %>
 <%@ page import="org.apache.tajo.catalog.partition.PartitionMethodDesc" %>
 <%@ page import="org.apache.tajo.master.TajoMaster" %>
-<%@ page import="org.apache.tajo.ha.HAService" %>
+<%@ page import="org.apache.tajo.service.ServiceTracker" %>
 <%@ page import="org.apache.tajo.util.FileUtil" %>
 <%@ page import="org.apache.tajo.webapp.StaticHttpServer" %>
 <%@ page import="java.util.Collection" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.util.Map" %>
+<%@ page import="java.net.InetSocketAddress" %>
 <%
   TajoMaster master = (TajoMaster) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
+
+  String[] masterName = master.getMasterName().split(":");
+  InetSocketAddress socketAddress = new InetSocketAddress(masterName[0], Integer.parseInt(masterName[1]));
+  String masterLabel = socketAddress.getAddress().getHostName()+ ":" + socketAddress.getPort();
+
   CatalogService catalog = master.getCatalog();
 
   String catalogType = request.getParameter("type");
@@ -59,10 +65,10 @@
   //TODO filter with database
   Collection<String> tableNames = catalog.getAllTableNames(selectedDatabase);
 
-  HAService haService = master.getContext().getHAService();
+  ServiceTracker haService = master.getContext().getHAService();
   String activeLabel = "";
   if (haService != null) {
-    if (haService.isActiveStatus()) {
+    if (haService.isActiveMaster()) {
       activeLabel = "<font color='#1e90ff'>(active)</font>";
     } else {
       activeLabel = "<font color='#1e90ff'>(backup)</font>";
@@ -80,7 +86,7 @@
 <body>
 <%@ include file="header.jsp"%>
 <div class='contents'>
-  <h2>Tajo Master: <%=master.getMasterName()%> <%=activeLabel%></h2>
+  <h2>Tajo Master: <%=masterLabel%> <%=activeLabel%></h2>
   <hr/>
   <h3>Catalog</h3>
   <div>
@@ -142,7 +148,7 @@
           <div style='margin-top:5px'>
 <%
     if(tableDesc != null) {
-      List<Column> columns = tableDesc.getSchema().getColumns();
+      List<Column> columns = tableDesc.getSchema().getRootColumns();
       out.write("<table border='1' class='border_table'><tr><th>No</th><th>Column name</th><th>Type</th></tr>");
       int columnIndex = 1;
       for(Column eachColumn: columns) {
@@ -154,7 +160,7 @@
 
       if (tableDesc.getPartitionMethod() != null) {
         PartitionMethodDesc partition = tableDesc.getPartitionMethod();
-        List<Column> partitionColumns = partition.getExpressionSchema().getColumns();
+        List<Column> partitionColumns = partition.getExpressionSchema().getRootColumns();
         String partitionColumnStr = "";
         String prefix = "";
         for (Column eachColumn: partitionColumns) {
@@ -179,8 +185,8 @@
           <div style='margin-top:10px'>
             <div style=''>Detail</div>
             <table border="1" class='border_table'>
-              <tr><td width='100'>Table path</td><td width='410'><%=tableDesc.getPath()%></td></tr>
-              <tr><td>Store type</td><td><%=tableDesc.getMeta().getStoreType()%></td></tr>
+              <tr><td width='100'>Table path</td><td width='410'><%=tableDesc.getUri()%></td></tr>
+              <tr><td>Store type</td><td><%=tableDesc.getMeta().getDataFormat()%></td></tr>
               <tr><td># rows</td><td><%=(tableDesc.hasStats() ? ("" + tableDesc.getStats().getNumRows()) : "-")%></td></tr>
               <tr><td>Volume</td><td><%=(tableDesc.hasStats() ? FileUtil.humanReadableByteCount(tableDesc.getStats().getNumBytes(),true) : "-")%></td></tr>
               <tr><td>Options</td><td><%=optionStr%></td></tr>

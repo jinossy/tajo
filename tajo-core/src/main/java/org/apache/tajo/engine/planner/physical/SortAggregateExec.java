@@ -18,7 +18,7 @@
 
 package org.apache.tajo.engine.planner.physical;
 
-import org.apache.tajo.datum.NullDatum;
+import org.apache.tajo.catalog.Column;
 import org.apache.tajo.plan.function.FunctionContext;
 import org.apache.tajo.plan.logical.GroupbyNode;
 import org.apache.tajo.storage.Tuple;
@@ -42,26 +42,40 @@ import java.io.IOException;
  * it makes an output tuple.
  */
 public class SortAggregateExec extends AggregationExec {
+  private final int groupingKeyIds[];
   private Tuple lastKey = null;
+  private final Tuple currentKey;
+  private final Tuple outTuple;
   private boolean finished = false;
   private FunctionContext contexts[];
 
   public SortAggregateExec(TaskAttemptContext context, GroupbyNode plan, PhysicalExec child) throws IOException {
     super(context, plan, child);
     contexts = new FunctionContext[plan.getAggFunctions() == null ? 0 : plan.getAggFunctions().length];
+
+    final Column [] keyColumns = plan.getGroupingColumns();
+    groupingKeyIds = new int[groupingKeyNum];
+    Column col;
+    for (int idx = 0; idx < plan.getGroupingColumns().length; idx++) {
+      col = keyColumns[idx];
+      if (col.hasQualifier()) {
+        groupingKeyIds[idx] = inSchema.getColumnId(col.getQualifiedName());
+      } else {
+        groupingKeyIds[idx] = inSchema.getColumnIdByName(col.getSimpleName());
+      }
+    }
+    currentKey = new VTuple(groupingKeyNum);
+    outTuple = new VTuple(outSchema.size());
   }
 
   @Override
   public Tuple next() throws IOException {
-    Tuple currentKey;
     Tuple tuple = null;
-    Tuple outputTuple = null;
 
     while(!context.isStopped() && (tuple = child.next()) != null) {
       // get a key tuple
-      currentKey = new VTuple(groupingKeyIds.length);
       for(int i = 0; i < groupingKeyIds.length; i++) {
-        currentKey.put(i, tuple.get(groupingKeyIds[i]));
+        currentKey.put(i, tuple.asDatum(groupingKeyIds[i]));
       }
 
       /** Aggregation State */
@@ -72,37 +86,36 @@ public class SortAggregateExec extends AggregationExec {
 
             // Merge when aggregator doesn't receive NullDatum
             if (!(groupingKeyNum == 0 && aggFunctionsNum == tuple.size()
-                && tuple.get(i) == NullDatum.get())) {
-              aggFunctions[i].merge(contexts[i], inSchema, tuple);
+                && tuple.isBlankOrNull(i))) {
+              aggFunctions[i].merge(contexts[i], tuple);
             }
           }
-          lastKey = currentKey;
+          lastKey = new VTuple(currentKey.getValues());
         } else {
           // aggregate
           for (int i = 0; i < aggFunctionsNum; i++) {
-            aggFunctions[i].merge(contexts[i], inSchema, tuple);
+            aggFunctions[i].merge(contexts[i], tuple);
           }
         }
 
       } else { /** Finalization State */
         // finalize aggregate and return
-        outputTuple = new VTuple(outSchema.size());
         int tupleIdx = 0;
 
         for(; tupleIdx < groupingKeyNum; tupleIdx++) {
-          outputTuple.put(tupleIdx, lastKey.get(tupleIdx));
+          outTuple.put(tupleIdx, lastKey.asDatum(tupleIdx));
         }
         for(int aggFuncIdx = 0; aggFuncIdx < aggFunctionsNum; tupleIdx++, aggFuncIdx++) {
-          outputTuple.put(tupleIdx, aggFunctions[aggFuncIdx].terminate(contexts[aggFuncIdx]));
+          outTuple.put(tupleIdx, aggFunctions[aggFuncIdx].terminate(contexts[aggFuncIdx]));
         }
 
         for(int evalIdx = 0; evalIdx < aggFunctionsNum; evalIdx++) {
           contexts[evalIdx] = aggFunctions[evalIdx].newContext();
-          aggFunctions[evalIdx].merge(contexts[evalIdx], inSchema, tuple);
+          aggFunctions[evalIdx].merge(contexts[evalIdx], tuple);
         }
 
-        lastKey = currentKey;
-        return outputTuple;
+        lastKey.put(currentKey.getValues());
+        return outTuple;
       }
     } // while loop
 
@@ -111,17 +124,17 @@ public class SortAggregateExec extends AggregationExec {
       return null;
     }
     if (!finished) {
-      outputTuple = new VTuple(outSchema.size());
       int tupleIdx = 0;
       for(; tupleIdx < groupingKeyNum; tupleIdx++) {
-        outputTuple.put(tupleIdx, lastKey.get(tupleIdx));
+        outTuple.put(tupleIdx, lastKey.asDatum(tupleIdx));
       }
       for(int aggFuncIdx = 0; aggFuncIdx < aggFunctionsNum; tupleIdx++, aggFuncIdx++) {
-        outputTuple.put(tupleIdx, aggFunctions[aggFuncIdx].terminate(contexts[aggFuncIdx]));
+        outTuple.put(tupleIdx, aggFunctions[aggFuncIdx].terminate(contexts[aggFuncIdx]));
       }
       finished = true;
+      return outTuple;
     }
-    return outputTuple;
+    return null;
   }
 
   @Override

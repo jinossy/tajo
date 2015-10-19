@@ -21,33 +21,40 @@ package org.apache.tajo.storage.text;
 import io.netty.buffer.ByteBuf;
 import io.netty.util.CharsetUtil;
 import org.apache.tajo.storage.BufferPool;
-import org.apache.tajo.storage.ByteBufInputChannel;
+import org.apache.tajo.storage.InputChannel;
+import org.apache.tajo.storage.SeekableChannel;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ByteBufLineReader implements Closeable {
-  private static int DEFAULT_BUFFER = 64 * 1024;
+  public static final int DEFAULT_BUFFER = 64 * 1024;
 
   private int bufferSize;
   private long readBytes;
   private int startIndex;
   private boolean eof = false;
   private ByteBuf buffer;
-  private final ByteBufInputChannel channel;
+  private final InputChannel channel;
+  private final SeekableChannel seekableChannel;
   private final AtomicInteger lineReadBytes = new AtomicInteger();
   private final LineSplitProcessor processor = new LineSplitProcessor();
 
-  public ByteBufLineReader(ByteBufInputChannel channel) {
+  public ByteBufLineReader(InputChannel channel) {
     this(channel, BufferPool.directBuffer(DEFAULT_BUFFER));
   }
 
-  public ByteBufLineReader(ByteBufInputChannel channel, ByteBuf buf) {
+  public ByteBufLineReader(InputChannel channel, ByteBuf buf) {
     this.readBytes = 0;
     this.channel = channel;
     this.buffer = buf;
     this.bufferSize = buf.capacity();
+    if (channel instanceof SeekableChannel) {
+      seekableChannel = (SeekableChannel) channel;
+    } else {
+      seekableChannel = null;
+    }
   }
 
   public long readBytes() {
@@ -60,6 +67,19 @@ public class ByteBufLineReader implements Closeable {
       this.buffer.release();
     }
     this.channel.close();
+  }
+
+  public void seek(long offset) throws IOException {
+    if(seekableChannel != null) {
+      seekableChannel.seek(offset);
+      this.readBytes = 0;
+      this.startIndex = 0;
+      this.eof = false;
+      this.buffer.clear();
+      this.processor.reset();
+    } else {
+      throw new IllegalArgumentException("Channel is not an instance of SeekableChannel");
+    }
   }
 
   public String readLine() throws IOException {
@@ -80,7 +100,7 @@ public class ByteBufLineReader implements Closeable {
       tailBytes = this.buffer.writerIndex();
       if (!this.buffer.isWritable()) {
         // a line bytes is large than the buffer
-        BufferPool.ensureWritable(buffer, bufferSize * 2);
+        this.buffer = BufferPool.ensureWritable(buffer, bufferSize * 2);
         this.bufferSize = buffer.capacity();
       }
       this.startIndex = 0;

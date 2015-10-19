@@ -34,9 +34,11 @@ import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.compress.CodecPool;
-import org.apache.tajo.storage.exception.AlreadyExistsStorageException;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.storage.rcfile.NonSyncByteArrayOutputStream;
 import org.apache.tajo.unit.StorageUnit;
@@ -44,9 +46,7 @@ import org.apache.tajo.util.ReflectionUtil;
 
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -64,7 +64,7 @@ public class DelimitedTextFile {
 
   /** it caches line serde classes. */
   private static final Map<String, Class<? extends TextLineSerDe>> serdeClassCache =
-      new ConcurrentHashMap<String, Class<? extends TextLineSerDe>>();
+          new ConcurrentHashMap<>();
 
   /**
    * By default, DelimitedTextFileScanner uses CSVLineSerder. If a table property 'text.serde.class' is given,
@@ -89,7 +89,7 @@ public class DelimitedTextFile {
         serdeClass = (Class<? extends TextLineSerDe>) Class.forName(serDeClassName);
         serdeClassCache.put(serDeClassName, serdeClass);
       }
-      lineSerder = (TextLineSerDe) ReflectionUtil.newInstance(serdeClass);
+      lineSerder = ReflectionUtil.newInstance(serdeClass);
     } catch (Throwable e) {
       throw new RuntimeException("TextLineSerde class cannot be initialized.", e);
     }
@@ -131,9 +131,21 @@ public class DelimitedTextFile {
 
     @Override
     public void init() throws IOException {
-      if (!fs.exists(path.getParent())) {
-        throw new FileNotFoundException(path.toString());
+      if (enabledStats) {
+        this.stats = new TableStatistics(this.schema);
       }
+
+      if(serializer != null) {
+        serializer.release();
+      }
+      serializer = getLineSerde().createSerializer(schema, meta);
+      serializer.init();
+
+      bufferSize = conf.getInt(WRITE_BUFFER_SIZE, DEFAULT_BUFFER_SIZE);
+      if (os == null) {
+        os = new NonSyncByteArrayOutputStream(bufferSize);
+      }
+      os.reset();
 
       if (this.meta.containsOption(StorageConstants.COMPRESSION_CODEC)) {
         String codecName = this.meta.getOption(StorageConstants.COMPRESSION_CODEC);
@@ -145,35 +157,15 @@ public class DelimitedTextFile {
         String extension = codec.getDefaultExtension();
         compressedPath = path.suffix(extension);
 
-        if (fs.exists(compressedPath)) {
-          throw new AlreadyExistsStorageException(compressedPath);
-        }
-
-        fos = fs.create(compressedPath);
+        fos = fs.create(compressedPath, false);
         deflateFilter = codec.createOutputStream(fos, compressor);
         outputStream = new DataOutputStream(deflateFilter);
 
       } else {
-        if (fs.exists(path)) {
-          throw new AlreadyExistsStorageException(path);
-        }
-        fos = fs.create(path);
+        fos = fs.create(path, false);
         outputStream = new DataOutputStream(new BufferedOutputStream(fos));
       }
 
-      if (enabledStats) {
-        this.stats = new TableStatistics(this.schema);
-      }
-
-      serializer = getLineSerde().createSerializer(schema, meta);
-      serializer.init();
-
-      bufferSize = conf.getInt(WRITE_BUFFER_SIZE, DEFAULT_BUFFER_SIZE);
-      if (os == null) {
-        os = new NonSyncByteArrayOutputStream(bufferSize);
-      }
-
-      os.reset();
       pos = fos.getPos();
       bufferedBytes = 0;
       super.init();
@@ -217,19 +209,21 @@ public class DelimitedTextFile {
 
     @Override
     public void flush() throws IOException {
-      flushBuffer();
-      outputStream.flush();
+      if(inited) {
+        flushBuffer();
+        outputStream.flush();
+      }
     }
 
     @Override
     public void close() throws IOException {
 
       try {
-        serializer.release();
-
-        if(outputStream != null){
-          flush();
+        if(serializer != null) {
+          serializer.release();
         }
+
+        flush();
 
         // Statistical section
         if (enabledStats) {
@@ -242,7 +236,7 @@ public class DelimitedTextFile {
           deflateFilter = null;
         }
       } finally {
-        IOUtils.cleanup(LOG, fos, os, outputStream);
+        IOUtils.cleanup(LOG, os, fos);
         if (compressor != null) {
           CodecPool.returnCompressor(compressor);
           compressor = null;
@@ -268,14 +262,13 @@ public class DelimitedTextFile {
     }
   }
 
-  public static class DelimitedTextFileScanner extends FileScanner {
+  public static class DelimitedTextFileScanner extends FileScanner implements SeekableScanner {
     private boolean splittable = false;
     private final long startOffset;
 
     private final long endOffset;
     /** The number of actual read records */
     private int recordCount = 0;
-    private int[] targetColumnIndexes;
 
     private DelimitedLineReader reader;
     private TextLineDeserializer deserializer;
@@ -285,6 +278,8 @@ public class DelimitedTextFile {
     private int errorTorrenceMaxNum;
     /** How many errors have occurred? */
     private int errorNum;
+
+    private VTuple outTuple;
 
     public DelimitedTextFileScanner(Configuration conf, final Schema schema, final TableMeta meta,
                                     final Fragment fragment)
@@ -309,6 +304,10 @@ public class DelimitedTextFile {
         reader.close();
       }
 
+      if(deserializer != null) {
+        deserializer.release();
+      }
+
       reader = new DelimitedLineReader(conf, fragment, conf.getInt(READ_BUFFER_SIZE, 128 * StorageUnit.KB));
       reader.init();
       recordCount = 0;
@@ -317,22 +316,33 @@ public class DelimitedTextFile {
         targets = schema.toArray();
       }
 
-      targetColumnIndexes = new int[targets.length];
-      for (int i = 0; i < targets.length; i++) {
-        targetColumnIndexes[i] = schema.getColumnId(targets[i].getQualifiedName());
-      }
+      outTuple = new VTuple(targets.length);
 
       super.init();
-      Arrays.sort(targetColumnIndexes);
       if (LOG.isDebugEnabled()) {
         LOG.debug("DelimitedTextFileScanner open:" + fragment.getPath() + "," + startOffset + "," + endOffset);
       }
 
+      // skip first line if it reads from middle of file
       if (startOffset > 0) {
-        reader.readLine();  // skip first line;
+        reader.readLine();
+      } else { // skip header lines if it is defined
+
+        // initialization for skipping header(max 20)
+        int headerLineNum = Math.min(Integer.parseInt(meta.getOption(StorageConstants.TEXT_SKIP_HEADER_LINE, "0")), 20);
+        if (headerLineNum > 0) {
+          LOG.info(String.format("Skip %d header lines", headerLineNum));
+          for (int i = 0; i < headerLineNum; i++) {
+            if (!reader.isReadable()) {
+              return;
+            }
+
+            reader.readLine();
+          }
+        }
       }
 
-      deserializer = getLineSerde().createDeserializer(schema, meta, targetColumnIndexes);
+      deserializer = getLineSerde().createDeserializer(schema, meta, targets);
       deserializer.init();
     }
 
@@ -342,7 +352,7 @@ public class DelimitedTextFile {
 
     @Override
     public float getProgress() {
-      if(reader == null) return 0.0f;
+      if(!inited) return super.getProgress();
 
       try {
         if (!reader.isReadable()) {
@@ -356,7 +366,7 @@ public class DelimitedTextFile {
           long remainingBytes = Math.max(endOffset - filePos, 0);
           return Math.min(1.0f, (float) (readBytes) / (float) (readBytes + remainingBytes));
         }
-      } catch (Throwable e) {
+      } catch (IOException e) {
         LOG.error(e.getMessage(), e);
         return 0.0f;
       }
@@ -364,7 +374,6 @@ public class DelimitedTextFile {
 
     @Override
     public Tuple next() throws IOException {
-      VTuple tuple;
 
       if (!reader.isReadable()) {
         return null;
@@ -374,7 +383,7 @@ public class DelimitedTextFile {
 
         // this loop will continue until one tuple is build or EOS (end of stream).
         do {
-
+          long offset = reader.getUnCompressedPosition();
           ByteBuf buf = reader.readLine();
 
           // if no more line, then return EOT (end of tuple)
@@ -389,11 +398,11 @@ public class DelimitedTextFile {
             return EmptyTuple.get();
           }
 
-          tuple = new VTuple(schema.size());
+          outTuple.setOffset(offset);
 
           try {
-            deserializer.deserialize(buf, tuple);
-            // if a line is read normaly, it exists this loop.
+            deserializer.deserialize(buf, outTuple);
+            // if a line is read normally, it exits this loop.
             break;
 
           } catch (TextLineParsingError tae) {
@@ -402,7 +411,7 @@ public class DelimitedTextFile {
 
             // suppress too many log prints, which probably cause performance degradation
             if (errorNum < errorPrintOutMaxNum) {
-              LOG.warn("Ignore JSON Parse Error (" + errorNum + "): ", tae);
+              LOG.warn("Ignore Text Parse Error (" + errorNum + "): ", tae);
             }
 
             // Only when the maximum error torrence limit is set (i.e., errorTorrenceMaxNum >= 0),
@@ -411,15 +420,13 @@ public class DelimitedTextFile {
             if (errorTorrenceMaxNum >= 0 && errorNum > errorTorrenceMaxNum) {
               throw tae;
             }
-            continue;
           }
-
         } while (reader.isReadable()); // continue until EOS
 
         // recordCount means the number of actual read records. We increment the count here.
         recordCount++;
 
-        return tuple;
+        return outTuple;
 
       } catch (Throwable t) {
         LOG.error(t);
@@ -448,6 +455,8 @@ public class DelimitedTextFile {
         }
       } finally {
         IOUtils.cleanup(LOG, reader);
+        reader = null;
+        outTuple = null;
       }
     }
 
@@ -462,7 +471,8 @@ public class DelimitedTextFile {
     }
 
     @Override
-    public void setSearchCondition(Object expr) {
+    public void setFilter(EvalNode filter) {
+      throw new TajoRuntimeException(new UnsupportedException());
     }
 
     @Override
@@ -478,6 +488,16 @@ public class DelimitedTextFile {
         tableStats.setNumBytes(fragment.getLength());
       }
       return tableStats;
+    }
+
+    @Override
+    public long getNextOffset() throws IOException {
+      return reader.getUnCompressedPosition();
+    }
+
+    @Override
+    public void seek(long offset) throws IOException {
+        reader.seek(offset);
     }
   }
 }

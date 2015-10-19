@@ -469,7 +469,7 @@ public class DateTimeFormat {
 
   static final KeyWord[] DCH_keywords = new KeyWord[DCH_keywordValues.length];
 
-  static Map<Character, Integer> DCH_index = new HashMap<Character, Integer>();
+  static Map<Character, Integer> DCH_index = new HashMap<>();
 
   static {
     int index = 0;
@@ -477,12 +477,11 @@ public class DateTimeFormat {
       KeyWord keyword = new KeyWord();
       keyword.name = (String)eachKeywordValue[0];
       keyword.len = ((Integer)eachKeywordValue[1]).intValue();
-      keyword.id = ((DCH_poz)eachKeywordValue[2]).getValue();
       keyword.idType = ((DCH_poz)eachKeywordValue[2]);
       keyword.is_digit = ((Boolean)eachKeywordValue[3]).booleanValue();
       keyword.date_mode = (FromCharDateMode)eachKeywordValue[4];
 
-      Character c = new Character(keyword.name.charAt(0));
+      Character c = Character.valueOf(keyword.name.charAt(0));
       Integer pos = DCH_index.get(c);
       if (pos == null) {
         DCH_index.put(c, index);
@@ -513,7 +512,6 @@ public class DateTimeFormat {
   static class KeyWord {
     String name;
     int len;
-    int id;
     DCH_poz idType;
     boolean is_digit;
     FromCharDateMode date_mode;
@@ -548,7 +546,7 @@ public class DateTimeFormat {
     int yysz;			/* is it YY or YYYY ? */
     int clock;		/* 12 or 24 hour clock? */
   }
-  static Map<String, FormatNode[]> formatNodeCache = new HashMap<String, FormatNode[]>();
+  static Map<String, FormatNode[]> formatNodeCache = new HashMap<>();
 
  /**
   * ----------
@@ -1245,6 +1243,8 @@ public class DateTimeFormat {
           charIdx += from_char_parse_int(value, dateText, charIdx, nodes, nodeIdx);
           out.j = value.get();
           charIdx += SKIP_THth(node.suffix);
+          break;
+        default:
           break;
       }
     }
@@ -2118,6 +2118,8 @@ public class DateTimeFormat {
             str_numth(out, out, S_TH_TYPE(node.suffix));
           }
           break;
+        default:
+          break;
       }
     }
   }
@@ -2141,8 +2143,7 @@ public class DateTimeFormat {
      * All "teens" (<x>1[0-9]) get 'TH/th', while <x>[02-9][123] still get
      * 'ST/st', 'ND/nd', 'RD/rd', respectively
      */
-    char seclast;
-    if ((len > 1) && ((seclast = num.charAt(len - 2)) == '1')) {
+    if ((len > 1) && (num.charAt(len - 2) == '1')) {
       last = 0;
     }
 

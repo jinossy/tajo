@@ -59,9 +59,12 @@ enum Type {
   VARBINARY = 44; // variable-width binary strings
   BLOB = 45;
 
-  ANY = 51; // Any type
-  UDT = 52; // user-defined function
-  PROTOBUF = 53; // protocol buffer type
+  RECORD = 51; // nested structure type
+  MAP    = 52; // map type
+
+  ANY = 61; // Any type
+  UDT = 62; // user-defined function
+  PROTOBUF = 63; // protocol buffer type
 
   INET4 = 91;
   INET6 = 92;
@@ -99,5 +102,16 @@ enum Type {
 message DataType {
   required Type type = 1;
   optional int32 length = 2;
+
+  /* Auxiliary information */
   optional string code = 3;
+
+  /**
+   * Nested fields.  Since Protobuf does not support nested fields,
+   * the nesting is flattened to a single list by a depth-first traversal.
+   * The children count is used to construct the nested relationship.
+   * This field is not set when the element is a primitive type
+   */
+  optional int32 num_nested_fields = 4;
 }
+

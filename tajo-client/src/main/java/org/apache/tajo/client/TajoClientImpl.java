@@ -18,11 +18,8 @@
 
 package org.apache.tajo.client;
 
-import com.google.protobuf.ServiceException;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.fs.Path;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.annotation.ThreadSafe;
@@ -31,23 +28,20 @@ import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
 import org.apache.tajo.catalog.proto.CatalogProtos;
-import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.conf.TajoConf.ConfVars;
-import org.apache.tajo.ha.HAServiceUtil;
+import org.apache.tajo.catalog.proto.CatalogProtos.IndexDescProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
+import org.apache.tajo.exception.*;
 import org.apache.tajo.ipc.ClientProtos.*;
 import org.apache.tajo.jdbc.TajoMemoryResultSet;
-import org.apache.tajo.jdbc.TajoResultSet;
-import org.apache.tajo.rule.EvaluationContext;
-import org.apache.tajo.rule.EvaluationFailedException;
-import org.apache.tajo.rule.SelfDiagnosisRuleEngine;
-import org.apache.tajo.rule.SelfDiagnosisRuleSession;
-import org.apache.tajo.util.NetUtils;
+import org.apache.tajo.service.ServiceTracker;
+import org.apache.tajo.util.KeyValueSet;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.concurrent.Future;
 
 @ThreadSafe
 public class TajoClientImpl extends SessionConnection implements TajoClient, QueryClient, CatalogAdminClient {
@@ -56,51 +50,48 @@ public class TajoClientImpl extends SessionConnection implements TajoClient, Que
   QueryClient queryClient;
   CatalogAdminClient catalogClient;
 
-  public TajoClientImpl(TajoConf conf) throws IOException {
-    this(conf, TajoHAClientUtil.getRpcClientAddress(conf), null);
-  }
+  /**
+   * Connect to TajoMaster
+   *
+   * @param tracker ServiceTracker to discovery Tajo Client RPC
+   * @param baseDatabase The base database name. It is case sensitive. If it is null,
+   *                     the 'default' database will be used.
+   * @param properties configurations
+   * @throws java.io.IOException
+   */
+  public TajoClientImpl(ServiceTracker tracker, @Nullable String baseDatabase, KeyValueSet properties) {
 
-  public TajoClientImpl(TajoConf conf, @Nullable String baseDatabase) throws IOException {
-    this(conf, TajoHAClientUtil.getRpcClientAddress(conf), baseDatabase);
-  }
+    super(tracker, baseDatabase, properties);
 
-  public TajoClientImpl(InetSocketAddress addr) throws IOException {
-    this(new TajoConf(), addr, null);
+    this.queryClient = new QueryClientImpl(this);
+    this.catalogClient = new CatalogAdminClientImpl(this);
   }
 
   /**
    * Connect to TajoMaster
    *
-   * @param conf TajoConf
    * @param addr TajoMaster address
    * @param baseDatabase The base database name. It is case sensitive. If it is null,
    *                     the 'default' database will be used.
+   * @param properties configurations
    * @throws java.io.IOException
    */
-  public TajoClientImpl(TajoConf conf, InetSocketAddress addr, @Nullable String baseDatabase) throws IOException {
-    super(conf, addr, baseDatabase);
-    this.queryClient = new QueryClientImpl(this);
-    this.catalogClient = new CatalogAdminClientImpl(this);
-    
-    diagnoseTajoClient();
+  public TajoClientImpl(InetSocketAddress addr, @Nullable String baseDatabase, KeyValueSet properties) {
+    this(new DummyServiceTracker(addr), baseDatabase, properties);
   }
 
-  public TajoClientImpl(String hostName, int port, @Nullable String baseDatabase) throws IOException {
-    super(hostName, port, baseDatabase);
-    this.queryClient = new QueryClientImpl(this);
-    this.catalogClient = new CatalogAdminClientImpl(this);
-    
-    diagnoseTajoClient();
+  public TajoClientImpl(ServiceTracker serviceTracker) throws SQLException {
+    this(serviceTracker, null);
   }
-  
-  private void diagnoseTajoClient() throws EvaluationFailedException {
-    SelfDiagnosisRuleEngine ruleEngine = SelfDiagnosisRuleEngine.getInstance();
-    SelfDiagnosisRuleSession ruleSession = ruleEngine.newRuleSession();
-    EvaluationContext context = new EvaluationContext();
-    
-    context.addParameter(TajoConf.class.getName(), getConf());
-    
-    ruleSession.withRuleNames("TajoConfValidationRule").fireRules(context);
+
+  public TajoClientImpl(ServiceTracker serviceTracker, @Nullable String baseDatabase) throws SQLException {
+    this(serviceTracker, baseDatabase, new KeyValueSet());
+  }
+
+  @Override
+  public void close() {
+    queryClient.close();
+    super.close();
   }
 
   /*------------------------------------------------------------------------*/
@@ -115,126 +106,182 @@ public class TajoClientImpl extends SessionConnection implements TajoClient, Que
     queryClient.closeNonForwardQuery(queryId);
   }
 
-  public SubmitQueryResponse executeQuery(final String sql) throws ServiceException {
+  public SubmitQueryResponse executeQuery(final String sql) {
     return queryClient.executeQuery(sql);
   }
 
-  public SubmitQueryResponse executeQueryWithJson(final String json) throws ServiceException {
+  public SubmitQueryResponse executeQueryWithJson(final String json) {
     return queryClient.executeQueryWithJson(json);
   }
 
-  public ResultSet executeQueryAndGetResult(final String sql) throws ServiceException, IOException {
+  public ResultSet executeQueryAndGetResult(final String sql) throws TajoException {
     return queryClient.executeQueryAndGetResult(sql);
   }
 
-  public ResultSet executeJsonQueryAndGetResult(final String json) throws ServiceException, IOException {
+  public ResultSet executeJsonQueryAndGetResult(final String json) throws TajoException {
     return queryClient.executeJsonQueryAndGetResult(json);
   }
 
-  public QueryStatus getQueryStatus(QueryId queryId) throws ServiceException {
+  public QueryStatus getQueryStatus(QueryId queryId) throws QueryNotFoundException {
     return queryClient.getQueryStatus(queryId);
   }
 
-  public ResultSet getQueryResult(QueryId queryId) throws ServiceException, IOException {
+  public ResultSet getQueryResult(QueryId queryId) throws TajoException {
     return queryClient.getQueryResult(queryId);
   }
 
-  public ResultSet createNullResultSet(QueryId queryId) throws IOException {
-    return new TajoResultSet(this, queryId);
+  public ResultSet createNullResultSet(QueryId queryId) {
+    return TajoClientUtil.createNullResultSet(queryId);
   }
 
-  public GetQueryResultResponse getResultResponse(QueryId queryId) throws ServiceException {
+  public GetQueryResultResponse getResultResponse(QueryId queryId) throws TajoException {
     return queryClient.getResultResponse(queryId);
   }
 
-  public TajoMemoryResultSet fetchNextQueryResult(final QueryId queryId, final int fetchRowNum) throws ServiceException {
-    return queryClient.fetchNextQueryResult(queryId, fetchRowNum);
+  @Override
+  public Future<TajoMemoryResultSet> fetchNextQueryResultAsync(QueryId queryId, int fetchRowNum) {
+    return queryClient.fetchNextQueryResultAsync(queryId, fetchRowNum);
   }
 
-  public boolean updateQuery(final String sql) throws ServiceException {
+  public boolean updateQuery(final String sql) throws TajoException {
     return queryClient.updateQuery(sql);
   }
 
-  public boolean updateQueryWithJson(final String json) throws ServiceException {
+  public boolean updateQueryWithJson(final String json) throws TajoException {
     return queryClient.updateQueryWithJson(json);
   }
 
-  public QueryStatus killQuery(final QueryId queryId) throws ServiceException, IOException {
+  public QueryStatus killQuery(final QueryId queryId) throws QueryNotFoundException {
     return queryClient.killQuery(queryId);
   }
 
-  public List<BriefQueryInfo> getRunningQueryList() throws ServiceException {
+  public List<BriefQueryInfo> getRunningQueryList() {
     return queryClient.getRunningQueryList();
   }
 
-  public List<BriefQueryInfo> getFinishedQueryList() throws ServiceException {
+  public List<BriefQueryInfo> getFinishedQueryList() {
     return queryClient.getFinishedQueryList();
   }
 
-  public List<WorkerResourceInfo> getClusterInfo() throws ServiceException {
+  public List<WorkerResourceInfo> getClusterInfo() {
     return queryClient.getClusterInfo();
   }
 
-  public QueryInfoProto getQueryInfo(final QueryId queryId) throws ServiceException {
+  public QueryInfoProto getQueryInfo(final QueryId queryId) throws QueryNotFoundException {
     return queryClient.getQueryInfo(queryId);
   }
 
-  public QueryHistoryProto getQueryHistory(final QueryId queryId) throws ServiceException {
+  public QueryHistoryProto getQueryHistory(final QueryId queryId) throws QueryNotFoundException {
     return queryClient.getQueryHistory(queryId);
   }
 
+  public void setMaxRows(int maxRows) {
+	  queryClient.setMaxRows(maxRows);
+  }
+
+  public int getMaxRows() {
+	  return queryClient.getMaxRows();
+  }
+  
   /*------------------------------------------------------------------------*/
   // CatalogClient wrappers
   /*------------------------------------------------------------------------*/
 
-  public boolean createDatabase(final String databaseName) throws ServiceException {
-    return catalogClient.createDatabase(databaseName);
+  public void createDatabase(final String databaseName) throws DuplicateDatabaseException {
+    catalogClient.createDatabase(databaseName);
   }
 
-  public boolean existDatabase(final String databaseName) throws ServiceException {
+  public boolean existDatabase(final String databaseName) {
     return catalogClient.existDatabase(databaseName);
   }
 
-  public boolean dropDatabase(final String databaseName) throws ServiceException {
-    return catalogClient.dropDatabase(databaseName);
+  public void dropDatabase(final String databaseName) throws UndefinedDatabaseException,
+      InsufficientPrivilegeException, CannotDropCurrentDatabaseException {
+
+    catalogClient.dropDatabase(databaseName);
   }
 
-  public List<String> getAllDatabaseNames() throws ServiceException {
+  public List<String> getAllDatabaseNames() {
     return catalogClient.getAllDatabaseNames();
   }
 
-  public boolean existTable(final String tableName) throws ServiceException {
+  public boolean existTable(final String tableName) {
     return catalogClient.existTable(tableName);
   }
 
-  public TableDesc createExternalTable(final String tableName, final Schema schema, final Path path,
-                                       final TableMeta meta) throws SQLException, ServiceException {
+  public TableDesc createExternalTable(final String tableName,
+                                       final Schema schema,
+                                       final URI path,
+                                       final TableMeta meta)
+      throws DuplicateTableException, UnavailableTableLocationException, InsufficientPrivilegeException {
+
     return catalogClient.createExternalTable(tableName, schema, path, meta);
   }
 
-  public TableDesc createExternalTable(final String tableName, final Schema schema, final Path path,
+  public TableDesc createExternalTable(final String tableName, final Schema schema, final URI path,
                                        final TableMeta meta, final PartitionMethodDesc partitionMethodDesc)
-      throws SQLException, ServiceException {
+      throws DuplicateTableException, UnavailableTableLocationException, InsufficientPrivilegeException {
     return catalogClient.createExternalTable(tableName, schema, path, meta, partitionMethodDesc);
   }
 
-  public boolean dropTable(final String tableName) throws ServiceException {
-    return dropTable(tableName, false);
+  public void dropTable(final String tableName) throws UndefinedTableException, InsufficientPrivilegeException {
+    dropTable(tableName, false);
   }
 
-  public boolean dropTable(final String tableName, final boolean purge) throws ServiceException {
-    return catalogClient.dropTable(tableName, purge);
+  public void dropTable(final String tableName, final boolean purge) throws UndefinedTableException,
+      InsufficientPrivilegeException {
+    catalogClient.dropTable(tableName, purge);
   }
 
-  public List<String> getTableList(@Nullable final String databaseName) throws ServiceException {
+  public List<String> getTableList(@Nullable final String databaseName) {
     return catalogClient.getTableList(databaseName);
   }
 
-  public TableDesc getTableDesc(final String tableName) throws ServiceException {
+  public TableDesc getTableDesc(final String tableName) throws UndefinedTableException {
     return catalogClient.getTableDesc(tableName);
   }
 
-  public List<CatalogProtos.FunctionDescProto> getFunctions(final String functionName) throws ServiceException {
+  public List<CatalogProtos.FunctionDescProto> getFunctions(final String functionName) {
     return catalogClient.getFunctions(functionName);
+  }
+
+  public List<PartitionDescProto> getPartitionsOfTable(final String tableName) throws UndefinedDatabaseException,
+    UndefinedTableException, UndefinedPartitionMethodException {
+    return catalogClient.getPartitionsOfTable(tableName);
+  }
+
+  @Override
+  public IndexDescProto getIndex(String indexName) {
+    return catalogClient.getIndex(indexName);
+  }
+
+  @Override
+  public boolean existIndex(String indexName) {
+    return catalogClient.existIndex(indexName);
+  }
+
+  @Override
+  public List<IndexDescProto> getIndexes(String tableName) {
+    return catalogClient.getIndexes(tableName);
+  }
+
+  @Override
+  public boolean hasIndexes(String tableName) {
+    return catalogClient.hasIndexes(tableName);
+  }
+
+  @Override
+  public IndexDescProto getIndex(String tableName, String[] columnNames) {
+    return catalogClient.getIndex(tableName, columnNames);
+  }
+
+  @Override
+  public boolean existIndex(String tableName, String[] columnName) {
+    return catalogClient.existIndex(tableName, columnName);
+  }
+
+  @Override
+  public boolean dropIndex(String indexName) {
+    return catalogClient.dropIndex(indexName);
   }
 }

@@ -37,6 +37,12 @@ public class SelectionExec extends UnaryPhysicalExec  {
   }
 
   @Override
+  public void init() throws IOException {
+    super.init();
+    qual.bind(context.getEvalContext(), inSchema);
+  }
+
+  @Override
   public void compile() throws CompilationError {
     qual = context.getPrecompiledEval(inSchema, qual);
   }
@@ -44,8 +50,8 @@ public class SelectionExec extends UnaryPhysicalExec  {
   @Override
   public Tuple next() throws IOException {
     Tuple tuple;
-    while ((tuple = child.next()) != null) {
-      if (qual.eval(inSchema, tuple).isTrue()) {
+    while (!context.isStopped() && (tuple = child.next()) != null) {
+      if (qual.eval(tuple).isTrue()) {
         return tuple;
       }
     }

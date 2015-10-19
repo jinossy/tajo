@@ -21,25 +21,30 @@
 
 <%@ page import="org.apache.hadoop.fs.FileSystem" %>
 <%@ page import="org.apache.tajo.conf.TajoConf" %>
-<%@ page import="org.apache.tajo.ipc.QueryCoordinatorProtocol" %>
 <%@ page import="org.apache.tajo.master.TajoMaster" %>
-<%@ page import="org.apache.tajo.ha.HAService" %>
-<%@ page import="org.apache.tajo.ha.TajoMasterInfo" %>
-<%@ page import="org.apache.tajo.master.QueryInProgress" %>
-<%@ page import="org.apache.tajo.master.rm.Worker" %>
-<%@ page import="org.apache.tajo.master.rm.WorkerState" %>
+<%@ page import="org.apache.tajo.service.ServiceTracker" %>
+<%@ page import="org.apache.tajo.service.TajoMasterInfo" %>
+<%@ page import="org.apache.tajo.master.rm.NodeStatus" %>
+<%@ page import="org.apache.tajo.master.rm.NodeState" %>
+<%@ page import="org.apache.tajo.storage.TablespaceManager" %>
+<%@ page import="org.apache.tajo.storage.Tablespace" %>
 <%@ page import="org.apache.tajo.util.NetUtils" %>
 <%@ page import="org.apache.tajo.util.TUtil" %>
 <%@ page import="org.apache.tajo.webapp.StaticHttpServer" %>
 <%@ page import="java.util.List" %>
-<%@ page import="java.util.Collection" %>
+<%@ page import="java.net.InetSocketAddress" %>
 <%@ page import="java.util.Date" %>
 <%@ page import="java.util.Map" %>
 
 <%
   TajoMaster master = (TajoMaster) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
-  Map<Integer, Worker> workers = master.getContext().getResourceManager().getWorkers();
-  Map<Integer, Worker> inactiveWorkers = master.getContext().getResourceManager().getInactiveWorkers();
+
+  String[] masterName = master.getMasterName().split(":");
+  InetSocketAddress socketAddress = new InetSocketAddress(masterName[0], Integer.parseInt(masterName[1]));
+  String masterLabel = socketAddress.getAddress().getHostName()+ ":" + socketAddress.getPort();
+
+  Map<Integer, NodeStatus> workers = master.getContext().getResourceManager().getNodes();
+  Map<Integer, NodeStatus> inactiveWorkers = master.getContext().getResourceManager().getInactiveNodes();
 
   int numWorkers = 0;
   int numLiveWorkers = 0;
@@ -52,32 +57,21 @@
   int runningQueryMasterTask = 0;
 
 
-  QueryCoordinatorProtocol.ClusterResourceSummary clusterResourceSummary =
-          master.getContext().getResourceManager().getClusterResourceSummary();
-
-  for(Worker eachWorker: workers.values()) {
-    if(eachWorker.getResource().isQueryMasterMode()) {
-      numQueryMasters++;
-      numLiveQueryMasters++;
-      runningQueryMasterTask += eachWorker.getResource().getNumQueryMasterTasks();
-    }
-    if(eachWorker.getResource().isTaskRunnerMode()) {
-      numWorkers++;
-      numLiveWorkers++;
-    }
+  for(NodeStatus eachWorker: workers.values()) {
+    numQueryMasters++;
+    numLiveQueryMasters++;
+    runningQueryMasterTask += eachWorker.getNumRunningQueryMaster();
+    numWorkers++;
+    numLiveWorkers++;
   }
 
-  for (Worker eachWorker : inactiveWorkers.values()) {
-    if (eachWorker.getState() == WorkerState.LOST) {
-      if(eachWorker.getResource().isQueryMasterMode()) {
-        numQueryMasters++;
-        numDeadQueryMasters++;
-      }
-      if(eachWorker.getResource().isTaskRunnerMode()) {
-        numWorkers++;
-        numDeadWorkers++;
-      }
-    } else if(eachWorker.getState() == WorkerState.DECOMMISSIONED) {
+  for (NodeStatus eachWorker : inactiveWorkers.values()) {
+    if (eachWorker.getState() == NodeState.LOST) {
+      numQueryMasters++;
+      numDeadQueryMasters++;
+      numWorkers++;
+      numDeadWorkers++;
+    } else if(eachWorker.getState() == NodeState.DECOMMISSIONED) {
       numDecommissionWorkers++;
     }
   }
@@ -85,12 +79,12 @@
   String numDeadWorkersHtml = numDeadWorkers == 0 ? "0" : "<font color='red'>" + numDeadWorkers + "</font>";
   String numDeadQueryMastersHtml = numDeadQueryMasters == 0 ? "0" : "<font color='red'>" + numDeadQueryMasters + "</font>";
 
-  HAService haService = master.getContext().getHAService();
+  ServiceTracker haService = master.getContext().getHAService();
   List<TajoMasterInfo> masters = TUtil.newList();
 
   String activeLabel = "";
   if (haService != null) {
-    if (haService.isActiveStatus()) {
+    if (haService.isActiveMaster()) {
       activeLabel = "<font color='#1e90ff'>(active)</font>";
     } else {
       activeLabel = "<font color='#1e90ff'>(backup)</font>";
@@ -121,7 +115,7 @@
 <body>
 <%@ include file="header.jsp"%>
 <div class='contents'>
-  <h2>Tajo Master: <%=master.getMasterName()%> <%=activeLabel%></h2>
+  <h2>Tajo Master: <%=masterLabel%> <%=activeLabel%></h2>
   <hr/>
   <h3>Master Status</h3>
   <table border='0'>
@@ -132,18 +126,26 @@
     <tr><td width='150'>System dir:</td><td><%=TajoConf.getSystemDir(master.getContext().getConf())%></td></tr>
     <tr><td width='150'>Warehouse dir:</td><td><%=TajoConf.getWarehouseDir(master.getContext().getConf())%></td></tr>
     <tr><td width='150'>Staging dir:</td><td><%=TajoConf.getDefaultRootStagingDir(master.getContext().getConf())%></td></tr>
-    <tr><td width='150'>Client Service:</td><td><%=NetUtils.normalizeInetSocketAddress(master.getTajoMasterClientService().getBindAddress())%></td></tr>
-    <tr><td width='150'>Catalog Service:</td><td><%=master.getCatalogServer().getCatalogServerName()%></td></tr>
+    <tr><td width='150'>Client Service:</td><td><%=master.getTajoMasterClientService().getBindAddress().getHostName() + ":" + master.getTajoMasterClientService().getBindAddress().getPort()%></td></tr>
+    <tr><td width='150'>Catalog Service:</td><td><%=master.getCatalogServer().getBindAddress().getHostName() + ":" + master.getCatalogServer().getBindAddress().getPort()%></td></tr>
     <tr><td width='150'>Heap(Free/Total/Max): </td><td><%=Runtime.getRuntime().freeMemory()/1024/1024%> MB / <%=Runtime.getRuntime().totalMemory()/1024/1024%> MB / <%=Runtime.getRuntime().maxMemory()/1024/1024%> MB</td>
     <tr><td width='150'>Configuration:</td><td><a href='conf.jsp'>detail...</a></td></tr>
     <tr><td width='150'>Environment:</td><td><a href='env.jsp'>detail...</a></td></tr>
     <tr><td width='150'>Threads:</td><td><a href='thread.jsp'>thread dump...</a></tr>
   </table>
   <hr/>
-
+  <h3>Tablespaces</h3>
+  <table width="100%" class="border_table" border="1">
+    <tr><th>Tablespace Name</th><th>URI</th><th>Handler</th></tr>
+    <% for (Tablespace space : TablespaceManager.getAllTablespaces()) {
+      if (space.isVisible()) { %>
+    <tr><td><%=space.getName()%></td><td><%=space.getUri()%></td><td><%=space.getClass().getName()%></td></tr>
+    <% }}%>
+  </table>
+  <hr/>
   <h3>Cluster Summary</h3>
   <table width="100%" class="border_table" border="1">
-    <tr><th>Type</th><th>Total</th><th>Live</th><th>Dead</th><th>Running Master</th><th>Memory Resource<br/>(used/total)</th><th>Disk Resource<br/>(used/total)</th></tr>
+    <tr><th>Type</th><th>Total</th><th>Live</th><th>Dead</th><th>Running Master</th><th>Available</th><th>Total</th></tr>
     <tr>
       <td><a href='cluster.jsp'>Query Master</a></td>
       <td align='right'><%=numQueryMasters%></td>
@@ -159,8 +161,8 @@
       <td align='right'><%=numLiveWorkers%></td>
       <td align='right'><%=numDeadWorkersHtml%></td>
       <td align='right'>-</td>
-      <td align='center'><%=clusterResourceSummary.getTotalMemoryMB() - clusterResourceSummary.getTotalAvailableMemoryMB()%>/<%=clusterResourceSummary.getTotalMemoryMB()%></td>
-      <td align='center'><%=clusterResourceSummary.getTotalDiskSlots() - clusterResourceSummary.getTotalAvailableDiskSlots()%>/<%=clusterResourceSummary.getTotalDiskSlots()%></td>
+      <td align='center'><%=master.getContext().getResourceManager().getScheduler().getClusterResource()%></td>
+      <td align='center'><%=master.getContext().getResourceManager().getScheduler().getMaximumResourceCapability()%></td>
     </tr>
 <%
     if (haService != null) {

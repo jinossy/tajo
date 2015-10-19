@@ -22,17 +22,20 @@ import org.apache.tajo.algebra.BinaryOperator;
 import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.algebra.OpType;
 import org.apache.tajo.algebra.UnaryOperator;
-import org.apache.tajo.plan.PlanningException;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.plan.visitor.SimpleAlgebraVisitor;
+import org.apache.tajo.util.TUtil;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.Stack;
 
 public class ExprFinder extends SimpleAlgebraVisitor<ExprFinder.Context, Object> {
 
-  static class Context {
-    Set<Expr> set = new HashSet<Expr>();
+  static class Context<T> {
+    List<T> set = TUtil.newList();
     OpType targetType;
 
     Context(OpType type) {
@@ -41,20 +44,21 @@ public class ExprFinder extends SimpleAlgebraVisitor<ExprFinder.Context, Object>
   }
 
   public static <T extends Expr> Set<T> finds(Expr expr, OpType type) {
-    Context context = new Context(type);
-    ExprFinder finder = new ExprFinder();
-    Stack<Expr> stack = new Stack<Expr>();
-    stack.push(expr);
-    try {
-      finder.visit(context, new Stack<Expr>(), expr);
-    } catch (PlanningException e) {
-      throw new RuntimeException(e);
-    }
-    stack.pop();
-    return (Set<T>) context.set;
+    return new HashSet<>(findsInOrder(expr, type));
   }
 
-  public Object visit(Context ctx, Stack<Expr> stack, Expr expr) throws PlanningException {
+  public static <T extends Expr> List<T> findsInOrder(Expr expr, OpType type) {
+    Context<T> context = new Context<>(type);
+    ExprFinder finder = new ExprFinder();
+    try {
+      finder.visit(context, new Stack<>(), expr);
+    } catch (TajoException e) {
+      throw new TajoInternalError(e);
+    }
+    return context.set;
+  }
+
+  public Object visit(Context ctx, Stack<Expr> stack, Expr expr) throws TajoException {
     if (expr instanceof UnaryOperator) {
       preHook(ctx, stack, expr);
       visitUnaryOperator(ctx, stack, (UnaryOperator) expr);
@@ -67,7 +71,7 @@ public class ExprFinder extends SimpleAlgebraVisitor<ExprFinder.Context, Object>
       super.visit(ctx, stack, expr);
     }
 
-    if (ctx.targetType == expr.getType()) {
+    if (expr != null && ctx.targetType == expr.getType()) {
       ctx.set.add(expr);
     }
 

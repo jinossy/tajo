@@ -18,11 +18,13 @@
 
 package org.apache.tajo.session;
 
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMap;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.QueryId;
 import org.apache.tajo.SessionVars;
+import org.apache.tajo.algebra.Expr;
 import org.apache.tajo.master.exec.NonForwardQueryResultScanner;
 import org.apache.tajo.util.KeyValueSet;
 import org.apache.tajo.common.ProtoObject;
@@ -30,7 +32,7 @@ import org.apache.tajo.common.ProtoObject;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.apache.tajo.ipc.TajoWorkerProtocol.SessionProto;
+import static org.apache.tajo.ResourceProtos.SessionProto;
 
 public class Session implements SessionConstants, ProtoObject<SessionProto>, Cloneable {
   private static final Log LOG = LogFactory.getLog(Session.class);
@@ -39,7 +41,8 @@ public class Session implements SessionConstants, ProtoObject<SessionProto>, Clo
   private final String userName;
   private String currentDatabase;
   private final Map<String, String> sessionVariables;
-  private final Map<QueryId, NonForwardQueryResultScanner> nonForwardQueryMap = new HashMap<QueryId, NonForwardQueryResultScanner>();
+  private final Map<QueryId, NonForwardQueryResultScanner> nonForwardQueryMap = new HashMap<>();
+  private LoadingCache<String, Expr> cache;
 
   // transient status
   private volatile long lastAccessTime;
@@ -50,7 +53,7 @@ public class Session implements SessionConstants, ProtoObject<SessionProto>, Clo
     this.currentDatabase = databaseName;
     this.lastAccessTime = System.currentTimeMillis();
 
-    this.sessionVariables = new HashMap<String, String>();
+    this.sessionVariables = new HashMap<>();
     sessionVariables.put(SessionVars.SESSION_ID.keyname(), sessionId);
     sessionVariables.put(SessionVars.USERNAME.keyname(), userName);
     selectDatabase(databaseName);
@@ -119,6 +122,14 @@ public class Session implements SessionConstants, ProtoObject<SessionProto>, Clo
 
   public synchronized String getCurrentDatabase() {
     return currentDatabase;
+  }
+
+  public synchronized void setQueryCache(LoadingCache<String, Expr> cache) {
+    this.cache = cache;
+  }
+
+  public synchronized LoadingCache<String, Expr> getQueryCache() {
+    return cache;
   }
 
   @Override

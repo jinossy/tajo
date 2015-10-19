@@ -21,11 +21,13 @@ package org.apache.tajo.storage.text;
 import io.netty.buffer.ByteBuf;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.StringUtils;
+import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.storage.BufferPool;
 import org.apache.tajo.storage.StorageConstants;
+import org.apache.tajo.util.Bytes;
 
 /**
  * Pluggable Text Line SerDe class
@@ -35,12 +37,17 @@ public abstract class TextLineSerDe {
   public TextLineSerDe() {
   }
 
-  public abstract TextLineDeserializer createDeserializer(Schema schema, TableMeta meta, int [] targetColumnIndexes);
+  public abstract TextLineDeserializer createDeserializer(Schema schema, TableMeta meta, Column [] projected);
 
   public abstract TextLineSerializer createSerializer(Schema schema, TableMeta meta);
 
   public static ByteBuf getNullChars(TableMeta meta) {
-    byte[] nullCharByteArray = getNullCharsAsBytes(meta);
+    byte[] nullCharByteArray;
+    if (meta.getDataFormat().equals("SEQUENCEFILE")) {
+      nullCharByteArray = getNullCharsAsBytes(meta, StorageConstants.SEQUENCEFILE_NULL, "\\");
+    } else {
+      nullCharByteArray = getNullCharsAsBytes(meta);
+    }
 
     ByteBuf nullChars = BufferPool.directBuffer(nullCharByteArray.length, nullCharByteArray.length);
     nullChars.writeBytes(nullCharByteArray);
@@ -49,14 +56,17 @@ public abstract class TextLineSerDe {
   }
 
   public static byte [] getNullCharsAsBytes(TableMeta meta) {
+    return getNullCharsAsBytes(meta, StorageConstants.TEXT_NULL, NullDatum.DEFAULT_TEXT);
+  }
+
+  public static byte[] getNullCharsAsBytes(TableMeta meta, String key, String defaultVal) {
     byte [] nullChars;
 
-    String nullCharacters = StringEscapeUtils.unescapeJava(meta.getOption(StorageConstants.TEXT_NULL,
-        NullDatum.DEFAULT_TEXT));
+    String nullCharacters = StringEscapeUtils.unescapeJava(meta.getOption(key, defaultVal));
     if (StringUtils.isEmpty(nullCharacters)) {
       nullChars = NullDatum.get().asTextBytes();
     } else {
-      nullChars = nullCharacters.getBytes();
+      nullChars = nullCharacters.getBytes(Bytes.UTF8_CHARSET);
     }
 
     return nullChars;

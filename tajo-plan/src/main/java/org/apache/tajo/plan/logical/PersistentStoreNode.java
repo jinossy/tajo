@@ -20,11 +20,11 @@ package org.apache.tajo.plan.logical;
 
 
 import com.google.gson.annotations.Expose;
+
+import org.apache.tajo.BuiltinStorages;
 import org.apache.tajo.plan.PlanString;
 import org.apache.tajo.util.KeyValueSet;
 import org.apache.tajo.util.TUtil;
-
-import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 
 
 /**
@@ -32,18 +32,18 @@ import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
  * This includes some basic information for materializing data.
  */
 public abstract class PersistentStoreNode extends UnaryNode implements Cloneable {
-  @Expose protected StoreType storageType = StoreType.CSV;
+  @Expose protected String storageType = BuiltinStorages.TEXT;
   @Expose protected KeyValueSet options = new KeyValueSet();
 
   protected PersistentStoreNode(int pid, NodeType nodeType) {
     super(pid, nodeType);
   }
 
-  public void setStorageType(StoreType storageType) {
+  public void setDataFormat(String storageType) {
     this.storageType = storageType;
   }
 
-  public StoreType getStorageType() {
+  public String getStorageType() {
     return this.storageType;
   }
 
@@ -65,6 +65,15 @@ public abstract class PersistentStoreNode extends UnaryNode implements Cloneable
     planStr.addExplan("Store type: " + storageType);
 
     return planStr;
+  }
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((options == null) ? 0 : options.hashCode());
+    result = prime * result + ((storageType == null) ? 0 : storageType.hashCode());
+    return result;
   }
 
   @Override

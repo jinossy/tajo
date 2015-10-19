@@ -19,6 +19,7 @@
 package org.apache.tajo.plan.expr;
 
 import com.google.gson.annotations.Expose;
+
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.common.TajoDataTypes;
@@ -79,7 +80,8 @@ public class BetweenPredicateEval extends EvalNode implements Cloneable {
   }
 
   private static interface Checker {
-    Datum eval(Schema schema, Tuple param);
+    void bind(EvalContext evalContext, Schema schema);
+    Datum eval(Tuple param);
   }
 
   private static class ConstantChecker implements Checker {
@@ -101,8 +103,13 @@ public class BetweenPredicateEval extends EvalNode implements Cloneable {
     }
 
     @Override
-    public Datum eval(Schema schema, Tuple param) {
-      Datum predicandValue = predicand.eval(schema, param);
+    public void bind(EvalContext evalContext, Schema schema) {
+      predicand.bind(evalContext, schema);
+    }
+
+    @Override
+    public Datum eval(Tuple param) {
+      Datum predicandValue = predicand.eval(param);
 
       if (!predicandValue.isNull()) {
         return DatumFactory.createBool(not ^ (predicandValue.greaterThanEqual(begin).asBool()
@@ -127,10 +134,17 @@ public class BetweenPredicateEval extends EvalNode implements Cloneable {
     }
 
     @Override
-    public Datum eval(Schema schema, Tuple param) {
-      Datum predicandValue = predicand.eval(schema, param);
-      Datum beginValue = begin.eval(schema, param);
-      Datum endValue = end.eval(schema, param);
+    public void bind(EvalContext evalContext, Schema schema) {
+      predicand.bind(evalContext, schema);
+      begin.bind(evalContext, schema);
+      end.bind(evalContext, schema);
+    }
+
+    @Override
+    public Datum eval(Tuple param) {
+      Datum predicandValue = predicand.eval(param);
+      Datum beginValue = begin.eval(param);
+      Datum endValue = end.eval(param);
 
       if (!(predicandValue.isNull() || beginValue.isNull() || endValue.isNull())) {
         return
@@ -156,10 +170,17 @@ public class BetweenPredicateEval extends EvalNode implements Cloneable {
     }
 
     @Override
-    public Datum eval(Schema schema, Tuple param) {
-      Datum predicandValue = predicand.eval(schema, param);
-      Datum beginValue = begin.eval(schema, param);
-      Datum endValue = end.eval(schema, param);
+    public void bind(EvalContext evalContext, Schema schema) {
+      predicand.bind(evalContext, schema);
+      begin.bind(evalContext, schema);
+      end.bind(evalContext, schema);
+    }
+
+    @Override
+    public Datum eval(Tuple param) {
+      Datum predicandValue = predicand.eval(param);
+      Datum beginValue = begin.eval(param);
+      Datum endValue = end.eval(param);
 
       if (!(predicandValue.isNull()|| beginValue.isNull() || endValue.isNull())) {
         return DatumFactory.createBool( not ^
@@ -206,27 +227,46 @@ public class BetweenPredicateEval extends EvalNode implements Cloneable {
   }
 
   @Override
-  public Datum eval(Schema schema, Tuple tuple) {
-    if (checker == null) {
-      if (begin.getType() == EvalType.CONST && end.getType() == EvalType.CONST) {
-        Datum beginValue = ((ConstEval)begin).getValue();
-        Datum endValue = ((ConstEval)end).getValue();
+  public EvalNode bind(EvalContext evalContext, Schema schema) {
+    super.bind(evalContext, schema);
+    if (begin.getType() == EvalType.CONST && end.getType() == EvalType.CONST) {
+      Datum beginValue = ((ConstEval)begin).getValue();
+      Datum endValue = ((ConstEval)end).getValue();
 
-        if (symmetric || beginValue.compareTo(endValue) <= 0) {
-          checker = new ConstantChecker(not, predicand, beginValue, endValue);
-        } else {
-          checker = new AsymmetricChecker(not, predicand, begin, end);
-        }
+      if (symmetric || beginValue.compareTo(endValue) <= 0) {
+        checker = new ConstantChecker(not, predicand, beginValue, endValue);
       } else {
-        if (symmetric) {
-          checker = new SymmetricChecker(not, predicand, begin, end);
-        } else {
-          checker = new AsymmetricChecker(not, predicand, begin, end);
-        }
+        checker = new AsymmetricChecker(not, predicand, begin, end);
+      }
+    } else {
+      if (symmetric) {
+        checker = new SymmetricChecker(not, predicand, begin, end);
+      } else {
+        checker = new AsymmetricChecker(not, predicand, begin, end);
       }
     }
+    checker.bind(evalContext, schema);
+    return this;
+  }
 
-    return checker.eval(schema, tuple);
+  @Override
+  @SuppressWarnings("unchecked")
+  public Datum eval(Tuple tuple) {
+    super.eval(tuple);
+    return checker.eval(tuple);
+  }
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + ((begin == null) ? 0 : begin.hashCode());
+    result = prime * result + ((checker == null) ? 0 : checker.hashCode());
+    result = prime * result + ((end == null) ? 0 : end.hashCode());
+    result = prime * result + (not ? 1231 : 1237);
+    result = prime * result + ((predicand == null) ? 0 : predicand.hashCode());
+    result = prime * result + (symmetric ? 1231 : 1237);
+    return result;
   }
 
   @Override

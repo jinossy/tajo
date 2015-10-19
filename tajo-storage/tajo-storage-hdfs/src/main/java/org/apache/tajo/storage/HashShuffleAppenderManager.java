@@ -94,7 +94,7 @@ public class HashShuffleAppenderManager {
       Map<Integer, PartitionAppenderMeta> partitionAppenderMap = appenderMap.get(ebId);
 
       if (partitionAppenderMap == null) {
-        partitionAppenderMap = new ConcurrentHashMap<Integer, PartitionAppenderMeta>();
+        partitionAppenderMap = new ConcurrentHashMap<>();
         appenderMap.put(ebId, partitionAppenderMap);
       }
 
@@ -110,8 +110,9 @@ public class HashShuffleAppenderManager {
         if (!fs.exists(dataFile.getParent())) {
           fs.mkdirs(dataFile.getParent());
         }
-        FileAppender appender = (FileAppender)((FileStorageManager)StorageManager.getFileStorageManager(
-            tajoConf, null)).getAppender(meta, outSchema, dataFile);
+
+        FileTablespace space = (FileTablespace) TablespaceManager.get(dataFile.toUri());
+        FileAppender appender = (FileAppender) space.getAppender(meta, outSchema, dataFile);
         appender.enableStats();
         appender.init();
 
@@ -123,7 +124,9 @@ public class HashShuffleAppenderManager {
         partitionAppenderMeta.appender.init();
         partitionAppenderMap.put(partId, partitionAppenderMeta);
 
-        LOG.info("Create Hash shuffle file(partId=" + partId + "): " + dataFile);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Create Hash shuffle file(partId=" + partId + "): " + dataFile);
+        }
       }
 
       return partitionAppenderMeta.appender;
@@ -161,7 +164,7 @@ public class HashShuffleAppenderManager {
     }
 
     // Send Intermediate data to QueryMaster.
-    List<HashShuffleIntermediate> intermediateEntries = new ArrayList<HashShuffleIntermediate>();
+    List<HashShuffleIntermediate> intermediateEntries = new ArrayList<>();
     for (PartitionAppenderMeta eachMeta : partitionAppenderMap.values()) {
       try {
         eachMeta.appender.close();
@@ -227,7 +230,7 @@ public class HashShuffleAppenderManager {
     private Collection<Pair<Long, Pair<Integer, Integer>>> failureTskTupleIndexes;
 
     //[<page start offset, length>]
-    private List<Pair<Long, Integer>> pages = new ArrayList<Pair<Long, Integer>>();
+    private List<Pair<Long, Integer>> pages = new ArrayList<>();
 
     public HashShuffleIntermediate(int partId, long volume,
                                    List<Pair<Long, Integer>> pages,

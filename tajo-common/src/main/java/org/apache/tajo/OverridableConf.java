@@ -18,7 +18,10 @@
 
 package org.apache.tajo;
 
+import java.util.Arrays;
+
 import com.google.common.base.Preconditions;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.conf.TajoConf;
@@ -95,6 +98,7 @@ public class OverridableConf extends KeyValueSet {
     }
   }
 
+  @Override
   public boolean getBool(ConfigKey key) {
     return getBool(key, null);
   }
@@ -120,6 +124,7 @@ public class OverridableConf extends KeyValueSet {
     }
   }
 
+  @Override
   public int getInt(ConfigKey key) {
     return getInt(key, null);
   }
@@ -145,6 +150,7 @@ public class OverridableConf extends KeyValueSet {
     }
   }
 
+  @Override
   public long getLong(ConfigKey key) {
     return getLong(key, null);
   }
@@ -170,8 +176,9 @@ public class OverridableConf extends KeyValueSet {
     }
   }
 
+  @Override
   public float getFloat(ConfigKey key) {
-    return getLong(key, null);
+    return getFloat(key, null);
   }
 
   public void put(ConfigKey key, String val) {
@@ -247,4 +254,19 @@ public class OverridableConf extends KeyValueSet {
       return false;
     }
   }
+  
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((conf == null) ? 0 : conf.hashCode());
+    result = prime * result + Arrays.hashCode(configTypes);
+    return result;
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    return super.equals(obj);
+  }
+  
 }

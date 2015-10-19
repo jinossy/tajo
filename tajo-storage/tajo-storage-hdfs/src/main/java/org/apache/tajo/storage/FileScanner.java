@@ -29,6 +29,9 @@ import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.ColumnStats;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.logical.LogicalNode;
 import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.storage.fragment.Fragment;
 
@@ -69,7 +72,7 @@ public abstract class FileScanner implements Scanner {
     }
 
     if (schema != null) {
-      for(Column eachColumn: schema.getColumns()) {
+      for(Column eachColumn: schema.getRootColumns()) {
         ColumnStats columnStats = new ColumnStats(eachColumn);
         tableStats.addColumnStat(columnStats);
       }
@@ -82,6 +85,11 @@ public abstract class FileScanner implements Scanner {
   }
 
   @Override
+  public void pushOperators(LogicalNode planPart) {
+    throw new TajoRuntimeException(new UnsupportedException());
+  }
+
+  @Override
   public void setTarget(Column[] targets) {
     if (inited) {
       throw new IllegalStateException("Should be called before init()");
@@ -89,10 +97,8 @@ public abstract class FileScanner implements Scanner {
     this.targets = targets;
   }
 
-  public void setSearchCondition(Object expr) {
-    if (inited) {
-      throw new IllegalStateException("Should be called before init()");
-    }
+  @Override
+  public void setLimit(long num) {
   }
 
   public static FileSystem getFileSystem(TajoConf tajoConf, Path path) throws IOException {

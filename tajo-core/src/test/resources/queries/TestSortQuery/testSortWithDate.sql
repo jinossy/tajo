@@ -1,1 +1,0 @@
-select col1, col2, col3 from table1 order by col1, col2, col3;

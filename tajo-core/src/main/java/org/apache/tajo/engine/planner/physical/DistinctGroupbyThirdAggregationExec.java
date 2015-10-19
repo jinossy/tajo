@@ -40,7 +40,6 @@ import java.util.*;
 public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
   private static Log LOG = LogFactory.getLog(DistinctGroupbyThirdAggregationExec.class);
   private DistinctGroupbyNode plan;
-  private PhysicalExec child;
 
   private boolean finished = false;
 
@@ -52,23 +51,28 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
 
   private int[] resultTupleIndexes;
 
+  private Tuple outTuple;
+  private Tuple keyTuple;
+  private Tuple prevKeyTuple = null;
+  private Tuple prevTuple = null;
+
   public DistinctGroupbyThirdAggregationExec(TaskAttemptContext context, DistinctGroupbyNode plan, SortExec sortExec)
       throws IOException {
     super(context, plan.getInSchema(), plan.getOutSchema(), sortExec);
     this.plan = plan;
-    this.child = sortExec;
   }
 
   @Override
   public void init() throws IOException {
-    this.child.init();
+    super.init();
 
     numGroupingColumns = plan.getGroupingColumns().length;
     resultTupleLength = numGroupingColumns;
+    keyTuple = new VTuple(numGroupingColumns);
 
     List<GroupbyNode> groupbyNodes = plan.getSubPlans();
 
-    List<DistinctFinalAggregator> aggregatorList = new ArrayList<DistinctFinalAggregator>();
+    List<DistinctFinalAggregator> aggregatorList = new ArrayList<>();
     int inTupleIndex = 1 + numGroupingColumns;
     int outTupleIndex = numGroupingColumns;
     int distinctSeq = 0;
@@ -88,17 +92,18 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
       resultTupleLength += eachGroupby.getAggFunctions().length;
     }
     aggregators = aggregatorList.toArray(new DistinctFinalAggregator[]{});
+    outTuple = new VTuple(resultTupleLength);
 
     // make output schema mapping index
     resultTupleIndexes = new int[outSchema.size()];
-    Map<Column, Integer> groupbyResultTupleIndex = new HashMap<Column, Integer>();
+    Map<Column, Integer> groupbyResultTupleIndex = new HashMap<>();
     int resultTupleIndex = 0;
     for (Column eachColumn: plan.getGroupingColumns()) {
       groupbyResultTupleIndex.put(eachColumn, resultTupleIndex);
       resultTupleIndex++;
     }
     for (GroupbyNode eachGroupby : groupbyNodes) {
-      Set<Column> groupingColumnSet = new HashSet<Column>();
+      Set<Column> groupingColumnSet = new HashSet<>();
       for (Column column: eachGroupby.getGroupingColumns()) {
         groupingColumnSet.add(column);
       }
@@ -112,14 +117,14 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
     }
 
     int index = 0;
-    for (Column eachOutputColumn: outSchema.getColumns()) {
+    for (Column eachOutputColumn: outSchema.getRootColumns()) {
       // If column is avg aggregation function, outschema's column type is float
       // but groupbyResultTupleIndex's column type is protobuf
 
       int matchedIndex = -1;
-      for (Column eachIndexColumn: groupbyResultTupleIndex.keySet()) {
-        if (eachIndexColumn.getQualifiedName().equals(eachOutputColumn.getQualifiedName())) {
-          matchedIndex = groupbyResultTupleIndex.get(eachIndexColumn);
+      for (Map.Entry<Column, Integer> entry: groupbyResultTupleIndex.entrySet()) {
+        if (entry.getKey().getQualifiedName().equals(eachOutputColumn.getQualifiedName())) {
+          matchedIndex = entry.getValue();
           break;
         }
       }
@@ -130,21 +135,16 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
     }
   }
 
-  Tuple prevKeyTuple = null;
-  Tuple prevTuple = null;
-
   @Override
   public Tuple next() throws IOException {
     if (finished) {
       return null;
     }
 
-    Tuple resultTuple = new VTuple(resultTupleLength);
-
     while (!context.isStopped()) {
-      Tuple childTuple = child.next();
+      Tuple tuple = child.next();
       // Last tuple
-      if (childTuple == null) {
+      if (tuple == null) {
         finished = true;
 
         if (prevTuple == null) {
@@ -158,28 +158,22 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
         }
 
         for (int i = 0; i < numGroupingColumns; i++) {
-          resultTuple.put(resultTupleIndexes[i], prevTuple.get(i + 1));
+          outTuple.put(resultTupleIndexes[i], prevTuple.asDatum(i + 1));
         }
         for (DistinctFinalAggregator eachAggr: aggregators) {
-          eachAggr.terminate(resultTuple);
+          eachAggr.terminate(outTuple);
         }
-        break;
+
+        return outTuple;
       }
 
-      Tuple tuple = null;
-      try {
-        tuple = childTuple.clone();
-      } catch (CloneNotSupportedException e) {
-        throw new IOException(e.getMessage(), e);
-      }
-
-      int distinctSeq = tuple.get(0).asInt2();
+      int distinctSeq = tuple.getInt2(0);
       Tuple keyTuple = getGroupingKeyTuple(tuple);
 
       // First tuple
       if (prevKeyTuple == null) {
-        prevKeyTuple = keyTuple;
-        prevTuple = tuple;
+        prevKeyTuple = new VTuple(keyTuple.getValues());
+        prevTuple = new VTuple(tuple.getValues());
 
         aggregators[distinctSeq].merge(tuple);
         continue;
@@ -188,40 +182,38 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
       if (!prevKeyTuple.equals(keyTuple)) {
         // new grouping key
         for (int i = 0; i < numGroupingColumns; i++) {
-          resultTuple.put(resultTupleIndexes[i], prevTuple.get(i + 1));
+          outTuple.put(resultTupleIndexes[i], prevTuple.asDatum(i + 1));
         }
         for (DistinctFinalAggregator eachAggr: aggregators) {
-          eachAggr.terminate(resultTuple);
+          eachAggr.terminate(outTuple);
         }
 
-        prevKeyTuple = keyTuple;
-        prevTuple = tuple;
+        prevKeyTuple.put(keyTuple.getValues());
+        prevTuple.put(tuple.getValues());
 
         aggregators[distinctSeq].merge(tuple);
-        break;
+        return outTuple;
       } else {
-        prevKeyTuple = keyTuple;
-        prevTuple = tuple;
+        prevKeyTuple.put(keyTuple.getValues());
+        prevTuple.put(tuple.getValues());
         aggregators[distinctSeq].merge(tuple);
       }
     }
 
-    return resultTuple;
+    return null;
   }
 
   private Tuple makeEmptyTuple() {
-    Tuple resultTuple = new VTuple(resultTupleLength);
     for (DistinctFinalAggregator eachAggr: aggregators) {
-      eachAggr.terminateEmpty(resultTuple);
+      eachAggr.terminateEmpty(outTuple);
     }
 
-    return resultTuple;
+    return outTuple;
   }
 
   private Tuple getGroupingKeyTuple(Tuple tuple) {
-    Tuple keyTuple = new VTuple(numGroupingColumns);
     for (int i = 0; i < numGroupingColumns; i++) {
-      keyTuple.put(i, tuple.get(i + 1));
+      keyTuple.put(i, tuple.asDatum(i + 1));
     }
 
     return keyTuple;
@@ -254,7 +246,8 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
       aggrFunctions = groupbyNode.getAggFunctions();
       if (aggrFunctions != null) {
         for (AggregationFunctionCallEval eachFunction: aggrFunctions) {
-          eachFunction.setFinalPhase();
+          eachFunction.bind(context.getEvalContext(), inSchema);
+          eachFunction.setLastPhase();
         }
       }
       newFunctionContext();
@@ -269,11 +262,11 @@ public class DistinctGroupbyThirdAggregationExec extends UnaryPhysicalExec {
 
     public void merge(Tuple tuple) {
       for (int i = 0; i < aggrFunctions.length; i++) {
-        aggrFunctions[i].merge(functionContexts[i], inSchema, tuple);
+        aggrFunctions[i].merge(functionContexts[i], tuple);
       }
 
       if (seq == 0 && nonDistinctAggr != null) {
-        if (!tuple.get(nonDistinctAggr.inTupleIndex).isNull()) {
+        if (!tuple.isBlankOrNull(nonDistinctAggr.inTupleIndex)) {
           nonDistinctAggr.merge(tuple);
         }
       }

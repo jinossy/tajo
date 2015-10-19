@@ -28,7 +28,6 @@ import org.apache.tajo.engine.function.annotation.Description;
 import org.apache.tajo.engine.function.annotation.ParamTypes;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.util.datetime.DateTimeFormat;
-import org.apache.tajo.util.datetime.DateTimeUtil;
 import org.apache.tajo.util.datetime.TimeMeta;
 
 @Description(
@@ -48,15 +47,15 @@ public class ToDate extends GeneralFunction {
 
   @Override
   public Datum eval(Tuple params) {
-    if(params.isNull(0) || params.isNull(1)) {
+    if(params.isBlankOrNull(0) || params.isBlankOrNull(1)) {
       return NullDatum.get();
     }
 
-    String value = params.get(0).asChars();
-    String pattern = params.get(1).asChars();
+    String value = params.getText(0);
+    String pattern = params.getText(1);
 
     TimeMeta tm = DateTimeFormat.parseDateTime(value, pattern);
 
-    return new DateDatum(DateTimeUtil.date2j(tm.years, tm.monthOfYear, tm.dayOfMonth));
+    return new DateDatum(tm);
   }
 }

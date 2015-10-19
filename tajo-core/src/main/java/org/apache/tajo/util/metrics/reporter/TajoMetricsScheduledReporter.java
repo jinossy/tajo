@@ -103,7 +103,7 @@ public abstract class TajoMetricsScheduledReporter extends TajoMetricsReporter i
     filterList.addMetricFilter(new GroupNameMetricsFilter(metricsName));
 
     String regexpFilterKey = metricsPropertyKey + "regexp.";
-    Set<String> regexpExpressions = new HashSet<String>();
+    Set<String> regexpExpressions = new HashSet<>();
 
     for(Map.Entry<String, String> entry: metricsProperties.entrySet()) {
       String key = entry.getKey();
@@ -142,11 +142,7 @@ public abstract class TajoMetricsScheduledReporter extends TajoMetricsReporter i
         try {
           report();
         } catch (Exception e) {
-          if(LOG.isDebugEnabled()) {
-            LOG.warn("Metric report error:" + e.getMessage(), e);
-          } else {
-            LOG.warn("Metric report error:" + e.getMessage(), e);
-          }
+          LOG.warn("Metric report error:" + e.getMessage(), e);
         }
       }
     }, period, period, unit);

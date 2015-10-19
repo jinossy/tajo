@@ -18,6 +18,8 @@
 
 package org.apache.tajo.util;
 
+import com.google.common.base.Function;
+import io.netty.util.CharsetUtil;
 import org.apache.commons.lang.CharUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang.SystemUtils;
@@ -77,10 +79,12 @@ public class StringUtils {
     }
     return buf.toString();
   }
-
-  static CharsetEncoder asciiEncoder = Charset.forName("US-ASCII").newEncoder(); // or "ISO-8859-1" for ISO Latin 1
-
+  /**
+   * Check Seven-bit ASCII
+   */
   public static boolean isPureAscii(String v) {
+    // get thread-safe encoder
+    CharsetEncoder asciiEncoder = CharsetUtil.getEncoder(CharsetUtil.US_ASCII);
     return asciiEncoder.canEncode(v);
   }
 
@@ -186,7 +190,11 @@ public class StringUtils {
   public static String unicodeEscapedDelimiter(String value) {
     try {
       String delimiter = StringEscapeUtils.unescapeJava(value);
-      return unicodeEscapedDelimiter(delimiter.charAt(0));
+      StringBuilder builder = new StringBuilder();
+      for (char achar : delimiter.toCharArray()) {
+        builder.append(unicodeEscapedDelimiter(achar));
+      }
+      return builder.toString();
     } catch (Throwable e) {
     }
     return value;
@@ -366,5 +374,130 @@ public class StringUtils {
     }
     
     return resultArray;
+  }
+
+  /**
+   * Concatenate all objects' string with a delimiter string
+   *
+   * @param objects Iterable objects
+   * @param delimiter Delimiter string
+   * @return A joined string
+   */
+  public static String join(Iterable objects, String delimiter) {
+    boolean first = true;
+    StringBuilder sb = new StringBuilder();
+    for(Object object : objects) {
+      if (first) {
+        first = false;
+      } else {
+        sb.append(delimiter);
+      }
+
+      sb.append(object.toString());
+    }
+
+    return sb.toString();
+  }
+
+  /**
+   * Concatenate all objects' string with the delimiter ", "
+   *
+   * @param objects Iterable objects
+   * @return A joined string
+   */
+  public static String join(Object[] objects) {
+    return join(objects, ", ");
+  }
+
+  /**
+   * Concatenate all objects' string with the delimiter ", "
+   *
+   * @param objects Iterable objects
+   * @return A joined string
+   */
+  public static String join(Object[] objects, String delimiter) {
+    return join(objects, delimiter, 0, objects.length);
+  }
+
+  /**
+   * Concatenate all objects' string with a delimiter string
+   *
+   * @param objects object array
+   * @param delimiter Delimiter string
+   * @param startIndex the begin index to join
+   * @return A joined string
+   */
+  public static String join(Object[] objects, String delimiter, int startIndex) {
+    return join(objects, delimiter, startIndex, objects.length);
+  }
+
+  /**
+   * Concatenate all objects' string with a delimiter string
+   *
+   * @param objects object array
+   * @param delimiter Delimiter string
+   * @param startIndex the begin index to join
+   * @param length the number of columns to be joined
+   * @return A joined string
+   */
+  public static String join(Object[] objects, String delimiter, int startIndex, int length) {
+    return join(objects, delimiter, startIndex, length, new Function<Object, String>() {
+      @Override
+      public String apply(Object input) {
+        return input.toString();
+      }
+    });
+  }
+
+
+  /**
+   * Concatenate all objects' string with a delimiter string
+   *
+   * @param objects object array
+   * @param delimiter Delimiter string
+   * @param f convert from a type to string
+   * @return A joined string
+   */
+  public static <T> String join(T [] objects, String delimiter, Function<T, String> f) {
+    return join(objects, delimiter, 0, objects.length, f);
+  }
+
+  public static <T> String join(T [] objects, String delimiter, int startIndex, int length, Function<T, String> f) {
+    boolean first = true;
+    StringBuilder sb = new StringBuilder();
+    int endIndex = startIndex + length;
+    for(int i = startIndex; i + startIndex < endIndex; i++) {
+      if (first) {
+        first = false;
+      } else {
+        sb.append(delimiter);
+      }
+
+      sb.append(f.apply(objects[i]));
+    }
+
+    return sb.toString();
+  }
+
+  /**
+   * <p>Checks if a String is empty ("") or null.</p>
+   *
+   * <pre>
+   * StringUtils.isEmpty(null)      = true
+   * StringUtils.isEmpty("")        = true
+   * StringUtils.isEmpty(" ")       = false
+   * StringUtils.isEmpty("bob")     = false
+   * StringUtils.isEmpty("  bob  ") = false
+   * </pre>
+   *
+   * <p>NOTE: This method changed in Lang version 2.0.
+   * It no longer trims the String.
+   * That functionality is available in isBlank().</p>
+   *
+   * @param str  the String to check, may be null
+   * @return <code>true</code> if the String is empty or null
+   */
+  public static boolean isEmpty(String str) {
+    return str == null || str.length() == 0;
   }
 }

@@ -24,6 +24,7 @@ import com.google.protobuf.ByteString;
 import org.apache.tajo.algebra.WindowSpec.WindowFrameEndBoundType;
 import org.apache.tajo.algebra.WindowSpec.WindowFrameStartBoundType;
 import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.datum.AnyDatum;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.IntervalDatum;
 import org.apache.tajo.plan.expr.*;
@@ -58,7 +59,7 @@ public class EvalNodeSerializer
   public static PlanProto.EvalNodeTree serialize(EvalNode evalNode) {
     EvalNodeSerializer.EvalTreeProtoBuilderContext context =
         new EvalNodeSerializer.EvalTreeProtoBuilderContext();
-    instance.visit(context, evalNode, new Stack<EvalNode>());
+    instance.visit(context, evalNode, new Stack<>());
     return context.treeBuilder.build();
   }
 
@@ -101,9 +102,9 @@ public class EvalNodeSerializer
   }
 
   @Override
-  public EvalNode visitUnaryEval(EvalTreeProtoBuilderContext context, Stack<EvalNode> stack, UnaryEval unary) {
+  public EvalNode visitUnaryEval(EvalTreeProtoBuilderContext context, UnaryEval unary, Stack<EvalNode> stack) {
     // visiting and registering childs
-    super.visitUnaryEval(context, stack, unary);
+    super.visitUnaryEval(context, unary, stack);
     int [] childIds = registerGetChildIds(context, unary);
 
     // building itself
@@ -181,13 +182,15 @@ public class EvalNodeSerializer
     return rowConst;
   }
 
-  public EvalNode visitField(EvalTreeProtoBuilderContext context, Stack<EvalNode> stack, FieldEval field) {
+  @Override
+  public EvalNode visitField(EvalTreeProtoBuilderContext context, FieldEval field, Stack<EvalNode> stack) {
     PlanProto.EvalNode.Builder builder = createEvalBuilder(context, field);
     builder.setField(field.getColumnRef().getProto());
     context.treeBuilder.addNodes(builder);
     return field;
   }
 
+  @Override
   public EvalNode visitBetween(EvalTreeProtoBuilderContext context, BetweenPredicateEval between,
                                Stack<EvalNode> stack) {
     // visiting and registering childs
@@ -211,6 +214,7 @@ public class EvalNodeSerializer
     return between;
   }
 
+  @Override
   public EvalNode visitCaseWhen(EvalTreeProtoBuilderContext context, CaseWhenEval caseWhen, Stack<EvalNode> stack) {
     // visiting and registering childs
     super.visitCaseWhen(context, caseWhen, stack);
@@ -235,6 +239,7 @@ public class EvalNodeSerializer
     return caseWhen;
   }
 
+  @Override
   public EvalNode visitIfThen(EvalTreeProtoBuilderContext context, CaseWhenEval.IfThenEval ifCond,
                               Stack<EvalNode> stack) {
     // visiting and registering childs
@@ -254,6 +259,7 @@ public class EvalNodeSerializer
     return ifCond;
   }
 
+  @Override
   public EvalNode visitFuncCall(EvalTreeProtoBuilderContext context, FunctionEval function, Stack<EvalNode> stack) {
     // visiting and registering childs
     super.visitFuncCall(context, function, stack);
@@ -274,8 +280,8 @@ public class EvalNodeSerializer
       AggregationFunctionCallEval aggFunc = (AggregationFunctionCallEval) function;
 
       PlanProto.AggFunctionEvalSpec.Builder aggFunctionEvalBuilder = PlanProto.AggFunctionEvalSpec.newBuilder();
-      aggFunctionEvalBuilder.setIntermediatePhase(aggFunc.isIntermediatePhase());
-      aggFunctionEvalBuilder.setFinalPhase(aggFunc.isFinalPhase());
+      aggFunctionEvalBuilder.setFirstPhase(aggFunc.isFirstPhase());
+      aggFunctionEvalBuilder.setLastPhase(aggFunc.isLastPhase());
       if (aggFunc.hasAlias()) {
         aggFunctionEvalBuilder.setAlias(aggFunc.getAlias());
       }
@@ -297,9 +303,23 @@ public class EvalNodeSerializer
       builder.setWinFunction(windowFuncBuilder);
     }
 
-
     context.treeBuilder.addNodes(builder);
     return function;
+  }
+
+  @Override
+  public EvalNode visitSubquery(EvalTreeProtoBuilderContext context, SubqueryEval subquery, Stack<EvalNode> stack) {
+    super.visitSubquery(context, subquery, stack);
+
+    PlanProto.SubqueryEval.Builder subqueryBuilder = PlanProto.SubqueryEval.newBuilder();
+    subqueryBuilder.setSubquery(LogicalNodeSerializer.serialize(subquery.getSubQueryNode()));
+
+    PlanProto.EvalNode.Builder builder = createEvalBuilder(context, subquery);
+    builder.setSubquery(subqueryBuilder);
+
+    context.treeBuilder.addNodes(builder);
+
+    return subquery;
   }
 
   private WindowFrame buildWindowFrame(WindowSpec.WindowFrame frame) {
@@ -387,6 +407,9 @@ public class EvalNodeSerializer
       intervalBuilder.setMonth(interval.getMonths());
       intervalBuilder.setMsec(interval.getMilliSeconds());
       builder.setInterval(intervalBuilder);
+      break;
+    case ANY:
+      builder.setActual(serialize(((AnyDatum)datum).getActual()));
       break;
     default:
       throw new RuntimeException("Unknown data type: " + datum.type().name());

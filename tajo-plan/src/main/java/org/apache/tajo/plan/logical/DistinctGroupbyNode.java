@@ -24,9 +24,11 @@ import org.apache.tajo.plan.PlanString;
 import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.plan.Target;
 import org.apache.tajo.plan.expr.AggregationFunctionCallEval;
+import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.util.TUtil;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class DistinctGroupbyNode extends UnaryNode implements Projectable, Cloneable {
@@ -120,7 +122,7 @@ public class DistinctGroupbyNode extends UnaryNode implements Projectable, Clone
     }
 
     if (subGroupbyPlan != null) {
-      cloneNode.subGroupbyPlan = new ArrayList<GroupbyNode>();
+      cloneNode.subGroupbyPlan = new ArrayList<>();
       for (GroupbyNode eachNode: subGroupbyPlan) {
         GroupbyNode groupbyNode = (GroupbyNode)eachNode.clone();
         groupbyNode.setPID(-1);
@@ -147,8 +149,8 @@ public class DistinctGroupbyNode extends UnaryNode implements Projectable, Clone
 
   public String toString() {
     StringBuilder sb = new StringBuilder("Distinct GroupBy (");
-    if (groupingColumns != null || groupingColumns.length > 0) {
-      sb.append("grouping set=").append(TUtil.arrayToString(groupingColumns));
+    if (groupingColumns != null && groupingColumns.length > 0) {
+      sb.append("grouping set=").append(StringUtils.join(groupingColumns));
       sb.append(", ");
     }
     for (GroupbyNode eachNode: subGroupbyPlan) {
@@ -156,6 +158,19 @@ public class DistinctGroupbyNode extends UnaryNode implements Projectable, Clone
     }
     sb.append(")");
     return sb.toString();
+  }
+
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + Arrays.hashCode(aggrFunctions);
+    result = prime * result + ((groupbyPlan == null) ? 0 : groupbyPlan.hashCode());
+    result = prime * result + Arrays.hashCode(groupingColumns);
+    result = prime * result + Arrays.hashCode(resultColumnIds);
+    result = prime * result + ((subGroupbyPlan == null) ? 0 : subGroupbyPlan.hashCode());
+    result = prime * result + Arrays.hashCode(targets);
+    return result;
   }
 
   @Override
@@ -228,7 +243,7 @@ public class DistinctGroupbyNode extends UnaryNode implements Projectable, Clone
   }
 
   public Column[] getFirstStageShuffleKeyColumns() {
-    List<Column> shuffleKeyColumns = new ArrayList<Column>();
+    List<Column> shuffleKeyColumns = new ArrayList<>();
     shuffleKeyColumns.add(getOutSchema().getColumn(0));   //distinctseq column
     if (groupingColumns != null) {
       for (Column eachColumn: groupingColumns) {

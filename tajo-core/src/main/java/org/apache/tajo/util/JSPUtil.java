@@ -19,20 +19,17 @@
 package org.apache.tajo.util;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.tajo.catalog.FunctionDesc;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.master.TajoMaster.MasterContext;
-import org.apache.tajo.ha.HAService;
 import org.apache.tajo.master.QueryInProgress;
+import org.apache.tajo.master.TajoMaster.MasterContext;
 import org.apache.tajo.querymaster.QueryMasterTask;
-import org.apache.tajo.querymaster.Task;
 import org.apache.tajo.querymaster.Stage;
-import org.apache.tajo.util.history.TaskHistory;
+import org.apache.tajo.querymaster.Task;
+import org.apache.tajo.service.ServiceTracker;
 import org.apache.tajo.util.history.StageHistory;
-import org.apache.tajo.worker.TaskRunnerHistory;
-import org.apache.tajo.worker.TaskRunner;
+import org.apache.tajo.util.history.TaskHistory;
 
 import java.text.DecimalFormat;
 import java.util.*;
@@ -66,28 +63,6 @@ public class JSPUtil {
     Collections.sort(tasks, new TaskHistoryComparator(sortField, "asc".equals(sortOrder)));
   }
 
-  public static void sortTaskRunner(List<TaskRunner> taskRunners) {
-    Collections.sort(taskRunners, new Comparator<TaskRunner>() {
-      @Override
-      public int compare(TaskRunner taskRunner, TaskRunner taskRunner2) {
-        return taskRunner.getId().compareTo(taskRunner2.getId());
-      }
-    });
-  }
-
-  public static void sortTaskRunnerHistory(List<TaskRunnerHistory> histories) {
-    Collections.sort(histories, new Comparator<TaskRunnerHistory>() {
-      @Override
-      public int compare(TaskRunnerHistory h1, TaskRunnerHistory h2) {
-        int value = h1.getExecutionBlockId().compareTo(h2.getExecutionBlockId());
-        if(value == 0){
-          return h1.getContainerId().compareTo(h2.getContainerId());
-        }
-        return value;
-      }
-    });
-  }
-
   public static String getElapsedTime(long startTime, long finishTime) {
     if(startTime == 0) {
       return "-";
@@ -97,6 +72,9 @@ public class JSPUtil {
   }
 
   public static String getTajoMasterHttpAddr(Configuration config) {
+    if (!(config instanceof TajoConf)) {
+      throw new IllegalArgumentException("config should be a TajoConf type.");
+    }
     try {
       TajoConf conf = (TajoConf) config;
       String [] masterAddr = conf.getVar(ConfVars.TAJO_MASTER_UMBILICAL_RPC_ADDRESS).split(":");
@@ -109,7 +87,7 @@ public class JSPUtil {
 
   public static List<QueryMasterTask> sortQueryMasterTask(Collection<QueryMasterTask> queryMasterTasks,
                                                           final boolean desc) {
-    List<QueryMasterTask> queryMasterTaskList = new ArrayList<QueryMasterTask>(queryMasterTasks);
+    List<QueryMasterTask> queryMasterTaskList = new ArrayList<>(queryMasterTasks);
 
     Collections.sort(queryMasterTaskList, new Comparator<QueryMasterTask>() {
 
@@ -128,7 +106,7 @@ public class JSPUtil {
 
   public static List<QueryInProgress> sortQueryInProgress(Collection<QueryInProgress> queryInProgresses,
                                                           final boolean desc) {
-    List<QueryInProgress> queryProgressList = new ArrayList<QueryInProgress>(queryInProgresses);
+    List<QueryInProgress> queryProgressList = new ArrayList<>(queryInProgresses);
 
     Collections.sort(queryProgressList, new Comparator<QueryInProgress>() {
       @Override
@@ -145,7 +123,7 @@ public class JSPUtil {
   }
 
   public static List<Stage> sortStages(Collection<Stage> stages) {
-    List<Stage> stageList = new ArrayList<Stage>(stages);
+    List<Stage> stageList = new ArrayList<>(stages);
     Collections.sort(stageList, new Comparator<Stage>() {
       @Override
       public int compare(Stage stage1, Stage stage2) {
@@ -168,7 +146,7 @@ public class JSPUtil {
   }
 
   public static List<StageHistory> sortStageHistories(Collection<StageHistory> stages) {
-    List<StageHistory> stageList = new ArrayList<StageHistory>(stages);
+    List<StageHistory> stageList = new ArrayList<>(stages);
     Collections.sort(stageList, new Comparator<StageHistory>() {
       @Override
       public int compare(StageHistory stage1, StageHistory stage2) {
@@ -191,10 +169,10 @@ public class JSPUtil {
   }
 
   public static String getMasterActiveLabel(MasterContext context) {
-    HAService haService = context.getHAService();
+    ServiceTracker haService = context.getHAService();
     String activeLabel = "";
     if (haService != null) {
-      if (haService.isActiveStatus()) {
+      if (haService.isActiveMaster()) {
         activeLabel = "<font color='#1e90ff'>(active)</font>";
       } else {
         activeLabel = "<font color='#1e90ff'>(backup)</font>";
@@ -218,8 +196,8 @@ public class JSPUtil {
         if("id".equals(sortField)) {
           return task.getId().compareTo(task2.getId());
         } else if("host".equals(sortField)) {
-          String host1 = task.getSucceededHost() == null ? "-" : task.getSucceededHost();
-          String host2 = task2.getSucceededHost() == null ? "-" : task2.getSucceededHost();
+          String host1 = task.getSucceededWorker() == null ? "-" : task.getSucceededWorker().getHost();
+          String host2 = task2.getSucceededWorker() == null ? "-" : task2.getSucceededWorker().getHost();
           return host1.compareTo(host2);
         } else if("runTime".equals(sortField)) {
           return compareLong(task.getRunningTime(), task2.getRunningTime());
@@ -232,8 +210,8 @@ public class JSPUtil {
         if("id".equals(sortField)) {
           return task2.getId().compareTo(task.getId());
         } else if("host".equals(sortField)) {
-          String host1 = task.getSucceededHost() == null ? "-" : task.getSucceededHost();
-          String host2 = task2.getSucceededHost() == null ? "-" : task2.getSucceededHost();
+          String host1 = task.getSucceededWorker() == null ? "-" : task.getSucceededWorker().getHost();
+          String host2 = task2.getSucceededWorker() == null ? "-" : task2.getSucceededWorker().getHost();
           return host2.compareTo(host1);
         } else if("runTime".equals(sortField)) {
           if(task2.getLaunchTime() == 0) {
@@ -308,22 +286,12 @@ public class JSPUtil {
     }
   }
 
-  public static void sortFunctionDesc(List<FunctionDesc> functions) {
-    Collections.sort(functions, new java.util.Comparator<FunctionDesc>() {
-      @Override
-      public int compare(FunctionDesc f1, FunctionDesc f2) {
-        int nameCompared = f1.getFunctionName().compareTo(f2.getFunctionName());
-        if(nameCompared != 0) {
-          return nameCompared;
-        } else {
-          return f1.getReturnType().getType().compareTo(f2.getReturnType().getType());
-        }
-      }
-    });
-  }
-
   static final DecimalFormat PERCENT_FORMAT = new DecimalFormat("###.#");
+
   public static String percentFormat(float value) {
+    if (Float.isInfinite(value) || Float.isNaN(value)) {
+      value = 0.0f;
+    }
     return PERCENT_FORMAT.format(value * 100.0f);
   }
 
@@ -391,9 +359,28 @@ public class JSPUtil {
     return sb.toString();
   }
 
+  public static String getPageNavigation(int currentPage, boolean next, String url) {
+    StringBuilder sb = new StringBuilder();
+    if (currentPage > 1) {
+      sb.append("<a href='").append(url)
+          .append("&page=").append(currentPage - 1).append("'>")
+          .append("&lt;prev</a>");
+      sb.append("&nbsp;&nbsp;");
+    }
+
+    sb.append(currentPage);
+
+    if(next) {
+      sb.append("&nbsp;&nbsp;").append("<a href='").append(url)
+          .append("&page=").append(currentPage + 1).append("'>")
+          .append("next&gt;</a>");
+    }
+    return sb.toString();
+  }
+
   public static <T extends Object> List<T> getPageNavigationList(List<T> originList, int page, int pageSize) {
     if (originList == null) {
-      return new ArrayList<T>();
+      return new ArrayList<>();
     }
     int start = (page - 1) * pageSize;
     int end = start + pageSize;

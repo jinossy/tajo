@@ -35,6 +35,9 @@ import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.*;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.storage.FileScanner;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.storage.VTuple;
@@ -52,6 +55,7 @@ public class AvroScanner extends FileScanner {
   private List<Schema.Field> avroFields;
   private DataFileReader<GenericRecord> dataFileReader;
   private int[] projectionMap;
+  private Tuple outTuple;
 
   /**
    * Creates a new AvroScanner.
@@ -76,14 +80,14 @@ public class AvroScanner extends FileScanner {
       targets = schema.toArray();
     }
     prepareProjection(targets);
+    outTuple = new VTuple(projectionMap.length);
 
     avroSchema = AvroUtil.getAvroSchema(meta, conf);
     avroFields = avroSchema.getFields();
 
-    DatumReader<GenericRecord> datumReader =
-        new GenericDatumReader<GenericRecord>(avroSchema);
+    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>(avroSchema);
     SeekableInput input = new FsInput(fragment.getPath(), conf);
-    dataFileReader = new DataFileReader<GenericRecord>(input, datumReader);
+    dataFileReader = new DataFileReader<>(input, datumReader);
     super.init();
   }
 
@@ -175,13 +179,12 @@ public class AvroScanner extends FileScanner {
       return null;
     }
 
-    Tuple tuple = new VTuple(schema.size());
     GenericRecord record = dataFileReader.next();
     for (int i = 0; i < projectionMap.length; ++i) {
       int columnIndex = projectionMap[i];
       Object value = record.get(columnIndex);
       if (value == null) {
-        tuple.put(columnIndex, NullDatum.get());
+        outTuple.put(i, NullDatum.get());
         continue;
       }
 
@@ -196,28 +199,28 @@ public class AvroScanner extends FileScanner {
       TajoDataTypes.Type tajoType = dataType.getType();
       switch (avroType) {
         case NULL:
-          tuple.put(columnIndex, NullDatum.get());
+          outTuple.put(i, NullDatum.get());
           break;
         case BOOLEAN:
-          tuple.put(columnIndex, DatumFactory.createBool((Boolean)value));
+          outTuple.put(i, DatumFactory.createBool((Boolean) value));
           break;
         case INT:
-          tuple.put(columnIndex, convertInt(value, tajoType));
+          outTuple.put(i, convertInt(value, tajoType));
           break;
         case LONG:
-          tuple.put(columnIndex, DatumFactory.createInt8((Long)value));
+          outTuple.put(i, DatumFactory.createInt8((Long) value));
           break;
         case FLOAT:
-          tuple.put(columnIndex, DatumFactory.createFloat4((Float)value));
+          outTuple.put(i, DatumFactory.createFloat4((Float) value));
           break;
         case DOUBLE:
-          tuple.put(columnIndex, DatumFactory.createFloat8((Double)value));
+          outTuple.put(i, DatumFactory.createFloat8((Double) value));
           break;
         case BYTES:
-          tuple.put(columnIndex, convertBytes(value, tajoType, dataType));
+          outTuple.put(i, convertBytes(value, tajoType, dataType));
           break;
         case STRING:
-          tuple.put(columnIndex, convertString(value, tajoType));
+          outTuple.put(i, convertString(value, tajoType));
           break;
         case RECORD:
           throw new RuntimeException("Avro RECORD not supported.");
@@ -228,13 +231,13 @@ public class AvroScanner extends FileScanner {
         case UNION:
           throw new RuntimeException("Avro UNION not supported.");
         case FIXED:
-          tuple.put(columnIndex, new BlobDatum(((GenericFixed)value).bytes()));
+          outTuple.put(i, new BlobDatum(((GenericFixed) value).bytes()));
           break;
         default:
           throw new RuntimeException("Unknown type.");
       }
     }
-    return tuple;
+    return outTuple;
   }
 
   /**
@@ -252,6 +255,7 @@ public class AvroScanner extends FileScanner {
     if (dataFileReader != null) {
       dataFileReader.close();
     }
+    outTuple = null;
   }
 
   /**
@@ -272,6 +276,11 @@ public class AvroScanner extends FileScanner {
   @Override
   public boolean isSelectable() {
     return false;
+  }
+
+  @Override
+  public void setFilter(EvalNode filter) {
+    throw new TajoRuntimeException(new UnsupportedException());
   }
 
   /**

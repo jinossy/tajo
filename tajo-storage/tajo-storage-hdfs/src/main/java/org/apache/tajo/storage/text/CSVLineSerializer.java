@@ -20,7 +20,6 @@ package org.apache.tajo.storage.text;
 
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.datum.Datum;
 import org.apache.tajo.storage.FieldSerializerDeserializer;
 import org.apache.tajo.storage.Tuple;
 
@@ -30,8 +29,8 @@ import java.io.OutputStream;
 public class CSVLineSerializer extends TextLineSerializer {
   private FieldSerializerDeserializer serde;
 
-  private byte [] nullChars;
-  private char delimiter;
+  private byte[] nullChars;
+  private byte[] delimiter;
   private int columnNum;
 
   public CSVLineSerializer(Schema schema, TableMeta meta) {
@@ -45,6 +44,7 @@ public class CSVLineSerializer extends TextLineSerializer {
     columnNum = schema.size();
 
     serde = new TextFieldSerializerDeserializer(meta);
+    serde.init(schema);
   }
 
   @Override
@@ -52,12 +52,11 @@ public class CSVLineSerializer extends TextLineSerializer {
     int writtenBytes = 0;
 
     for (int i = 0; i < columnNum; i++) {
-      Datum datum = input.get(i);
-      writtenBytes += serde.serialize(out, datum, schema.getColumn(i), i, nullChars);
+      writtenBytes += serde.serialize(i, input, out, nullChars);
 
       if (columnNum - 1 > i) {
-        out.write((byte) delimiter);
-        writtenBytes += 1;
+        out.write(delimiter);
+        writtenBytes += delimiter.length;
       }
     }
 

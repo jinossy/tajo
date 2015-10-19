@@ -24,6 +24,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.annotation.Nullable;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Set;
@@ -38,7 +39,7 @@ public abstract class ClassUtil {
   }
 
   public static Set<Class> findClasses(@Nullable Class targetClass, String packageFilter, Predicate predicate) {
-    Set<Class> classSet = new HashSet<Class>();
+    Set<Class> classSet = new HashSet<>();
 
     String classpath = System.getProperty("java.class.path");
     String[] paths = classpath.split(System.getProperty("path.separator"));
@@ -87,6 +88,12 @@ public abstract class ClassUtil {
               }
             }
           }
+        }
+        
+        try {
+          jar.close();
+        } catch (IOException e) {
+          LOG.warn("Closing " + file.getName() + " was failed.");
         }
       } else if (file.getName().toLowerCase().endsWith(".class")) {
         String qualifiedClassName = createClassName(root, file);

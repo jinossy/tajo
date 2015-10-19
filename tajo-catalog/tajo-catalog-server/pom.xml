@@ -21,7 +21,7 @@
   <parent>
     <artifactId>tajo-project</artifactId>
     <groupId>org.apache.tajo</groupId>
-    <version>0.10.0-SNAPSHOT</version>
+    <version>0.12.0-SNAPSHOT</version>
     <relativePath>../../tajo-project</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
@@ -38,11 +38,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
-          <encoding>${project.build.sourceEncoding}</encoding>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.rat</groupId>
@@ -57,7 +52,6 @@
         </executions>
         <configuration>
           <excludes>
-            <exclude>derby.log</exclude>
             <exclude>src/main/resources/schemas/**/*.sql</exclude>
           </excludes>
         </configuration>
@@ -121,6 +115,16 @@
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <systemProperties>
+            <tajo.test.enabled>true</tajo.test.enabled>
+          </systemProperties>
+          <argLine>-Xms512m -Xmx1024m -XX:MaxPermSize=152m -Dfile.encoding=UTF-8 -Dderby.storage.pageSize=1024 -Dderby.stream.error.file=/dev/null</argLine>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-report-plugin</artifactId>
       </plugin>
     </plugins>
@@ -141,7 +145,15 @@
     </dependency>
     <dependency>
       <groupId>org.apache.tajo</groupId>
-      <artifactId>tajo-rpc</artifactId>
+      <artifactId>tajo-rpc-protobuf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tajo</groupId>
+      <artifactId>tajo-algebra</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tajo</groupId>
+      <artifactId>tajo-plan</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>

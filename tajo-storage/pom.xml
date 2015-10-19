@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Copyright 2012 Database Lab., Korea Univ.
-
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
 
       http://www.apache.org/licenses/LICENSE-2.0
 
@@ -19,7 +21,7 @@
   <parent>
     <artifactId>tajo-project</artifactId>
     <groupId>org.apache.tajo</groupId>
-    <version>0.10.0-SNAPSHOT</version>
+    <version>0.12.0-SNAPSHOT</version>
     <relativePath>../tajo-project</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
@@ -35,6 +37,8 @@
     <module>tajo-storage-common</module>
     <module>tajo-storage-hdfs</module>
     <module>tajo-storage-hbase</module>
+    <module>tajo-storage-jdbc</module>
+    <module>tajo-storage-pgsql</module>
   </modules>
 
   <build>
@@ -85,6 +89,7 @@
         </plugins>
       </build>
     </profile>
+
     <profile>
       <id>dist</id>
       <activation>

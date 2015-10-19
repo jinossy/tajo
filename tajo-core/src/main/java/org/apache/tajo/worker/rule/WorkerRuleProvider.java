@@ -37,13 +37,13 @@ public class WorkerRuleProvider implements SelfDiagnosisRuleProvider {
   public List<SelfDiagnosisRule> getDefinedRules() {
     Set<Class> classSet = ClassUtil.findClasses(SelfDiagnosisRule.class, 
         getClass().getPackage().getName());
-    List<SelfDiagnosisRule> ruleList = new ArrayList<SelfDiagnosisRule>(classSet.size());
+    List<SelfDiagnosisRule> ruleList = new ArrayList<>(classSet.size());
     
     for (Class<SelfDiagnosisRule> ruleClazz: classSet) {
       try {
         ruleList.add(ruleClazz.newInstance());
       } catch (Exception e) {
-        LOG.warn("Cannot instantiate " + ruleClazz.getName() + " class.");
+        LOG.warn("Cannot instantiate " + ruleClazz.getName() + " class.", e);
         continue;
       }
     }

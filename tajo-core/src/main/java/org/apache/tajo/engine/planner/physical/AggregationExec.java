@@ -19,42 +19,25 @@
 package org.apache.tajo.engine.planner.physical;
 
 import org.apache.tajo.catalog.Column;
-import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.plan.expr.AggregationFunctionCallEval;
+import org.apache.tajo.plan.expr.EvalNode;
 import org.apache.tajo.plan.logical.GroupbyNode;
 import org.apache.tajo.worker.TaskAttemptContext;
 
 import java.io.IOException;
 
 public abstract class AggregationExec extends UnaryPhysicalExec {
-  protected GroupbyNode plan;
 
   protected final int groupingKeyNum;
-  protected int groupingKeyIds[];
   protected final int aggFunctionsNum;
   protected final AggregationFunctionCallEval aggFunctions[];
-
-  protected Schema evalSchema;
 
   public AggregationExec(final TaskAttemptContext context, GroupbyNode plan,
                          PhysicalExec child) throws IOException {
     super(context, plan.getInSchema(), plan.getOutSchema(), child);
-    this.plan = plan;
-
-    evalSchema = plan.getOutSchema();
 
     final Column [] keyColumns = plan.getGroupingColumns();
     groupingKeyNum = keyColumns.length;
-    groupingKeyIds = new int[groupingKeyNum];
-    Column col;
-    for (int idx = 0; idx < plan.getGroupingColumns().length; idx++) {
-      col = keyColumns[idx];
-      if (col.hasQualifier()) {
-        groupingKeyIds[idx] = inSchema.getColumnId(col.getQualifiedName());
-      } else {
-        groupingKeyIds[idx] = inSchema.getColumnIdByName(col.getSimpleName());
-      }
-    }
 
     if (plan.hasAggFunctions()) {
       aggFunctions = plan.getAggFunctions();
@@ -66,8 +49,10 @@ public abstract class AggregationExec extends UnaryPhysicalExec {
   }
 
   @Override
-  public void close() throws IOException {
-    super.close();
-    plan = null;
+  public void init() throws IOException {
+    super.init();
+    for (EvalNode aggFunction : aggFunctions) {
+      aggFunction.bind(context.getEvalContext(), inSchema);
+    }
   }
 }

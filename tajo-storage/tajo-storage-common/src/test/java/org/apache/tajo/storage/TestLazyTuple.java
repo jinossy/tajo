@@ -65,12 +65,13 @@ public class TestLazyTuple {
     sb.append(DatumFactory.createFloat4(77.9f)).append('|');
     sb.append(DatumFactory.createFloat8(271.9f)).append('|');
     sb.append(DatumFactory.createText("str2")).append('|');
-    sb.append(DatumFactory.createBlob("jinho".getBytes())).append('|');
+    sb.append(DatumFactory.createBlob("jinho")).append('|');
     sb.append(DatumFactory.createInet4("192.168.0.1")).append('|');
     sb.append(new String(nullbytes)).append('|');
     sb.append(NullDatum.get());
-    textRow = BytesUtils.splitPreserveAllTokens(sb.toString().getBytes(), '|');
+    textRow = BytesUtils.splitPreserveAllTokens(sb.toString().getBytes(), '|', 13);
     serde = new TextSerializerDeserializer();
+    serde.init(schema);
   }
 
   @Test
@@ -194,33 +195,8 @@ public class TestLazyTuple {
   }
 
   @Test
-  public void testPutTuple() {
-    int colNum = schema.size();
-    LazyTuple t1 = new LazyTuple(schema, new byte[colNum][], -1);
-
-    t1.put(0, DatumFactory.createInt4(1));
-    t1.put(1, DatumFactory.createInt4(2));
-    t1.put(2, DatumFactory.createInt4(3));
-
-
-    Schema schema2 = new Schema();
-    schema2.addColumn("col1", TajoDataTypes.Type.INT8);
-    schema2.addColumn("col2", TajoDataTypes.Type.INT8);
-
-    LazyTuple t2 = new LazyTuple(schema2, new byte[schema2.size()][], -1);
-    t2.put(0, DatumFactory.createInt4(4));
-    t2.put(1, DatumFactory.createInt4(5));
-
-    t1.put(3, t2);
-
-    for (int i = 0; i < 5; i++) {
-      assertEquals(i + 1, t1.get(i).asInt4());
-    }
-  }
-
-  @Test
   public void testInvalidNumber() {
-    byte[][] bytes = BytesUtils.splitPreserveAllTokens(" 1| |2 ||".getBytes(), '|');
+    byte[][] bytes = BytesUtils.splitPreserveAllTokens(" 1| |2 ||".getBytes(), '|', 5);
     Schema schema = new Schema();
     schema.addColumn("col1", TajoDataTypes.Type.INT2);
     schema.addColumn("col2", TajoDataTypes.Type.INT4);

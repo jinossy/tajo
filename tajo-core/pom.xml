@@ -22,7 +22,7 @@
   <parent>
     <artifactId>tajo-project</artifactId>
     <groupId>org.apache.tajo</groupId>
-    <version>0.10.0-SNAPSHOT</version>
+    <version>0.12.0-SNAPSHOT</version>
     <relativePath>../tajo-project</relativePath>
   </parent>
   <artifactId>tajo-core</artifactId>
@@ -31,9 +31,8 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <antlr4.visitor>true</antlr4.visitor>
-    <antlr4.listener>true</antlr4.listener>
-    <metrics.version>3.0.1</metrics.version>
+    <metrics.version>3.1.0</metrics.version>
+    <maven.fork.count>3</maven.fork.count>
   </properties>
 
   <repositories>
@@ -52,11 +51,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
-          <encoding>${project.build.sourceEncoding}</encoding>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.rat</groupId>
@@ -71,62 +65,14 @@
         </executions>
         <configuration>
           <excludes>
-            <exclude>derby.log</exclude>
             <exclude>benchmark/**</exclude>
-            <exclude>src/test/tpch/**</exclude>
-            <exclude>src/test/resources/dataset/**</exclude>
-            <exclude>src/test/resources/queries/**</exclude>
-            <exclude>src/test/resources/results/**</exclude>
-            <exclude>src/test/resources/results/**</exclude>
             <exclude>src/main/resources/META-INF/services/*</exclude>
             <exclude>src/main/resources/webapps/static/js/*</exclude>
           </excludes>
         </configuration>
       </plugin>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <systemProperties>
-            <tajo.test>TRUE</tajo.test>
-          </systemProperties>
-          <argLine>-Xms512m -Xmx1024m -XX:MaxPermSize=128m -Dfile.encoding=UTF-8</argLine>
-        </configuration>
-      </plugin>
-      <plugin>
         <artifactId>maven-deploy-plugin</artifactId>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-jar-plugin</artifactId>
-        <version>2.3.1</version>
-        <configuration>
-          <excludes>
-            <exclude>LICENSE</exclude>
-          </excludes>
-          <archive>
-            <addMavenDescriptor>false</addMavenDescriptor>
-          </archive>
-        </configuration>
-        <executions>
-          <execution>
-            <phase>package</phase>
-            <goals>
-              <goal>test-jar</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.antlr</groupId>
-        <artifactId>antlr4-maven-plugin</artifactId>
-        <executions>
-          <execution>
-            <goals>
-              <goal>antlr4</goal>
-            </goals>
-          </execution>
-        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -163,12 +109,12 @@
                 <argument>--proto_path=../tajo-client/src/main/proto</argument>
                 <argument>--proto_path=../tajo-plan/src/main/proto</argument>
                 <argument>--java_out=target/generated-sources/proto</argument>
-                <argument>src/main/proto/ContainerProtocol.proto</argument>
                 <argument>src/main/proto/ResourceTrackerProtocol.proto</argument>
                 <argument>src/main/proto/QueryMasterProtocol.proto</argument>
                 <argument>src/main/proto/QueryCoordinatorProtocol.proto</argument>
                 <argument>src/main/proto/TajoWorkerProtocol.proto</argument>
                 <argument>src/main/proto/InternalTypes.proto</argument>
+                <argument>src/main/proto/ResourceProtos.proto</argument>
               </arguments>
             </configuration>
             <goals>
@@ -255,11 +201,6 @@
     </dependency>
     <dependency>
       <groupId>org.apache.tajo</groupId>
-      <artifactId>tajo-storage-hbase</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.tajo</groupId>
       <artifactId>tajo-pullserver</artifactId>
     </dependency>
     <dependency>
@@ -268,75 +209,33 @@
     </dependency>
     <dependency>
       <groupId>org.apache.tajo</groupId>
-      <artifactId>tajo-jdbc</artifactId>
+      <artifactId>tajo-cli</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.tajo</groupId>
-      <artifactId>tajo-rpc</artifactId>
+      <artifactId>tajo-rpc-protobuf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tajo</groupId>
+      <artifactId>tajo-sql-parser</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.tajo</groupId>
       <artifactId>tajo-thirdparty-asm</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tajo</groupId>
+      <artifactId>tajo-ws-rs</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tajo</groupId>
+      <artifactId>tajo-metrics</artifactId>
     </dependency>
 
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
       <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-minicluster</artifactId>
-      <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <groupId>commons-el</groupId>
-          <artifactId>commons-el</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>tomcat</groupId>
-          <artifactId>jasper-runtime</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>tomcat</groupId>
-          <artifactId>jasper-compiler</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.mortbay.jetty</groupId>
-          <artifactId>jsp-2.1-jetty</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>com.sun.jersey.jersey-test-framework</groupId>
-          <artifactId>jersey-test-framework-grizzly2</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-hdfs</artifactId>
-      <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <groupId>commons-el</groupId>
-          <artifactId>commons-el</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>tomcat</groupId>
-          <artifactId>jasper-runtime</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>tomcat</groupId>
-          <artifactId>jasper-compiler</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.mortbay.jetty</groupId>
-          <artifactId>jsp-2.1-jetty</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>com.sun.jersey.jersey-test-framework</groupId>
-          <artifactId>jersey-test-framework-grizzly2</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
@@ -359,18 +258,8 @@
       <artifactId>protobuf-java</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.antlr</groupId>
-      <artifactId>antlr4</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
-      <scope>test</scope>
+      <groupId>commons-codec</groupId>
+      <artifactId>commons-codec</artifactId>
     </dependency>
     <dependency>
       <groupId>org.dspace.dependencies</groupId>
@@ -378,27 +267,28 @@
       <version>1.2.3</version>
     </dependency>
     <dependency>
-      <groupId>org.eclipse.jdt</groupId>
-      <artifactId>core</artifactId>
-      <version>3.1.1</version>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-codec-http</artifactId>
     </dependency>
     <dependency>
       <groupId>org.mortbay.jetty</groupId>
       <artifactId>jetty</artifactId>
-      <version>6.1.14</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mortbay.jetty</groupId>
+      <artifactId>jetty-util</artifactId>
     </dependency>
     <dependency>
       <groupId>org.mortbay.jetty</groupId>
       <artifactId>jsp-2.1</artifactId>
-      <version>6.1.14</version>
     </dependency>
     <dependency>
-      <groupId>com.codahale.metrics</groupId>
+      <groupId>io.dropwizard.metrics</groupId>
       <artifactId>metrics-core</artifactId>
       <version>${metrics.version}</version>
     </dependency>
     <dependency>
-      <groupId>com.codahale.metrics</groupId>
+      <groupId>io.dropwizard.metrics</groupId>
       <artifactId>metrics-jvm</artifactId>
       <version>${metrics.version}</version>
     </dependency>
@@ -408,37 +298,12 @@
       <version>1.0.3</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase-server</artifactId>
-      <version>${hbase.version}</version>
-      <type>test-jar</type>
-      <scope>test</scope>
+      <groupId>net.minidev</groupId>
+      <artifactId>json-smart</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase-server</artifactId>
-      <version>${hbase.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase-hadoop-compat</artifactId>
-      <version>${hbase.version}</version>
-      <type>test-jar</type>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase-hadoop2-compat</artifactId>
-      <version>${hbase.version}</version>
-      <type>test-jar</type>
-      <scope>test</scope>
-      <exclusions>
-        <exclusion>
-          <artifactId>jdk.tools</artifactId>
-          <groupId>jdk.tools</groupId>
-        </exclusion>
-      </exclusions>
+      <groupId>com.jayway.jsonpath</groupId>
+      <artifactId>json-path</artifactId>
     </dependency>
   </dependencies>
 
@@ -478,216 +343,63 @@
         </plugins>
       </build>
     </profile>
-    <profile>
-      <id>hcatalog-0.12.0</id>
+
+    <profile> <!-- This is for testing or debugging in IDE -->
+      <id>all-dependencies</id>
       <activation>
         <activeByDefault>false</activeByDefault>
       </activation>
       <dependencies>
+
         <dependency>
-          <groupId>org.apache.thrift</groupId>
-          <artifactId>libfb303</artifactId>
-          <version>0.9.0</version>
-          <scope>test</scope>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-common</artifactId>
         </dependency>
+
         <dependency>
-          <groupId>org.apache.thrift</groupId>
-          <artifactId>libthrift</artifactId>
-          <version>0.9.0</version>
-          <scope>test</scope>
-        </dependency>
-        <dependency>
-          <groupId>org.apache.tajo</groupId>
-          <artifactId>tajo-hcatalog</artifactId>
-          <version>${tajo.version}</version>
-          <scope>test</scope>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-hdfs</artifactId>
           <exclusions>
             <exclusion>
-              <groupId>com.google.protobuf</groupId>
-              <artifactId>protobuf-java</artifactId>
+              <groupId>commons-el</groupId>
+              <artifactId>commons-el</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>tomcat</groupId>
+              <artifactId>jasper-runtime</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>tomcat</groupId>
+              <artifactId>jasper-compiler</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.mortbay.jetty</groupId>
+              <artifactId>jsp-2.1-jetty</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>com.sun.jersey.jersey-test-framework</groupId>
+              <artifactId>jersey-test-framework-grizzly2</artifactId>
+            </exclusion>
+            <exclusion>
+              <artifactId>netty-all</artifactId>
+              <groupId>io.netty</groupId>
             </exclusion>
           </exclusions>
         </dependency>
+
         <dependency>
-          <groupId>org.apache.hive</groupId>
-          <artifactId>hive-exec</artifactId>
-          <version>0.12.0</version>
-          <scope>provided</scope>
-          <exclusions>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-common</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-contrib</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-hbase-handler</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-metastore</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-serde</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-shims</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-testutils</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.thrift</groupId>
-              <artifactId>libfb303</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.thrift</groupId>
-              <artifactId>libthrift</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.jolbox</groupId>
-              <artifactId>bonecp</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hbase</groupId>
-              <artifactId>hbase</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.google.protobuf</groupId>
-              <artifactId>protobuf-java</artifactId>
-            </exclusion>
-          </exclusions>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-api</artifactId>
         </dependency>
         <dependency>
-          <groupId>org.apache.hive</groupId>
-          <artifactId>hive-metastore</artifactId>
-          <version>0.12.0</version>
-          <scope>provided</scope>
-          <exclusions>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-common</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-serde</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-shimss</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.thrift</groupId>
-              <artifactId>libfb303</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.thrift</groupId>
-              <artifactId>libthrift</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.jolbox</groupId>
-              <artifactId>bonecp</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.google.protobuf</groupId>
-              <artifactId>protobuf-java</artifactId>
-            </exclusion>
-          </exclusions>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-common</artifactId>
         </dependency>
         <dependency>
-          <groupId>org.apache.hive</groupId>
-          <artifactId>hive-cli</artifactId>
-          <version>0.12.0</version>
-          <scope>provided</scope>
-          <exclusions>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-common</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-exec</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-metastore</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-serde</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-service</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-shims</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.jolbox</groupId>
-              <artifactId>bonecp</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.google.protobuf</groupId>
-              <artifactId>protobuf-java</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>jline</groupId>
-              <artifactId>jline</artifactId>
-            </exclusion>
-          </exclusions>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-yarn-server-common</artifactId>
         </dependency>
-        <dependency>
-          <groupId>org.apache.hive.hcatalog</groupId>
-          <artifactId>hcatalog-core</artifactId>
-          <version>0.12.0</version>
-          <scope>provided</scope>
-          <exclusions>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-cli</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-common</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-exec</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-metastore</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-serde</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-service</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.apache.hive</groupId>
-              <artifactId>hive-shims</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.jolbox</groupId>
-              <artifactId>bonecp</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>com.google.protobuf</groupId>
-              <artifactId>protobuf-java</artifactId>
-            </exclusion>
-          </exclusions>
-        </dependency>
+
       </dependencies>
     </profile>
   </profiles>

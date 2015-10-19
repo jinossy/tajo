@@ -22,8 +22,9 @@ import com.google.common.primitives.UnsignedBytes;
 import com.google.gson.annotations.Expose;
 
 import org.apache.tajo.common.TajoDataTypes;
-import org.apache.tajo.exception.InvalidCastException;
+import org.apache.tajo.exception.InvalidValueForCastException;
 import org.apache.tajo.exception.InvalidOperationException;
+import org.apache.tajo.exception.TajoRuntimeException;
 import org.apache.tajo.util.MurmurHash;
 import org.apache.tajo.util.StringUtils;
 
@@ -31,9 +32,8 @@ import java.nio.charset.Charset;
 import java.util.Comparator;
 
 public class TextDatum extends Datum {
-  public static Charset DEFAULT_CHARSET = Charset.forName("UTF-8");
+  public static final Charset DEFAULT_CHARSET = Charset.forName("UTF-8");
 
-  @Expose private final int size;
   /* encoded in UTF-8 */
   @Expose private final byte[] bytes;
 
@@ -44,7 +44,6 @@ public class TextDatum extends Datum {
   public TextDatum(byte[] bytes) {
     super(TajoDataTypes.Type.TEXT);
     this.bytes = bytes;
-    this.size = bytes.length;
   }
 
   public TextDatum(String string) {
@@ -53,12 +52,12 @@ public class TextDatum extends Datum {
 
   @Override
   public boolean asBool() {
-    throw new InvalidCastException();
+    throw new TajoRuntimeException(new InvalidValueForCastException(TajoDataTypes.Type.TEXT, TajoDataTypes.Type.BOOLEAN));
   }
 
   @Override
   public byte asByte() {
-    throw new InvalidCastException();
+    throw new TajoRuntimeException(new InvalidValueForCastException(TajoDataTypes.Type.TEXT, TajoDataTypes.Type.BIT));
   }
 
   @Override
@@ -108,7 +107,7 @@ public class TextDatum extends Datum {
 
   @Override
   public int size() {
-    return size;
+    return bytes.length;
   }
 
   @Override

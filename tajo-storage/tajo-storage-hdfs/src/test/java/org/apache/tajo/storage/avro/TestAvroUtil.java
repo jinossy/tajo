@@ -22,10 +22,10 @@ import org.apache.avro.Schema;
 import org.apache.tajo.HttpFileServer;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.storage.StorageConstants;
 import org.apache.tajo.util.FileUtil;
+import org.apache.tajo.util.JavaResourceUtil;
 import org.apache.tajo.util.NetUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,7 +47,7 @@ public class TestAvroUtil {
 
   @Before
   public void setUp() throws Exception {
-    schemaUrl = FileUtil.getResourcePath("dataset/testVariousTypes.avsc");
+    schemaUrl = JavaResourceUtil.getResourceURL("dataset/testVariousTypes.avsc");
     assertNotNull(schemaUrl);
 
     File file = new File(schemaUrl.getPath());
@@ -58,12 +58,12 @@ public class TestAvroUtil {
 
   @Test
   public void testGetSchema() throws IOException, URISyntaxException {
-    TableMeta meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.AVRO);
+    TableMeta meta = CatalogUtil.newTableMeta("AVRO");
     meta.putOption(StorageConstants.AVRO_SCHEMA_LITERAL, FileUtil.readTextFile(new File(schemaUrl.getPath())));
     Schema schema = AvroUtil.getAvroSchema(meta, new TajoConf());
     assertEquals(expected, schema);
 
-    meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.AVRO);
+    meta = CatalogUtil.newTableMeta("AVRO");
     meta.putOption(StorageConstants.AVRO_SCHEMA_URL, schemaUrl.getPath());
     schema = AvroUtil.getAvroSchema(meta, new TajoConf());
     assertEquals(expected, schema);
@@ -74,7 +74,7 @@ public class TestAvroUtil {
       InetSocketAddress addr = server.getBindAddress();
 
       String url = "http://127.0.0.1:" + addr.getPort() + schemaUrl.getPath();
-      meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.AVRO);
+      meta = CatalogUtil.newTableMeta("AVRO");
       meta.putOption(StorageConstants.AVRO_SCHEMA_URL, url);
       schema = AvroUtil.getAvroSchema(meta, new TajoConf());
     } finally {

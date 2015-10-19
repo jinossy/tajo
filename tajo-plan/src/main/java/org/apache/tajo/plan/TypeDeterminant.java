@@ -25,9 +25,14 @@ import org.apache.tajo.catalog.CatalogService;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.FunctionDesc;
-import org.apache.tajo.catalog.exception.NoSuchFunctionException;
+import org.apache.tajo.exception.UndefinedFunctionException;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.common.TajoDataTypes;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.TajoInternalError;
+import org.apache.tajo.function.FunctionUtil;
+import org.apache.tajo.plan.nameresolver.NameResolver;
+import org.apache.tajo.plan.nameresolver.NameResolvingMode;
 import org.apache.tajo.plan.visitor.SimpleAlgebraVisitor;
 
 import java.util.Stack;
@@ -35,6 +40,7 @@ import java.util.Stack;
 import static org.apache.tajo.common.TajoDataTypes.DataType;
 import static org.apache.tajo.common.TajoDataTypes.Type.BOOLEAN;
 import static org.apache.tajo.common.TajoDataTypes.Type.NULL_TYPE;
+import static org.apache.tajo.function.FunctionUtil.buildSimpleFunctionSignature;
 
 public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanContext, DataType> {
   private DataType BOOL_TYPE = CatalogUtil.newSimpleDataType(BOOLEAN);
@@ -44,13 +50,13 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     this.catalog = catalog;
   }
 
-  public DataType determineDataType(LogicalPlanner.PlanContext ctx, Expr expr) throws PlanningException {
-    return visit(ctx, new Stack<Expr>(), expr);
+  public DataType determineDataType(LogicalPlanner.PlanContext ctx, Expr expr) throws TajoException {
+    return visit(ctx, new Stack<>(), expr);
   }
 
   @Override
   public DataType visitUnaryOperator(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, UnaryOperator expr)
-      throws PlanningException {
+      throws TajoException {
     stack.push(expr);
     DataType dataType = null;
     switch (expr.getType()) {
@@ -59,7 +65,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
       dataType = BOOL_TYPE;
       break;
     case Cast:
-      dataType = LogicalPlanner.convertDataType(((CastExpr)expr).getTarget());
+      dataType = LogicalPlanner.convertDataType(((CastExpr)expr).getTarget()).getDataType();
       break;
     default:
       dataType = visit(ctx, stack, expr.getChild());
@@ -70,7 +76,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitBinaryOperator(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, BinaryOperator expr)
-      throws PlanningException {
+      throws TajoException {
     stack.push(expr);
     DataType lhsType = visit(ctx, stack, expr.getLeft());
     DataType rhsType = visit(ctx, stack, expr.getRight());
@@ -78,7 +84,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     return computeBinaryType(expr.getType(), lhsType, rhsType);
   }
 
-  public DataType computeBinaryType(OpType type, DataType lhsDataType, DataType rhsDataType) throws PlanningException {
+  public DataType computeBinaryType(OpType type, DataType lhsDataType, DataType rhsDataType) throws TajoException {
     Preconditions.checkNotNull(type);
     Preconditions.checkNotNull(lhsDataType);
     Preconditions.checkNotNull(rhsDataType);
@@ -94,7 +100,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     } else if (type == OpType.LikePredicate || type == OpType.SimilarToPredicate || type == OpType.Regexp) {
       return BOOL_TYPE;
     } else {
-      throw new PlanningException(type.name() + "is not binary type");
+      throw new TajoInternalError(type.name() + "is not binary type");
     }
   }
 
@@ -104,13 +110,13 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitBetween(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, BetweenPredicate expr)
-      throws PlanningException {
+      throws TajoException {
     return CatalogUtil.newSimpleDataType(BOOLEAN);
   }
 
   @Override
   public DataType visitCaseWhen(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, CaseWhenPredicate caseWhen)
-      throws PlanningException {
+      throws TajoException {
     DataType lastDataType = null;
 
     for (CaseWhenPredicate.WhenExpr when : caseWhen.getWhens()) {
@@ -136,9 +142,9 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitColumnReference(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, ColumnReferenceExpr expr)
-      throws PlanningException {
+      throws TajoException {
     stack.push(expr);
-    Column column = ctx.plan.resolveColumn(ctx.queryBlock, expr);
+    Column column = NameResolver.resolve(ctx.plan, ctx.queryBlock, expr, NameResolvingMode.LEGACY, true);
     stack.pop();
     return column.getDataType();
   }
@@ -149,7 +155,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitFunction(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, FunctionExpr expr)
-      throws PlanningException {
+      throws TajoException {
     stack.push(expr); // <--- Push
 
     // Given parameters
@@ -169,7 +175,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     stack.pop(); // <--- Pop
 
     if (!catalog.containFunction(expr.getSignature(), paramTypes)) {
-      throw new NoSuchFunctionException(expr.getSignature(), paramTypes);
+      throw new UndefinedFunctionException(FunctionUtil.buildSimpleFunctionSignature(expr.getSignature(), paramTypes));
     }
 
     FunctionDesc funcDesc = catalog.getFunction(expr.getSignature(), paramTypes);
@@ -178,7 +184,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitCountRowsFunction(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, CountRowsFunctionExpr expr)
-      throws PlanningException {
+      throws TajoException {
     FunctionDesc countRows = catalog.getFunction("count", CatalogProtos.FunctionType.AGGREGATION,
         new DataType[] {});
     return countRows.getReturnType();
@@ -186,7 +192,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitGeneralSetFunction(LogicalPlanner.PlanContext ctx, Stack<Expr> stack,
-                                          GeneralSetFunctionExpr setFunction) throws PlanningException {
+                                          GeneralSetFunctionExpr setFunction) throws TajoException {
     stack.push(setFunction);
 
     Expr[] params = setFunction.getParams();
@@ -205,7 +211,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     stack.pop(); // <-- pop
 
     if (!catalog.containFunction(setFunction.getSignature(), functionType, paramTypes)) {
-      throw new NoSuchFunctionException(setFunction.getSignature(), paramTypes);
+      throw new UndefinedFunctionException(buildSimpleFunctionSignature(setFunction.getSignature(), paramTypes));
     }
 
     FunctionDesc funcDesc = catalog.getFunction(setFunction.getSignature(), functionType, paramTypes);
@@ -214,7 +220,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitWindowFunction(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, WindowFunctionExpr windowFunc)
-      throws PlanningException {
+      throws TajoException {
     stack.push(windowFunc); // <--- Push
 
     String funcName = windowFunc.getSignature();
@@ -235,6 +241,10 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
       } else {
         paramTypes[0] = givenArgs[0];
       }
+      for (int i = 1; i < params.length; i++) {
+        givenArgs[i] = visit(ctx, stack, params[i]);
+        paramTypes[i] = givenArgs[i];
+      }
     }
     stack.pop(); // <--- Pop
 
@@ -242,7 +252,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     // the below checking against WINDOW_FUNCTIONS is a workaround code for the above problem.
     if (ExprAnnotator.WINDOW_FUNCTIONS.contains(funcName.toLowerCase())) {
       if (distinct) {
-        throw new NoSuchFunctionException("row_number() does not support distinct keyword.");
+        throw new UndefinedFunctionException("row_number() does not support distinct keyword.");
       }
       functionType = CatalogProtos.FunctionType.WINDOW;
     } else {
@@ -251,7 +261,7 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
     }
 
     if (!catalog.containFunction(windowFunc.getSignature(), functionType, paramTypes)) {
-      throw new NoSuchFunctionException(funcName, paramTypes);
+      throw new UndefinedFunctionException(FunctionUtil.buildSimpleFunctionSignature(funcName, paramTypes));
     }
 
     FunctionDesc funcDesc = catalog.getFunction(funcName, functionType, paramTypes);
@@ -265,13 +275,13 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitDataType(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, DataTypeExpr expr)
-      throws PlanningException {
-    return LogicalPlanner.convertDataType(expr);
+      throws TajoException {
+    return LogicalPlanner.convertDataType(expr).getDataType();
   }
 
   @Override
   public DataType visitLiteral(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, LiteralValue expr)
-      throws PlanningException {
+      throws TajoException {
     // It must be the same to ExprAnnotator::visitLiteral.
 
     switch (expr.getValueType()) {
@@ -292,31 +302,31 @@ public class TypeDeterminant extends SimpleAlgebraVisitor<LogicalPlanner.PlanCon
 
   @Override
   public DataType visitNullLiteral(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, NullLiteral expr)
-      throws PlanningException {
+      throws TajoException {
     return CatalogUtil.newSimpleDataType(NULL_TYPE);
   }
 
   @Override
   public DataType visitTimestampLiteral(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, TimestampLiteral expr)
-      throws PlanningException {
+      throws TajoException {
     return CatalogUtil.newSimpleDataType(TajoDataTypes.Type.TIMESTAMP);
   }
 
   @Override
   public DataType visitTimeLiteral(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, TimeLiteral expr)
-      throws PlanningException {
+      throws TajoException {
     return CatalogUtil.newSimpleDataType(TajoDataTypes.Type.TIME);
   }
 
   @Override
   public DataType visitDateLiteral(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, DateLiteral expr)
-      throws PlanningException {
+      throws TajoException {
     return CatalogUtil.newSimpleDataType(TajoDataTypes.Type.DATE);
   }
 
   @Override
   public DataType visitIntervalLiteral(LogicalPlanner.PlanContext ctx, Stack<Expr> stack, IntervalLiteral expr)
-      throws PlanningException {
+      throws TajoException {
     return CatalogUtil.newSimpleDataType(TajoDataTypes.Type.INTERVAL);
   }
 }

@@ -23,27 +23,25 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.state.*;
-import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.TajoProtos.TaskAttemptState;
+import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
 import org.apache.tajo.catalog.statistics.TableStats;
-import org.apache.tajo.ipc.TajoWorkerProtocol.TaskCompletionReport;
+import org.apache.tajo.ResourceProtos.TaskCompletionReport;
+import org.apache.tajo.ResourceProtos.ShuffleFileOutput;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext;
 import org.apache.tajo.master.event.TaskSchedulerEvent.EventType;
 import org.apache.tajo.querymaster.Task.IntermediateEntry;
 import org.apache.tajo.querymaster.Task.PullHost;
-import org.apache.tajo.master.container.TajoContainerId;
+import org.apache.tajo.util.TUtil;
 
-import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import static org.apache.tajo.ipc.TajoWorkerProtocol.ShuffleFileOutput;
 
 public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
 
@@ -55,20 +53,21 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
   private final Task task;
   final EventHandler eventHandler;
 
-  private TajoContainerId containerId;
   private WorkerConnectionInfo workerConnectionInfo;
   private int expire;
 
   private final Lock readLock;
   private final Lock writeLock;
 
-  private final List<String> diagnostics = new ArrayList<String>();
+  private final List<String> diagnostics = new ArrayList<>();
 
   private final TaskAttemptScheduleContext scheduleContext;
 
   private float progress;
   private CatalogProtos.TableStatsProto inputStats;
   private CatalogProtos.TableStatsProto resultStats;
+
+  private Set<PartitionDescProto> partitions;
 
   protected static final StateMachineFactory
       <TaskAttempt, TaskAttemptState, TaskAttemptEventType, TaskAttemptEvent>
@@ -109,6 +108,8 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
           TaskAttemptEventType.TA_DONE, new SucceededTransition())
       .addTransition(TaskAttemptState.TA_ASSIGNED, TaskAttemptState.TA_FAILED,
           TaskAttemptEventType.TA_FATAL_ERROR, new FailedTransition())
+      .addTransition(TaskAttemptState.TA_ASSIGNED, TaskAttemptState.TA_UNASSIGNED,
+          TaskAttemptEventType.TA_ASSIGN_CANCEL, new CancelTransition())
 
       // Transitions from TA_RUNNING state
       .addTransition(TaskAttemptState.TA_RUNNING,
@@ -167,6 +168,10 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
               TaskAttemptEventType.TA_ASSIGNED,
               TaskAttemptEventType.TA_DONE),
           new TaskKilledCompleteTransition())
+
+          // Transitions from TA_FAILED state
+      .addTransition(TaskAttemptState.TA_FAILED, TaskAttemptState.TA_FAILED,
+          TaskAttemptEventType.TA_KILL)
       .installTopology();
 
   private final StateMachine<TaskAttemptState, TaskAttemptEventType, TaskAttemptEvent>
@@ -187,6 +192,7 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     this.writeLock = readWriteLock.writeLock();
 
     stateMachine = stateMachineFactory.make(this);
+    this.partitions = TUtil.newHashSet();
   }
 
   public TaskAttemptState getState() {
@@ -212,10 +218,6 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
 
   public WorkerConnectionInfo getWorkerConnectionInfo() {
     return this.workerConnectionInfo;
-  }
-
-  public void setContainerId(TajoContainerId containerId) {
-    this.containerId = containerId;
   }
 
   public synchronized void setExpireTime(int expire) {
@@ -253,10 +255,18 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     return new TableStats(resultStats);
   }
 
+  public Set<PartitionDescProto> getPartitions() {
+    return partitions;
+  }
+
+  public void addPartitions(List<PartitionDescProto> partitions) {
+    this.partitions.addAll(partitions);
+  }
+
   private void fillTaskStatistics(TaskCompletionReport report) {
     this.progress = 1.0f;
 
-    List<IntermediateEntry> partitions = new ArrayList<IntermediateEntry>();
+    List<IntermediateEntry> partitions = new ArrayList<>();
 
     if (report.getShuffleFileOutputsCount() > 0) {
       this.getTask().setShuffleFileOutputs(report.getShuffleFileOutputsList());
@@ -307,12 +317,25 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     @Override
     public void transition(TaskAttempt taskAttempt,
                            TaskAttemptEvent event) {
+      if (!(event instanceof TaskAttemptAssignedEvent)) {
+        throw new IllegalArgumentException("event should be a TaskAttemptAssignedEvent type.");
+      }
       TaskAttemptAssignedEvent castEvent = (TaskAttemptAssignedEvent) event;
-      taskAttempt.containerId = castEvent.getContainerId();
       taskAttempt.workerConnectionInfo = castEvent.getWorkerConnectionInfo();
       taskAttempt.eventHandler.handle(
           new TaskTAttemptEvent(taskAttempt.getId(),
               TaskEventType.T_ATTEMPT_LAUNCHED));
+    }
+  }
+
+  private static class CancelTransition
+      implements SingleArcTransition<TaskAttempt, TaskAttemptEvent> {
+
+    @Override
+    public void transition(TaskAttempt taskAttempt,
+                           TaskAttemptEvent event) {
+
+      taskAttempt.workerConnectionInfo = null;
     }
   }
 
@@ -333,6 +356,9 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     @Override
     public TaskAttemptState transition(TaskAttempt taskAttempt,
                                        TaskAttemptEvent event) {
+      if (!(event instanceof TaskAttemptStatusUpdateEvent)) {
+        throw new IllegalArgumentException("event should be a TaskAttemptStatusUpdateEvent type.");
+      }
       TaskAttemptStatusUpdateEvent updateEvent = (TaskAttemptStatusUpdateEvent) event;
 
       taskAttempt.progress = updateEvent.getStatus().getProgress();
@@ -371,9 +397,16 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     @Override
     public void transition(TaskAttempt taskAttempt,
                            TaskAttemptEvent event) {
+      if (!(event instanceof TaskCompletionEvent)) {
+        throw new IllegalArgumentException("event should be a TaskCompletionEvent type.");
+      }
       TaskCompletionReport report = ((TaskCompletionEvent)event).getReport();
 
       try {
+        if (report.getPartitionsCount() > 0) {
+          taskAttempt.addPartitions(report.getPartitionsList());
+        }
+
         taskAttempt.fillTaskStatistics(report);
         taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_SUCCEEDED));
       } catch (Throwable t) {
@@ -387,7 +420,8 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
 
     @Override
     public void transition(TaskAttempt taskAttempt, TaskAttemptEvent event) {
-      taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(), taskAttempt.containerId,
+      taskAttempt.eventHandler.handle(new LocalTaskEvent(taskAttempt.getId(),
+          taskAttempt.getWorkerConnectionInfo().getId(),
           LocalTaskEventType.KILL));
     }
   }
@@ -395,6 +429,9 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
   private static class FailedTransition implements SingleArcTransition<TaskAttempt, TaskAttemptEvent>{
     @Override
     public void transition(TaskAttempt taskAttempt, TaskAttemptEvent event) {
+      if (!(event instanceof TaskFatalErrorEvent)) {
+        throw new IllegalArgumentException("event should be a TaskFatalErrorEvent type.");
+      }
       TaskFatalErrorEvent errorEvent = (TaskFatalErrorEvent) event;
       taskAttempt.eventHandler.handle(new TaskTAttemptEvent(taskAttempt.getId(), TaskEventType.T_ATTEMPT_FAILED));
       taskAttempt.addDiagnosticInfo(errorEvent.errorMessage());

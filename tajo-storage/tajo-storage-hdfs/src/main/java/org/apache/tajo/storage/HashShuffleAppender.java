@@ -48,7 +48,7 @@ public class HashShuffleAppender implements Appender {
   private Map<TaskAttemptId, List<Pair<Long, Pair<Integer, Integer>>>> taskTupleIndexes;
 
   //page start offset, length
-  private List<Pair<Long, Integer>> pages = new ArrayList<Pair<Long, Integer>>();
+  private List<Pair<Long, Integer>> pages = new ArrayList<>();
 
   private Pair<Long, Integer> currentPage;
 
@@ -75,7 +75,7 @@ public class HashShuffleAppender implements Appender {
   @Override
   public void init() throws IOException {
     currentPage = new Pair(0L, 0);
-    taskTupleIndexes = new HashMap<TaskAttemptId, List<Pair<Long, Pair<Integer, Integer>>>>();
+    taskTupleIndexes = new HashMap<>();
     rowNumInPage = 0;
   }
 
@@ -105,11 +105,11 @@ public class HashShuffleAppender implements Appender {
       int nextRowNum = rowNumInPage + rowBlockReader.rows();
       List<Pair<Long, Pair<Integer, Integer>>> taskIndexes = taskTupleIndexes.get(taskId);
       if (taskIndexes == null) {
-        taskIndexes = new ArrayList<Pair<Long, Pair<Integer, Integer>>>();
+        taskIndexes = new ArrayList<>();
         taskTupleIndexes.put(taskId, taskIndexes);
       }
       taskIndexes.add(
-          new Pair<Long, Pair<Integer, Integer>>(currentPage.getFirst(), new Pair(rowNumInPage, nextRowNum)));
+              new Pair<>(currentPage.getFirst(), new Pair(rowNumInPage, nextRowNum)));
       rowNumInPage = nextRowNum;
 
       if (posAfterWritten - currentPage.getFirst() > pageSize) {
@@ -201,7 +201,7 @@ public class HashShuffleAppender implements Appender {
   }
 
   public List<Pair<Long, Pair<Integer, Integer>>> getMergedTupleIndexes() {
-    List<Pair<Long, Pair<Integer, Integer>>> merged = new ArrayList<Pair<Long, Pair<Integer, Integer>>>();
+    List<Pair<Long, Pair<Integer, Integer>>> merged = new ArrayList<>();
 
     for (List<Pair<Long, Pair<Integer, Integer>>> eachFailureIndex: taskTupleIndexes.values()) {
       merged.addAll(eachFailureIndex);

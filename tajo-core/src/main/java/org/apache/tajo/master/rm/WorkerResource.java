@@ -57,10 +57,6 @@ public class WorkerResource {
   private final Lock rlock = lock.readLock();
   private final Lock wlock = lock.writeLock();
 
-  private boolean queryMasterMode;
-
-  private boolean taskRunnerMode;
-
   private AtomicInteger numQueryMasterTasks = new AtomicInteger(0);
 
   public float getDiskSlots() {
@@ -80,8 +76,8 @@ public class WorkerResource {
   }
 
   public int getMemoryMB() {
+    rlock.lock();
     try {
-      rlock.lock();
       return memoryMB;
     } finally {
       rlock.unlock();
@@ -89,8 +85,8 @@ public class WorkerResource {
   }
 
   public void setMemoryMB(int memoryMB) {
+    wlock.lock();
     try {
-      wlock.lock();
       this.memoryMB = memoryMB;
     } finally {
       wlock.unlock();
@@ -116,8 +112,8 @@ public class WorkerResource {
   }
 
   public int getUsedMemoryMB() {
+    rlock.lock();
     try {
-      rlock.lock();
       return usedMemoryMB;
     } finally {
       rlock.unlock();
@@ -125,8 +121,8 @@ public class WorkerResource {
   }
 
   public void setUsedMemoryMB(int usedMemoryMB) {
+    wlock.lock();
     try {
-      wlock.lock();
       this.usedMemoryMB = usedMemoryMB;
     } finally {
       wlock.unlock();
@@ -145,26 +141,11 @@ public class WorkerResource {
     return usedDiskSlots;
   }
 
-  public boolean isQueryMasterMode() {
-    return queryMasterMode;
-  }
-
-  public void setQueryMasterMode(boolean queryMasterMode) {
-    this.queryMasterMode = queryMasterMode;
-  }
-
-  public boolean isTaskRunnerMode() {
-    return taskRunnerMode;
-  }
-
-  public void setTaskRunnerMode(boolean taskRunnerMode) {
-    this.taskRunnerMode = taskRunnerMode;
-  }
-
   public void releaseResource(float diskSlots, int memoryMB) {
+    LOG.info("Disk " + diskSlots + " slot(s), Memory " + memoryMB + " MB");
+    wlock.lock();
     try {
-      wlock.lock();
-      usedMemoryMB = usedMemoryMB - memoryMB;
+      usedMemoryMB -= memoryMB;
       usedDiskSlots -= diskSlots;
       if(usedMemoryMB < 0) {
         LOG.warn("Used memory can't be a minus: " + usedMemoryMB);
@@ -180,8 +161,9 @@ public class WorkerResource {
   }
 
   public void allocateResource(float diskSlots, int memoryMB) {
+    LOG.info("Disk " + diskSlots + " slot(s), Memory " + memoryMB + " MB");
+    wlock.lock();
     try {
-      wlock.lock();
       usedMemoryMB += memoryMB;
       usedDiskSlots += diskSlots;
 

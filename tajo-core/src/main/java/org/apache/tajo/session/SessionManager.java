@@ -24,6 +24,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.CompositeService;
 import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
+import org.apache.tajo.exception.InvalidSessionException;
 
 import java.util.Map;
 import java.util.UUID;
@@ -32,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SessionManager extends CompositeService implements EventHandler<SessionEvent> {
   private static final Log LOG = LogFactory.getLog(SessionManager.class);
 
-  public final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<String, Session>();
+  public final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
   private final Dispatcher dispatcher;
   private SessionLivelinessMonitor sessionLivelinessMonitor;
 
@@ -53,6 +54,11 @@ public class SessionManager extends CompositeService implements EventHandler<Ses
   public void serviceStop() throws Exception {
     super.serviceStop();
   }
+
+  public int currentNum() {
+    return this.sessions.size();
+  }
+
 
   private void assertSessionExistence(String sessionId) throws InvalidSessionException {
     if (!sessions.containsKey(sessionId)) {
@@ -131,7 +137,7 @@ public class SessionManager extends CompositeService implements EventHandler<Ses
       assertSessionExistence(event.getSessionId());
       touch(event.getSessionId());
     } catch (InvalidSessionException e) {
-      LOG.error(e);
+      LOG.error(e, e);
     }
 
     if (event.getType() == SessionEventType.EXPIRE) {

@@ -18,7 +18,27 @@
 
 ## Most Recent Releases
 
-### Latest Release 0.9.0 (Oct 21, 2014)
+### Latest Release 0.10.1 (Jun 29, 2015)
+
+ * [Announcement] (releases/0.10.1/announcement.html)
+ * [Release Notes] (releases/0.10.1/relnotes.html)
+ * [User Documentation] (http://tajo.apache.org/docs/0.10.1/index.html)
+ * Source: <a href='http://apache.org/dyn/closer.cgi/tajo/tajo-0.10.1/tajo-0.10.1-src.tar.gz' id='tajo-0.10.1-src'>tajo-0.10.1-src.tar.gz</a> ([MD5](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-0.10.1-src.tar.gz.md5)) ([SHA](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-0.10.1-src.tar.gz.sha512)) ([SIGN](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-0.10.1-src.tar.gz.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+ * Binary Tarball: <a href='http://apache.org/dyn/closer.cgi/tajo/tajo-0.10.1/tajo-0.10.1.tar.gz' id='tajo-0.10.1-bin'>tajo-0.10.1.tar.gz</a> ([MD5](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-0.10.1.tar.gz.md5)) ([SHA](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-0.10.1.tar.gz.sha512)) ([SIGN](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-0.10.1.tar.gz.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+ * JDBC Driver: <a href='http://apache.org/dyn/closer.cgi/tajo/tajo-0.10.1/tajo-jdbc-0.10.1.jar' id='tajo-jdbc-0.10.1'>tajo-jdbc-0.10.1.jar</a> ([MD5](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-jdbc-0.10.1.jar.md5)) ([SHA](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-jdbc-0.10.1.jar.sha512)) ([SIGN](http://www.apache.org/dist/tajo/tajo-0.10.1/tajo-jdbc-0.10.1.jar.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+
+## Previous Releases
+
+### Release 0.10.0 (Mar 8, 2015)
+
+ * [Announcement] (releases/0.10.0/announcement.html)
+ * [Release Notes] (releases/0.10.0/relnotes.html)
+ * [User Documentation] (http://tajo.apache.org/docs/0.10.0/index.html)
+ * Source: <a href='http://apache.org/dyn/closer.cgi/tajo/tajo-0.10.0/tajo-0.10.0-src.tar.gz' id='tajo-0.10.0-src'>tajo-0.10.0-src.tar.gz</a> ([MD5](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-0.10.0-src.tar.gz.md5)) ([SHA](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-0.10.0-src.tar.gz.sha)) ([SIGN](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-0.10.0-src.tar.gz.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+ * Binary Tarball: <a href='http://apache.org/dyn/closer.cgi/tajo/tajo-0.10.0/tajo-0.10.0.tar.gz' id='tajo-0.10.0-bin'>tajo-0.10.0.tar.gz</a> ([MD5](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-0.10.0.tar.gz.md5)) ([SHA](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-0.10.0.tar.gz.sha)) ([SIGN](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-0.10.0.tar.gz.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+ * JDBC Driver: <a href='http://apache.org/dyn/closer.cgi/tajo/tajo-0.10.0/tajo-jdbc-0.10.0.jar' id='tajo-jdbc-0.10.0'>tajo-jdbc-0.10.0.jar</a> ([MD5](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-jdbc-0.10.0.jar.md5)) ([SHA](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-jdbc-0.10.0.jar.sha)) ([SIGN](http://www.apache.org/dist/tajo/tajo-0.10.0/tajo-jdbc-0.10.0.jar.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+
+### Release 0.9.0 (Oct 21, 2014)
 
  * [Announcement] (releases/0.9.0/announcement.html)
  * [Release Notes] (releases/0.9.0/relnotes.html)
@@ -42,6 +62,10 @@
  * [Release Notes](http://s.apache.org/tajo-0.2-release-notes)
  * [User Documentation] (tajo-0.2.0-doc.html)
  * [Source Tarball](http://apache.org/dyn/closer.cgi/tajo/tajo-0.2.0-incubating/tajo-0.2.0-incubating-src.tar.gz) ([MD5](http://www.apache.org/dist/tajo/tajo-0.2.0-incubating/tajo-0.2.0-incubating-src.tar.gz.md5)) ([SHA1](http://www.apache.org/dist/tajo/tajo-0.2.0-incubating/tajo-0.2.0-incubating-src.tar.gz.sha1)) ([ASC](http://www.apache.org/dist/tajo/tajo-0.2.0-incubating/tajo-0.2.0-incubating-src.tar.gz.asc)) ([KEYS](http://www.apache.org/dist/tajo/KEYS))
+
+## Nightly builds
+
+For developers, Tajo maintains nightly builds and SNAPSHOT artifacts. More information is available on [Tajo developer Wiki] (https://cwiki.apache.org/confluence/display/TAJO/Nightly+Builds).
 
 ## Getting the source code via Git
 

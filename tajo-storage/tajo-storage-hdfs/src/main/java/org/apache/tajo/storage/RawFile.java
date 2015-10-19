@@ -18,7 +18,6 @@
 
 package org.apache.tajo.storage;
 
-import com.google.protobuf.Message;
 import io.netty.buffer.ByteBuf;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -33,6 +32,11 @@ import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.datum.ProtobufDatumFactory;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
+import org.apache.tajo.plan.serder.PlanProto.ShuffleType;
+import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.unit.StorageUnit;
 import org.apache.tajo.util.BitArray;
@@ -48,8 +52,7 @@ public class RawFile {
   private static final Log LOG = LogFactory.getLog(RawFile.class);
   public static final String READ_BUFFER_SIZE = "tajo.storage.raw.io.read-buffer.bytes";
   public static final String WRITE_BUFFER_SIZE = "tajo.storage.raw.io.write-buffer.bytes";
-  public static final int DEFAULT_READ_BUFFER_SIZE = 128 * StorageUnit.KB;
-  public static final int DEFAULT_WRITE_BUFFER_SIZE = 64 * StorageUnit.KB;
+  public static final int DEFAULT_BUFFER_SIZE = 128 * StorageUnit.KB;
 
   public static class RawFileScanner extends FileScanner implements SeekableScanner {
     private FileChannel channel;
@@ -57,7 +60,7 @@ public class RawFile {
 
     private ByteBuffer buffer;
     private ByteBuf buf;
-    private Tuple tuple;
+    private Tuple outTuple;
 
     private int headerSize = 0; // Header size of a tuple
     private BitArray nullFlags;
@@ -96,7 +99,7 @@ public class RawFile {
             + ", fragment length :" + fragment.getLength());
       }
 
-      buf = BufferPool.directBuffer(conf.getInt(READ_BUFFER_SIZE, DEFAULT_READ_BUFFER_SIZE));
+      buf = BufferPool.directBuffer(conf.getInt(READ_BUFFER_SIZE, DEFAULT_BUFFER_SIZE));
       buffer = buf.nioBuffer(0, buf.capacity());
 
       columnTypes = new DataType[schema.size()];
@@ -104,7 +107,7 @@ public class RawFile {
         columnTypes[i] = schema.getColumn(i).getDataType();
       }
 
-      tuple = new VTuple(columnTypes.length);
+      outTuple = new VTuple(columnTypes.length);
       nullFlags = new BitArray(schema.size());
       headerSize = RECORD_SIZE + 2 + nullFlags.bytesLength(); // The middle 2 bytes is for NullFlagSize
 
@@ -273,51 +276,51 @@ public class RawFile {
       for (int i = 0; i < columnTypes.length; i++) {
         // check if the i'th column is null
         if (nullFlags.get(i)) {
-          tuple.put(i, DatumFactory.createNullDatum());
+          outTuple.put(i, DatumFactory.createNullDatum());
           continue;
         }
 
         switch (columnTypes[i].getType()) {
           case BOOLEAN :
-            tuple.put(i, DatumFactory.createBool(buffer.get()));
+            outTuple.put(i, DatumFactory.createBool(buffer.get()));
             break;
 
           case BIT :
-            tuple.put(i, DatumFactory.createBit(buffer.get()));
+            outTuple.put(i, DatumFactory.createBit(buffer.get()));
             break;
 
           case CHAR :
             int realLen = readRawVarint32();
             byte[] buf = new byte[realLen];
             buffer.get(buf);
-            tuple.put(i, DatumFactory.createChar(buf));
+            outTuple.put(i, DatumFactory.createChar(buf));
             break;
 
           case INT2 :
-            tuple.put(i, DatumFactory.createInt2(buffer.getShort()));
+            outTuple.put(i, DatumFactory.createInt2(buffer.getShort()));
             break;
 
           case INT4 :
-            tuple.put(i, DatumFactory.createInt4(decodeZigZag32(readRawVarint32())));
+            outTuple.put(i, DatumFactory.createInt4(decodeZigZag32(readRawVarint32())));
             break;
 
           case INT8 :
-            tuple.put(i, DatumFactory.createInt8(decodeZigZag64(readRawVarint64())));
+            outTuple.put(i, DatumFactory.createInt8(decodeZigZag64(readRawVarint64())));
             break;
 
           case FLOAT4 :
-            tuple.put(i, DatumFactory.createFloat4(buffer.getFloat()));
+            outTuple.put(i, DatumFactory.createFloat4(buffer.getFloat()));
             break;
 
           case FLOAT8 :
-            tuple.put(i, DatumFactory.createFloat8(buffer.getDouble()));
+            outTuple.put(i, DatumFactory.createFloat8(buffer.getDouble()));
             break;
 
           case TEXT : {
             int len = readRawVarint32();
             byte [] strBytes = new byte[len];
             buffer.get(strBytes);
-            tuple.put(i, DatumFactory.createText(strBytes));
+            outTuple.put(i, DatumFactory.createText(strBytes));
             break;
           }
 
@@ -325,7 +328,7 @@ public class RawFile {
             int len = readRawVarint32();
             byte [] rawBytes = new byte[len];
             buffer.get(rawBytes);
-            tuple.put(i, DatumFactory.createBlob(rawBytes));
+            outTuple.put(i, DatumFactory.createBlob(rawBytes));
             break;
           }
 
@@ -334,23 +337,22 @@ public class RawFile {
             byte [] rawBytes = new byte[len];
             buffer.get(rawBytes);
 
-            ProtobufDatumFactory factory = ProtobufDatumFactory.get(columnTypes[i]);
-            Message.Builder builder = factory.newBuilder();
-            builder.mergeFrom(rawBytes);
-            tuple.put(i, factory.createDatum(builder.build()));
+            outTuple.put(i, ProtobufDatumFactory.createDatum(columnTypes[i], rawBytes));
             break;
           }
 
           case INET4 :
-            tuple.put(i, DatumFactory.createInet4(buffer.getInt()));
+            byte [] ipv4Bytes = new byte[4];
+            buffer.get(ipv4Bytes);
+            outTuple.put(i, DatumFactory.createInet4(ipv4Bytes));
             break;
 
           case DATE: {
             int val = buffer.getInt();
             if (val < Integer.MIN_VALUE + 1) {
-              tuple.put(i, DatumFactory.createNullDatum());
+              outTuple.put(i, DatumFactory.createNullDatum());
             } else {
-              tuple.put(i, DatumFactory.createFromInt4(columnTypes[i], val));
+              outTuple.put(i, DatumFactory.createFromInt4(columnTypes[i], val));
             }
             break;
           }
@@ -358,14 +360,14 @@ public class RawFile {
           case TIMESTAMP: {
             long val = buffer.getLong();
             if (val < Long.MIN_VALUE + 1) {
-              tuple.put(i, DatumFactory.createNullDatum());
+              outTuple.put(i, DatumFactory.createNullDatum());
             } else {
-              tuple.put(i, DatumFactory.createFromInt8(columnTypes[i], val));
+              outTuple.put(i, DatumFactory.createFromInt8(columnTypes[i], val));
             }
             break;
           }
           case NULL_TYPE:
-            tuple.put(i, NullDatum.get());
+            outTuple.put(i, NullDatum.get());
             break;
 
           default:
@@ -377,7 +379,7 @@ public class RawFile {
       if(filePosition - buffer.remaining() >= endOffset){
         eos = true;
       }
-      return new VTuple(tuple);
+      return outTuple;
     }
 
     private void reSizeBuffer(int writableBytes){
@@ -425,6 +427,11 @@ public class RawFile {
     }
 
     @Override
+    public void setFilter(EvalNode filter) {
+      throw new TajoRuntimeException(new UnsupportedException());
+    }
+
+    @Override
     public boolean isSplittable(){
       return false;
     }
@@ -464,6 +471,7 @@ public class RawFile {
     private int headerSize = 0;
     private static final int RECORD_SIZE = 4;
     private long pos;
+    private ShuffleType shuffleType;
 
     private TableStatistics stats;
 
@@ -493,7 +501,7 @@ public class RawFile {
         columnTypes[i] = schema.getColumn(i).getDataType();
       }
 
-      buf = BufferPool.directBuffer(conf.getInt(WRITE_BUFFER_SIZE, DEFAULT_WRITE_BUFFER_SIZE));
+      buf = BufferPool.directBuffer(conf.getInt(WRITE_BUFFER_SIZE, DEFAULT_BUFFER_SIZE));
       buffer = buf.nioBuffer(0, buf.capacity());
 
       // comput the number of bytes, representing the null flags
@@ -503,6 +511,9 @@ public class RawFile {
 
       if (enabledStats) {
         this.stats = new TableStatistics(this.schema);
+        this.shuffleType = PlannerUtil.getShuffleType(
+            meta.getOption(StorageConstants.SHUFFLE_TYPE,
+                PlannerUtil.getShuffleType(ShuffleType.NONE_SHUFFLE)));
       }
 
       super.init();
@@ -632,11 +643,12 @@ public class RawFile {
       // reset the null flags
       nullFlags.clear();
       for (int i = 0; i < schema.size(); i++) {
-        if (enabledStats) {
-          stats.analyzeField(i, t.get(i));
+        if (shuffleType == ShuffleType.RANGE_SHUFFLE) {
+          // it is to calculate min/max values, and it is only used for the intermediate file.
+          stats.analyzeField(i, t);
         }
 
-        if (t.isNull(i)) {
+        if (t.isBlankOrNull(i)) {
           nullFlags.set(i);
           continue;
         }
@@ -717,7 +729,7 @@ public class RawFile {
           }
 
           case INET4 :
-            buffer.putInt(t.getInt4(i));
+            buffer.put(t.getBytes(i));
             break;
 
           default:

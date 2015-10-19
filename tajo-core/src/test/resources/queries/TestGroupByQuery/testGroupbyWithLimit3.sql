@@ -1,1 +1,0 @@
-select l_orderkey, sum(l_linenumber) from lineitem group by l_orderkey limit 1;

@@ -19,7 +19,6 @@
 package org.apache.tajo.client;
 
 import com.google.protobuf.ServiceException;
-import org.apache.hadoop.fs.Path;
 import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
@@ -27,237 +26,365 @@ import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
 import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.catalog.proto.CatalogProtos.*;
+import org.apache.tajo.error.Errors.ResultCode;
+import org.apache.tajo.exception.*;
 import org.apache.tajo.ipc.ClientProtos;
-import org.apache.tajo.ipc.TajoMasterClientProtocol;
-import org.apache.tajo.jdbc.SQLStates;
+import org.apache.tajo.ipc.ClientProtos.DropTableRequest;
+import org.apache.tajo.ipc.ClientProtos.GetIndexWithColumnsRequest;
 import org.apache.tajo.rpc.NettyClientBase;
-import org.apache.tajo.rpc.ServerCallable;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.ReturnState;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.StringListResponse;
 
 import java.io.IOException;
-import java.sql.SQLException;
+import java.net.URI;
 import java.util.List;
 
-import static org.apache.tajo.ipc.TajoMasterClientProtocol.TajoMasterClientProtocolService;
+import static org.apache.tajo.exception.ExceptionUtil.throwsIfThisError;
+import static org.apache.tajo.exception.ReturnStateUtil.*;
 import static org.apache.tajo.ipc.TajoMasterClientProtocol.TajoMasterClientProtocolService.BlockingInterface;
 
 public class CatalogAdminClientImpl implements CatalogAdminClient {
-  private final SessionConnection connection;
+  private final SessionConnection conn;
 
-  public CatalogAdminClientImpl(SessionConnection connection) {
-    this.connection = connection;
+  public CatalogAdminClientImpl(SessionConnection conn) {
+    this.conn = conn;
   }
 
   @Override
-  public boolean createDatabase(final String databaseName) throws ServiceException {
-    return new ServerCallable<Boolean>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+  public void createDatabase(final String databaseName) throws DuplicateDatabaseException {
 
-      public Boolean call(NettyClientBase client) throws ServiceException {
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMaster = client.getStub();
-        return tajoMaster.createDatabase(null, connection.convertSessionedString(databaseName)).getValue();
-      }
 
-    }.withRetries();
+    try {
+      final BlockingInterface stub = conn.getTMStub();
+      final ReturnState state = stub.createDatabase(null, conn.getSessionedString(databaseName));
+
+      throwsIfThisError(state, DuplicateDatabaseException.class);
+      ensureOk(state);
+
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Override
-  public boolean existDatabase(final String databaseName) throws ServiceException {
+  public boolean existDatabase(final String databaseName) {
 
-    return new ServerCallable<Boolean>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    try {
+      final BlockingInterface stub = conn.getTMStub();
+      final ReturnState state = stub.existDatabase(null, conn.getSessionedString(databaseName));
 
-      public Boolean call(NettyClientBase client) throws ServiceException {
-
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMaster = client.getStub();
-        return tajoMaster.existDatabase(null, connection.convertSessionedString(databaseName)).getValue();
+      if (isThisError(state, ResultCode.UNDEFINED_DATABASE)) {
+        return false;
       }
+      ensureOk(state);
+      return true;
 
-    }.withRetries();
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Override
-  public boolean dropDatabase(final String databaseName) throws ServiceException {
+  public void dropDatabase(final String databaseName)
+      throws UndefinedDatabaseException, InsufficientPrivilegeException, CannotDropCurrentDatabaseException {
 
-    return new ServerCallable<Boolean>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    try {
+      final BlockingInterface stub = conn.getTMStub();
+      final ReturnState state = stub.dropDatabase(null, conn.getSessionedString(databaseName));
 
-      public Boolean call(NettyClientBase client) throws ServiceException {
+      throwsIfThisError(state, UndefinedDatabaseException.class);
+      throwsIfThisError(state, InsufficientPrivilegeException.class);
+      throwsIfThisError(state, CannotDropCurrentDatabaseException.class);
+      ensureOk(state);
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
-        return tajoMasterService.dropDatabase(null, connection.convertSessionedString(databaseName)).getValue();
-      }
-
-    }.withRetries();
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Override
-  public List<String> getAllDatabaseNames() throws ServiceException {
+  public List<String> getAllDatabaseNames() {
 
-    return new ServerCallable<List<String>>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    final BlockingInterface stub = conn.getTMStub();
 
-      public List<String> call(NettyClientBase client) throws ServiceException {
-
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
-        return tajoMasterService.getAllDatabases(null, connection.sessionId).getValuesList();
-      }
-
-    }.withRetries();
+    try {
+      return stub.getAllDatabases(null, conn.sessionId).getValuesList();
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
   }
 
-  public boolean existTable(final String tableName) throws ServiceException {
+  public boolean existTable(final String tableName) {
 
-    return new ServerCallable<Boolean>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    final BlockingInterface stub = conn.getTMStub();
 
-      public Boolean call(NettyClientBase client) throws ServiceException {
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
-        return tajoMasterService.existTable(null, connection.convertSessionedString(tableName)).getValue();
-      }
+    ReturnState state;
+    try {
+      state = stub.existTable(null, conn.getSessionedString(tableName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
 
-    }.withRetries();
+    if (isThisError(state, ResultCode.UNDEFINED_TABLE)) {
+      return false;
+    }
+
+    ensureOk(state);
+    return true;
   }
 
   @Override
-  public TableDesc createExternalTable(String tableName, Schema schema, Path path, TableMeta meta)
-      throws SQLException, ServiceException {
+  public TableDesc createExternalTable(String tableName, @Nullable Schema schema, URI path, TableMeta meta)
+      throws DuplicateTableException, UnavailableTableLocationException, InsufficientPrivilegeException {
     return createExternalTable(tableName, schema, path, meta, null);
   }
 
-  public TableDesc createExternalTable(final String tableName, final Schema schema, final Path path,
+  @Override
+  public TableDesc createExternalTable(final String tableName, @Nullable final Schema schema, final URI path,
                                        final TableMeta meta, final PartitionMethodDesc partitionMethodDesc)
-      throws SQLException, ServiceException {
+      throws DuplicateTableException, InsufficientPrivilegeException, UnavailableTableLocationException {
 
-    return new ServerCallable<TableDesc>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    final NettyClientBase client = conn.getTajoMasterConnection();
+    conn.checkSessionAndGet(client);
+    final BlockingInterface tajoMasterService = client.getStub();
 
-      public TableDesc call(NettyClientBase client) throws ServiceException, SQLException {
+    final ClientProtos.CreateTableRequest.Builder builder = ClientProtos.CreateTableRequest.newBuilder();
+    builder.setSessionId(conn.sessionId);
+    builder.setName(tableName);
+    if (schema != null) {
+      builder.setSchema(schema.getProto());
+    }
+    builder.setMeta(meta.getProto());
+    builder.setPath(path.toString());
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
+    if (partitionMethodDesc != null) {
+      builder.setPartition(partitionMethodDesc.getProto());
+    }
 
-        ClientProtos.CreateTableRequest.Builder builder = ClientProtos.CreateTableRequest.newBuilder();
-        builder.setSessionId(connection.sessionId);
-        builder.setName(tableName);
-        builder.setSchema(schema.getProto());
-        builder.setMeta(meta.getProto());
-        builder.setPath(path.toUri().toString());
-        if (partitionMethodDesc != null) {
-          builder.setPartition(partitionMethodDesc.getProto());
-        }
-        ClientProtos.TableResponse res = tajoMasterService.createExternalTable(null, builder.build());
-        if (res.getResultCode() == ClientProtos.ResultCode.OK) {
-          return CatalogUtil.newTableDesc(res.getTableDesc());
-        } else {
-          throw new SQLException(res.getErrorMessage(), SQLStates.ER_NO_SUCH_TABLE.getState());
-        }
-      }
+    TableResponse res;
+    try {
+      res = tajoMasterService.createExternalTable(null, builder.build());
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
 
-    }.withRetries();
+    throwsIfThisError(res.getState(), DuplicateTableException.class);
+    throwsIfThisError(res.getState(), InsufficientPrivilegeException.class);
+    throwsIfThisError(res.getState(), UnavailableTableLocationException.class);
+
+    ensureOk(res.getState());
+    return CatalogUtil.newTableDesc(res.getTable());
   }
 
   @Override
-  public boolean dropTable(String tableName) throws ServiceException {
-    return dropTable(tableName, false);
+  public void dropTable(String tableName) throws UndefinedTableException, InsufficientPrivilegeException {
+    dropTable(tableName, false);
   }
 
   @Override
-  public boolean dropTable(final String tableName, final boolean purge) throws ServiceException {
+  public void dropTable(final String tableName, final boolean purge)
+      throws UndefinedTableException, InsufficientPrivilegeException {
 
-    return new ServerCallable<Boolean>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    final BlockingInterface stub = conn.getTMStub();
+    final DropTableRequest request = DropTableRequest.newBuilder()
+        .setSessionId(conn.sessionId)
+        .setName(tableName)
+        .setPurge(purge)
+        .build();
 
-      public Boolean call(NettyClientBase client) throws ServiceException {
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
+    ReturnState state;
+    try {
+      state = stub.dropTable(null, request);
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
 
-        ClientProtos.DropTableRequest.Builder builder = ClientProtos.DropTableRequest.newBuilder();
-        builder.setSessionId(connection.sessionId);
-        builder.setName(tableName);
-        builder.setPurge(purge);
-        return tajoMasterService.dropTable(null, builder.build()).getValue();
-      }
+    throwsIfThisError(state, UndefinedTableException.class);
+    throwsIfThisError(state, InsufficientPrivilegeException.class);
 
-    }.withRetries();
-
+    ensureOk(state);
   }
 
   @Override
-  public List<String> getTableList(@Nullable final String databaseName) throws ServiceException {
-    return new ServerCallable<List<String>>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+  public List<String> getTableList(@Nullable final String databaseName) {
 
-      public List<String> call(NettyClientBase client) throws ServiceException {
+    final BlockingInterface stub = conn.getTMStub();
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
+    StringListResponse response;
+    try {
+      response = stub.getTableList(null, conn.getSessionedString(databaseName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
 
-        ClientProtos.GetTableListRequest.Builder builder = ClientProtos.GetTableListRequest.newBuilder();
-        builder.setSessionId(connection.sessionId);
-        if (databaseName != null) {
-          builder.setDatabaseName(databaseName);
-        }
-        ClientProtos.GetTableListResponse res = tajoMasterService.getTableList(null, builder.build());
-        return res.getTablesList();
-      }
-
-    }.withRetries();
+    ensureOk(response.getState());
+    return response.getValuesList();
   }
 
   @Override
-  public TableDesc getTableDesc(final String tableName) throws ServiceException {
+  public TableDesc getTableDesc(final String tableName) throws UndefinedTableException {
 
-    return new ServerCallable<TableDesc>(connection.connPool, connection.getTajoMasterAddr(),
-        TajoMasterClientProtocol.class, false, true) {
+    final BlockingInterface stub = conn.getTMStub();
 
-      public TableDesc call(NettyClientBase client) throws ServiceException, SQLException {
+    TableResponse res;
+    try {
+      res = stub.getTableDesc(null, conn.getSessionedString(tableName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
+    if (isThisError(res.getState(), ResultCode.UNDEFINED_TABLE)) {
+      throw new UndefinedTableException(res.getState());
+    }
 
-        ClientProtos.GetTableDescRequest.Builder builder = ClientProtos.GetTableDescRequest.newBuilder();
-        builder.setSessionId(connection.sessionId);
-        builder.setTableName(tableName);
-        ClientProtos.TableResponse res = tajoMasterService.getTableDesc(null, builder.build());
-        if (res.getResultCode() == ClientProtos.ResultCode.OK) {
-          return CatalogUtil.newTableDesc(res.getTableDesc());
-        } else {
-          throw new SQLException(res.getErrorMessage(), SQLStates.ER_NO_SUCH_TABLE.getState());
-        }
-      }
-
-    }.withRetries();
+    ensureOk(res.getState());
+    return CatalogUtil.newTableDesc(res.getTable());
   }
 
   @Override
-  public List<CatalogProtos.FunctionDescProto> getFunctions(final String functionName) throws ServiceException {
+  public List<PartitionDescProto> getPartitionsOfTable(final String tableName) throws UndefinedDatabaseException,
+    UndefinedTableException, UndefinedPartitionMethodException {
 
-    return new ServerCallable<List<CatalogProtos.FunctionDescProto>>(connection.connPool,
-        connection.getTajoMasterAddr(), TajoMasterClientProtocol.class, false, true) {
+    final BlockingInterface stub = conn.getTMStub();
 
-      public List<CatalogProtos.FunctionDescProto> call(NettyClientBase client) throws ServiceException, SQLException {
+    PartitionListResponse response;
+    try {
+      response = stub.getPartitionsByTableName(null,
+        conn.getSessionedString(tableName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
 
-        connection.checkSessionAndGet(client);
-        BlockingInterface tajoMasterService = client.getStub();
+    throwsIfThisError(response.getState(), UndefinedDatabaseException.class);
+    throwsIfThisError(response.getState(), UndefinedTableException.class);
+    throwsIfThisError(response.getState(), UndefinedPartitionMethodException.class);
 
-        String paramFunctionName = functionName == null ? "" : functionName;
-        ClientProtos.FunctionResponse res = tajoMasterService.getFunctionList(null,
-            connection.convertSessionedString(paramFunctionName));
-        if (res.getResultCode() == ClientProtos.ResultCode.OK) {
-          return res.getFunctionsList();
-        } else {
-          throw new SQLException(res.getErrorMessage());
-        }
-      }
+    ensureOk(response.getState());
+    return response.getPartitionList();
+  }
 
-    }.withRetries();
+  @Override
+  public List<FunctionDescProto> getFunctions(final String functionName) {
+
+    final BlockingInterface stub = conn.getTMStub();
+
+    String paramFunctionName = functionName == null ? "" : functionName;
+    CatalogProtos.FunctionListResponse res;
+    try {
+      res = stub.getFunctionList(null, conn.getSessionedString(paramFunctionName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+
+    ensureOk(res.getState());
+    return res.getFunctionList();
+  }
+
+  @Override
+  public IndexDescProto getIndex(final String indexName) {
+    final BlockingInterface stub = conn.getTMStub();
+
+    IndexResponse res;
+    try {
+      res = stub.getIndexWithName(null, conn.getSessionedString(indexName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+
+    ensureOk(res.getState());
+    return res.getIndexDesc();
+  }
+
+  @Override
+  public boolean existIndex(final String indexName){
+    final BlockingInterface stub = conn.getTMStub();
+
+    try {
+      return isSuccess(stub.existIndexWithName(null, conn.getSessionedString(indexName)));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public List<IndexDescProto> getIndexes(final String tableName) {
+    final BlockingInterface stub = conn.getTMStub();
+
+    IndexListResponse response;
+    try {
+      response = stub.getIndexesForTable(null,
+          conn.getSessionedString(tableName));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+
+    ensureOk(response.getState());
+    return response.getIndexDescList();
+  }
+
+  @Override
+  public boolean hasIndexes(final String tableName) {
+    final BlockingInterface stub = conn.getTMStub();
+
+    try {
+      return isSuccess(stub.existIndexesForTable(null, conn.getSessionedString(tableName)));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public IndexDescProto getIndex(final String tableName, final String[] columnNames) {
+    final BlockingInterface stub = conn.getTMStub();
+
+    GetIndexWithColumnsRequest.Builder builder = GetIndexWithColumnsRequest.newBuilder();
+    builder.setSessionId(conn.sessionId);
+    builder.setTableName(tableName);
+    for (String eachColumnName : columnNames) {
+      builder.addColumnNames(eachColumnName);
+    }
+
+    IndexResponse response;
+    try {
+      response = stub.getIndexWithColumns(null, builder.build());
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+
+    ensureOk(response.getState());
+    return response.getIndexDesc();
+  }
+
+  @Override
+  public boolean existIndex(final String tableName, final String[] columnName) {
+    final BlockingInterface stub = conn.getTMStub();
+
+    GetIndexWithColumnsRequest.Builder builder = GetIndexWithColumnsRequest.newBuilder();
+    builder.setSessionId(conn.sessionId);
+    builder.setTableName(tableName);
+    for (String eachColumnName : columnName) {
+      builder.addColumnNames(eachColumnName);
+    }
+
+    try {
+      return isSuccess(stub.existIndexWithColumns(null, builder.build()));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Override
+  public boolean dropIndex(final String indexName) {
+    final BlockingInterface stub = conn.getTMStub();
+
+    try {
+      return isSuccess(stub.dropIndex(null, conn.getSessionedString(indexName)));
+    } catch (ServiceException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Override

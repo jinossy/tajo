@@ -29,16 +29,16 @@ import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionKeyProto;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.plan.logical.CreateTableNode;
 import org.apache.tajo.plan.logical.InsertNode;
 import org.apache.tajo.plan.logical.NodeType;
 import org.apache.tajo.plan.logical.StoreTableNode;
-import org.apache.tajo.storage.Appender;
-import org.apache.tajo.storage.FileStorageManager;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.StorageUtil;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.unit.StorageUnit;
+import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.worker.TaskAttemptContext;
 
 import java.io.IOException;
@@ -66,11 +66,7 @@ public abstract class ColPartitionStoreExec extends UnaryPhysicalExec {
     super(context, plan.getInSchema(), plan.getOutSchema(), child);
     this.plan = plan;
 
-    if (plan.getType() == NodeType.CREATE_TABLE) {
-      this.outSchema = ((CreateTableNode)plan).getTableSchema();
-    } else if (plan.getType() == NodeType.INSERT) {
-      this.outSchema = ((InsertNode)plan).getTableSchema();
-    }
+    this.outSchema = plan.getTableSchema();
 
     // set table meta
     if (this.plan.hasOptions()) {
@@ -142,7 +138,9 @@ public abstract class ColPartitionStoreExec extends UnaryPhysicalExec {
       LOG.info("Path " + lastFileName.getParent() + " already exists!");
     } else {
       fs.mkdirs(lastFileName.getParent());
-      LOG.info("Add subpartition path directory :" + lastFileName.getParent());
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Add subpartition path directory :" + lastFileName.getParent());
+      }
     }
 
     if (fs.exists(lastFileName)) {
@@ -153,7 +151,46 @@ public abstract class ColPartitionStoreExec extends UnaryPhysicalExec {
 
     openAppender(0);
 
+    addPartition(partition);
+
     return appender;
+  }
+
+  /**
+   * Add partition information to TableStats for storing to CatalogStore.
+   *
+   * @param partition partition name
+   * @throws IOException
+   */
+  private void addPartition(String partition) throws IOException {
+    PartitionDescProto.Builder builder = PartitionDescProto.newBuilder();
+    builder.setPartitionName(partition);
+
+    String[] partitionKeyPairs = partition.split("/");
+
+    for(int i = 0; i < partitionKeyPairs.length; i++) {
+      String partitionKeyPair = partitionKeyPairs[i];
+      String[] split = partitionKeyPair.split("=");
+
+      PartitionKeyProto.Builder keyBuilder = PartitionKeyProto.newBuilder();
+      keyBuilder.setColumnName(split[0]);
+      // Partition path have been escaped to avoid URISyntaxException. But partition value of partition keys table
+      // need to contain unescaped value for comparing filter conditions in select statement.
+      keyBuilder.setPartitionValue(StringUtils.unescapePathName(split[1]));
+
+      builder.addPartitionKeys(keyBuilder.build());
+    }
+
+    if (this.plan.getUri() == null) {
+      // In CTAS, the uri would be null. So, it get the uri from staging directory.
+      int endIndex = storeTablePath.toString().indexOf(FileTablespace.TMP_STAGING_DIR_PREFIX);
+      String outputPath = storeTablePath.toString().substring(0, endIndex);
+      builder.setPath(outputPath +  partition);
+    } else {
+      builder.setPath(this.plan.getUri().toString() + "/" + partition);
+    }
+
+    context.addPartition(builder.build());
   }
 
   public void openAppender(int suffixId) throws IOException {
@@ -162,10 +199,15 @@ public abstract class ColPartitionStoreExec extends UnaryPhysicalExec {
       actualFilePath = new Path(lastFileName + "_" + suffixId);
     }
 
-    appender = ((FileStorageManager)StorageManager.getFileStorageManager(context.getConf()))
+    appender = ((FileTablespace) TablespaceManager.get(lastFileName.toUri()))
         .getAppender(meta, outSchema, actualFilePath);
 
     appender.enableStats();
     appender.init();
+  }
+
+  @Override
+  public void rescan() throws IOException {
+    // nothing to do
   }
 }

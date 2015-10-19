@@ -16,9 +16,6 @@
  * limitations under the License.
  */
 
-/**
- *
- */
 package org.apache.tajo.engine.planner;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -34,26 +31,31 @@ import org.apache.tajo.catalog.SortSpec;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.proto.CatalogProtos.SortSpecProto;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.plan.serder.LogicalNodeDeserializer;
 import org.apache.tajo.engine.planner.enforce.Enforcer;
 import org.apache.tajo.engine.planner.global.DataChannel;
 import org.apache.tajo.engine.planner.physical.*;
 import org.apache.tajo.engine.query.QueryContext;
-import org.apache.tajo.exception.InternalException;
-import org.apache.tajo.ipc.TajoWorkerProtocol;
-import org.apache.tajo.ipc.TajoWorkerProtocol.DistinctGroupbyEnforcer;
-import org.apache.tajo.ipc.TajoWorkerProtocol.DistinctGroupbyEnforcer.DistinctAggregationAlgorithm;
-import org.apache.tajo.ipc.TajoWorkerProtocol.DistinctGroupbyEnforcer.MultipleAggregationStage;
-import org.apache.tajo.ipc.TajoWorkerProtocol.DistinctGroupbyEnforcer.SortSpecArray;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.plan.LogicalPlan;
 import org.apache.tajo.plan.logical.*;
+import org.apache.tajo.plan.serder.LogicalNodeDeserializer;
+import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer;
+import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.DistinctAggregationAlgorithm;
+import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.MultipleAggregationStage;
+import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.SortSpecArray;
+import org.apache.tajo.plan.serder.PlanProto.EnforceProperty;
+import org.apache.tajo.plan.serder.PlanProto.SortEnforce;
+import org.apache.tajo.plan.serder.PlanProto.SortedInputEnforce;
 import org.apache.tajo.plan.util.PlannerUtil;
-import org.apache.tajo.storage.*;
+import org.apache.tajo.storage.FileTablespace;
+import org.apache.tajo.storage.StorageConstants;
+import org.apache.tajo.storage.TablespaceManager;
 import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.storage.fragment.FragmentConvertor;
+import org.apache.tajo.unit.StorageUnit;
 import org.apache.tajo.util.FileUtil;
-import org.apache.tajo.util.IndexUtil;
+import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.util.TUtil;
 import org.apache.tajo.worker.TaskAttemptContext;
 
@@ -64,12 +66,10 @@ import java.util.Stack;
 
 import static org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
 import static org.apache.tajo.catalog.proto.CatalogProtos.PartitionType;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.ColumnPartitionEnforcer.ColumnPartitionAlgorithm;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.EnforceProperty.EnforceType;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.GroupbyEnforce.GroupbyAlgorithm;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.JoinEnforce.JoinAlgorithm;
-import static org.apache.tajo.ipc.TajoWorkerProtocol.SortEnforce;
+import static org.apache.tajo.plan.serder.PlanProto.ColumnPartitionEnforcer.ColumnPartitionAlgorithm;
+import static org.apache.tajo.plan.serder.PlanProto.EnforceProperty.EnforceType;
+import static org.apache.tajo.plan.serder.PlanProto.GroupbyEnforce.GroupbyAlgorithm;
+import static org.apache.tajo.plan.serder.PlanProto.JoinEnforce.JoinAlgorithm;
 
 public class PhysicalPlannerImpl implements PhysicalPlanner {
   private static final Log LOG = LogFactory.getLog(PhysicalPlannerImpl.class);
@@ -81,13 +81,12 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     this.conf = conf;
   }
 
-  public PhysicalExec createPlan(final TaskAttemptContext context, final LogicalNode logicalPlan)
-      throws InternalException {
+  public PhysicalExec createPlan(final TaskAttemptContext context, final LogicalNode logicalPlan) {
 
     PhysicalExec execPlan;
 
     try {
-      execPlan = createPlanRecursive(context, logicalPlan, new Stack<LogicalNode>());
+      execPlan = createPlanRecursive(context, logicalPlan, new Stack<>());
       if (execPlan instanceof StoreTableExec
           || execPlan instanceof RangeShuffleFileWriteExec
           || execPlan instanceof HashShuffleFileWriteExec
@@ -99,7 +98,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
         return execPlan;
       }
     } catch (IOException ioe) {
-      throw new InternalException(ioe);
+      throw new TajoInternalError(ioe);
     }
   }
 
@@ -107,7 +106,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
                                            PhysicalExec execPlan) throws IOException {
     DataChannel channel = context.getDataChannel();
     ShuffleFileWriteNode shuffleFileWriteNode = LogicalPlan.createNodeWithoutPID(ShuffleFileWriteNode.class);
-    shuffleFileWriteNode.setStorageType(context.getDataChannel().getStoreType());
+    shuffleFileWriteNode.setDataFormat(context.getDataChannel().getDataFormat());
     shuffleFileWriteNode.setInSchema(plan.getOutSchema());
     shuffleFileWriteNode.setOutSchema(plan.getOutSchema());
     shuffleFileWriteNode.setShuffle(channel.getShuffleType(), channel.getShuffleKeys(), channel.getShuffleOutputNum());
@@ -233,10 +232,17 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
         return new LimitExec(ctx, limitNode.getInSchema(),
             limitNode.getOutSchema(), leftExec, limitNode);
 
-      case BST_INDEX_SCAN:
+      case INDEX_SCAN:
         IndexScanNode indexScanNode = (IndexScanNode) logicalNode;
         leftExec = createIndexScanExec(ctx, indexScanNode);
         return leftExec;
+
+      case CREATE_INDEX:
+        CreateIndexNode createIndexNode = (CreateIndexNode) logicalNode;
+        stack.push(createIndexNode);
+        leftExec = createPlanRecursive(ctx, createIndexNode.getChild(), stack);
+        stack.pop();
+        return new StoreIndexExec(ctx, createIndexNode, leftExec);
 
       default:
         return null;
@@ -250,32 +256,39 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       FragmentProto[] fragmentProtos = ctx.getTables(tableId);
       List<Fragment> fragments = FragmentConvertor.convert(ctx.getConf(), fragmentProtos);
       for (Fragment frag : fragments) {
-        size += StorageManager.getFragmentLength(ctx.getConf(), frag);
+        size += TablespaceManager.guessFragmentVolume(ctx.getConf(), frag);
       }
     }
     return size;
   }
 
-  @VisibleForTesting
-  public boolean checkIfInMemoryInnerJoinIsPossible(TaskAttemptContext context, LogicalNode node, boolean left)
+  private boolean checkIfInMemoryInnerJoinIsPossible(TaskAttemptContext context, LogicalNode node, boolean left)
       throws IOException {
     String [] lineage = PlannerUtil.getRelationLineage(node);
     long volume = estimateSizeRecursive(context, lineage);
-    boolean inMemoryInnerJoinFlag = false;
+    return checkIfInMemoryInnerJoinIsPossible(context, lineage, volume, left);
+  }
+
+  @VisibleForTesting
+  public boolean checkIfInMemoryInnerJoinIsPossible(TaskAttemptContext context, String [] lineage, long tableVolume,
+                                                    boolean left) throws IOException {
+    boolean inMemoryInnerJoinFlag;
 
     QueryContext queryContext = context.getQueryContext();
 
     if (queryContext.containsKey(SessionVars.INNER_HASH_JOIN_SIZE_LIMIT)) {
-      inMemoryInnerJoinFlag = volume <= context.getQueryContext().getLong(SessionVars.INNER_HASH_JOIN_SIZE_LIMIT);
+      inMemoryInnerJoinFlag = tableVolume <= context.getQueryContext().getLong(SessionVars.INNER_HASH_JOIN_SIZE_LIMIT)
+          * StorageUnit.MB;
     } else {
-      inMemoryInnerJoinFlag = volume <= context.getQueryContext().getLong(SessionVars.HASH_JOIN_SIZE_LIMIT);
+      inMemoryInnerJoinFlag = tableVolume <= context.getQueryContext().getLong(SessionVars.HASH_JOIN_SIZE_LIMIT)
+          * StorageUnit.MB;
     }
 
     LOG.info(String.format("[%s] the volume of %s relations (%s) is %s and is %sfit to main maemory.",
         context.getTaskId().toString(),
         (left ? "Left" : "Right"),
-        TUtil.arrayToString(lineage),
-        FileUtil.humanReadableByteCount(volume, false),
+        StringUtils.join(lineage),
+        FileUtil.humanReadableByteCount(tableVolume, false),
         (inMemoryInnerJoinFlag ? "" : "not ")));
     return inMemoryInnerJoinFlag;
   }
@@ -325,20 +338,18 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
 
       switch (algorithm) {
-        case NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Nested Loop Join]");
-          return new NLJoinExec(context, plan, leftExec, rightExec);
-        case BLOCK_NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Block Nested Loop Join]");
-          return new BNLJoinExec(context, plan, leftExec, rightExec);
         default:
           // fallback algorithm
           LOG.error("Invalid Cross Join Algorithm Enforcer: " + algorithm.name());
-          return new BNLJoinExec(context, plan, leftExec, rightExec);
+          PhysicalExec [] orderedChilds = switchJoinSidesIfNecessary(context, plan, leftExec, rightExec);
+          return new HashJoinExec(context, plan, orderedChilds[1], orderedChilds[0]);
       }
 
     } else {
-      return new BNLJoinExec(context, plan, leftExec, rightExec);
+      LOG.info("Join (" + plan.getPID() +") chooses [In-memory Hash Join]");
+      // returns two PhysicalExec. smaller one is 0, and larger one is 1.
+      PhysicalExec [] orderedChilds = switchJoinSidesIfNecessary(context, plan, leftExec, rightExec);
+      return new HashJoinExec(context, plan, orderedChilds[1], orderedChilds[0]);
     }
   }
 
@@ -351,12 +362,6 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       JoinAlgorithm algorithm = property.getJoin().getAlgorithm();
 
       switch (algorithm) {
-        case NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Nested Loop Join]");
-          return new NLJoinExec(context, plan, leftExec, rightExec);
-        case BLOCK_NESTED_LOOP_JOIN:
-          LOG.info("Join (" + plan.getPID() +") chooses [Block Nested Loop Join]");
-          return new BNLJoinExec(context, plan, leftExec, rightExec);
         case IN_MEMORY_HASH_JOIN:
           LOG.info("Join (" + plan.getPID() +") chooses [In-memory Hash Join]");
           // returns two PhysicalExec. smaller one is 0, and larger one is 1.
@@ -384,7 +389,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
    */
   @VisibleForTesting
   public PhysicalExec [] switchJoinSidesIfNecessary(TaskAttemptContext context, JoinNode plan,
-                                                     PhysicalExec left, PhysicalExec right) throws IOException {
+                                                    PhysicalExec left, PhysicalExec right) throws IOException {
     String [] leftLineage = PlannerUtil.getRelationLineage(plan.getLeftChild());
     String [] rightLineage = PlannerUtil.getRelationLineage(plan.getRightChild());
     long leftSize = estimateSizeRecursive(context, leftLineage);
@@ -397,18 +402,18 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       larger = right;
       LOG.info(String.format("[%s] Left relations %s (%s) is smaller than Right relations %s (%s).",
           context.getTaskId().toString(),
-          TUtil.arrayToString(leftLineage),
+          StringUtils.join(leftLineage),
           FileUtil.humanReadableByteCount(leftSize, false),
-          TUtil.arrayToString(rightLineage),
+          StringUtils.join(rightLineage),
           FileUtil.humanReadableByteCount(rightSize, false)));
     } else {
       smaller = right;
       larger = left;
       LOG.info(String.format("[%s] Right relations %s (%s) is smaller than Left relations %s (%s).",
           context.getTaskId().toString(),
-          TUtil.arrayToString(rightLineage),
+          StringUtils.join(rightLineage),
           FileUtil.humanReadableByteCount(rightSize, false),
-          TUtil.arrayToString(leftLineage),
+          StringUtils.join(leftLineage),
           FileUtil.humanReadableByteCount(leftSize, false)));
     }
 
@@ -464,14 +469,14 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
         case IN_MEMORY_HASH_JOIN:
           LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Hash Join].");
           return new HashLeftOuterJoinExec(context, plan, leftExec, rightExec);
-        case NESTED_LOOP_JOIN:
-          //the right operand is too large, so we opt for NL implementation of left outer join
-          LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Nested Loop Join].");
-          return new NLLeftOuterJoinExec(context, plan, leftExec, rightExec);
+        case MERGE_JOIN:
+          //the right operand is too large, so we opt for merge join implementation
+          LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Merge Join].");
+          return createRightOuterMergeJoinPlan(context, plan, rightExec, leftExec);
         default:
           LOG.error("Invalid Left Outer Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback inner join algorithm: " + JoinAlgorithm.IN_MEMORY_HASH_JOIN.name());
-          return new HashLeftOuterJoinExec(context, plan, leftExec, rightExec);
+          LOG.error("Choose a fallback to join algorithm: " + JoinAlgorithm.MERGE_JOIN);
+          return createRightOuterMergeJoinPlan(context, plan, rightExec, leftExec);
       }
     } else {
       return createBestLeftOuterJoinPlan(context, plan, leftExec, rightExec);
@@ -487,9 +492,9 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     QueryContext queryContext = context.getQueryContext();
 
     if (queryContext.containsKey(SessionVars.OUTER_HASH_JOIN_SIZE_LIMIT)) {
-      hashJoin = rightTableVolume <  queryContext.getLong(SessionVars.OUTER_HASH_JOIN_SIZE_LIMIT);
+      hashJoin = rightTableVolume <=  queryContext.getLong(SessionVars.OUTER_HASH_JOIN_SIZE_LIMIT) * StorageUnit.MB;
     } else {
-      hashJoin = rightTableVolume <  queryContext.getLong(SessionVars.HASH_JOIN_SIZE_LIMIT);
+      hashJoin = rightTableVolume <=  queryContext.getLong(SessionVars.HASH_JOIN_SIZE_LIMIT) * StorageUnit.MB;
     }
 
     if (hashJoin) {
@@ -498,9 +503,9 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       return new HashLeftOuterJoinExec(context, plan, leftExec, rightExec);
     }
     else {
-      //the right operand is too large, so we opt for NL implementation of left outer join
-      LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Nested Loop Join].");
-      return new NLLeftOuterJoinExec(context, plan, leftExec, rightExec);
+      //the right operand is too large, so we opt for merge join implementation
+      LOG.info("Left Outer Join (" + plan.getPID() +") chooses [Merge Join].");
+      return createRightOuterMergeJoinPlan(context, plan, rightExec, leftExec);
     }
   }
 
@@ -515,9 +520,9 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     QueryContext queryContext = context.getQueryContext();
 
     if (queryContext.containsKey(SessionVars.OUTER_HASH_JOIN_SIZE_LIMIT)) {
-      hashJoin = leftTableVolume <  queryContext.getLong(SessionVars.OUTER_HASH_JOIN_SIZE_LIMIT);
+      hashJoin = leftTableVolume <=  queryContext.getLong(SessionVars.OUTER_HASH_JOIN_SIZE_LIMIT) * StorageUnit.MB;
     } else {
-      hashJoin = leftTableVolume <  queryContext.getLong(SessionVars.HASH_JOIN_SIZE_LIMIT);
+      hashJoin = leftTableVolume <=  queryContext.getLong(SessionVars.HASH_JOIN_SIZE_LIMIT)* StorageUnit.MB;
     }
 
     if (hashJoin){
@@ -564,7 +569,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
           return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
         default:
           LOG.error("Invalid Right Outer Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback merge join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
+          LOG.error("Choose a fallback to join algorithm: " + JoinAlgorithm.MERGE_JOIN);
           return createRightOuterMergeJoinPlan(context, plan, leftExec, rightExec);
       }
     } else {
@@ -587,7 +592,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
         default:
           LOG.error("Invalid Full Outer Join Algorithm Enforcer: " + algorithm.name());
-          LOG.error("Choose a fallback merge join algorithm: " + JoinAlgorithm.MERGE_JOIN.name());
+          LOG.error("Choose a fallback to join algorithm: " + JoinAlgorithm.MERGE_JOIN);
           return createFullOuterMergeJoinPlan(context, plan, leftExec, rightExec);
       }
     } else {
@@ -614,7 +619,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       selectedLeft = rightExec;
       selectedRight = leftExec;
     }
-    LOG.info("Full Outer Join (" + plan.getPID() +") chooses [Hash Join]");
+    LOG.info("Full Outer Join (" + plan.getPID() + ") chooses [Hash Join]");
     return new HashFullOuterJoinExec(context, plan, selectedRight, selectedLeft);
   }
 
@@ -761,6 +766,9 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
    */
   public PhysicalExec createShuffleFileWritePlan(TaskAttemptContext ctx,
                                                  ShuffleFileWriteNode plan, PhysicalExec subOp) throws IOException {
+    plan.getOptions().set(StorageConstants.SHUFFLE_TYPE,
+        PlannerUtil.getShuffleType(ctx.getDataChannel().getShuffleType()));
+
     switch (plan.getShuffleType()) {
     case HASH_SHUFFLE:
     case SCATTERED_HASH_SHUFFLE:
@@ -779,7 +787,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
           specs[i] = new SortSpec(columns[i]);
         }
       }
-      return new RangeShuffleFileWriteExec(ctx, subOp, plan.getInSchema(), plan.getInSchema(), sortSpecs);
+      return new RangeShuffleFileWriteExec(ctx, plan, subOp, sortSpecs);
 
     case NONE_SHUFFLE:
       // if there is no given NULL CHAR property in the table property and the query is neither CTAS or INSERT,
@@ -854,6 +862,14 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
           sortSpecs[i++] = new SortSpec(insertNode.getProjectedSchema().getColumn(id), true, false);
         }
       }
+    } else if (storeTableNode.getType() == NodeType.CREATE_TABLE) {
+      int i = 0;
+      for (int j = 0; j < partitionKeyColumns.length; j++) {
+        int id = storeTableNode.getOutSchema().getRootColumns().size() + j;
+        Column column = storeTableNode.getInSchema().getColumn(id);
+        sortSpecs[i++] = new SortSpec(column, true, false);
+      }
+
     } else {
       for (int i = 0; i < partitionKeyColumns.length; i++) {
         sortSpecs[i] = new SortSpec(partitionKeyColumns[i], true, false);
@@ -875,7 +891,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     List<EnforceProperty> property = enforcer.getEnforceProperties(EnforceType.SORTED_INPUT);
     if (property != null && property.size() > 0 && node.peek().getType() == NodeType.SORT) {
       SortNode sortNode = (SortNode) node.peek();
-      TajoWorkerProtocol.SortedInputEnforce sortEnforcer = property.get(0).getSortedInput();
+      SortedInputEnforce sortEnforcer = property.get(0).getSortedInput();
 
       boolean condition = scanNode.getTableName().equals(sortEnforcer.getTableName());
       SortSpec [] sortSpecs = LogicalNodeDeserializer.convertSortSpecs(sortEnforcer.getSortSpecsList());
@@ -912,21 +928,20 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
           && ((PartitionedTableScanNode)scanNode).getInputPaths() != null &&
           ((PartitionedTableScanNode)scanNode).getInputPaths().length > 0) {
 
-        if (scanNode instanceof PartitionedTableScanNode) {
-          if (broadcastFlag) {
-            PartitionedTableScanNode partitionedTableScanNode = (PartitionedTableScanNode) scanNode;
-            List<Fragment> fileFragments = TUtil.newList();
-            FileStorageManager fileStorageManager = (FileStorageManager)StorageManager.getFileStorageManager(ctx.getConf());
-            for (Path path : partitionedTableScanNode.getInputPaths()) {
-              fileFragments.addAll(TUtil.newList(fileStorageManager.split(scanNode.getCanonicalName(), path)));
-            }
+        if (broadcastFlag) {
+          PartitionedTableScanNode partitionedTableScanNode = (PartitionedTableScanNode) scanNode;
+          List<Fragment> fileFragments = TUtil.newList();
 
-            FragmentProto[] fragments =
+          FileTablespace space = (FileTablespace) TablespaceManager.get(scanNode.getTableDesc().getUri());
+          for (Path path : partitionedTableScanNode.getInputPaths()) {
+            fileFragments.addAll(TUtil.newList(space.split(scanNode.getCanonicalName(), path)));
+          }
+
+          FragmentProto[] fragments =
                 FragmentConvertor.toFragmentProtoArray(fileFragments.toArray(new FileFragment[fileFragments.size()]));
 
-            ctx.addFragments(scanNode.getCanonicalName(), fragments);
-            return new PartitionMergeScanExec(ctx, scanNode, fragments);
-          }
+          ctx.addFragments(scanNode.getCanonicalName(), fragments);
+          return new PartitionMergeScanExec(ctx, scanNode, fragments);
         }
       }
 
@@ -995,7 +1010,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     sortNode.setInSchema(subOp.getSchema());
     sortNode.setOutSchema(subOp.getSchema());
     ExternalSortExec sortExec = new ExternalSortExec(ctx, sortNode, subOp);
-    LOG.info("The planner chooses [Sort Aggregation] in (" + TUtil.arrayToString(sortSpecs) + ")");
+    LOG.info("The planner chooses [Sort Aggregation] in (" + StringUtils.join(sortSpecs) + ")");
     return new SortAggregateExec(ctx, groupbyNode, sortExec);
   }
 
@@ -1008,7 +1023,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
 
     String [] outerLineage = PlannerUtil.getRelationLineage(groupbyNode.getChild());
     long estimatedSize = estimateSizeRecursive(context, outerLineage);
-    final long threshold = context.getQueryContext().getLong(SessionVars.HASH_GROUPBY_SIZE_LIMIT);
+    final long threshold = context.getQueryContext().getLong(SessionVars.HASH_GROUPBY_SIZE_LIMIT) * StorageUnit.MB;
 
     // if the relation size is less than the threshold,
     // the hash aggregation will be used.
@@ -1036,7 +1051,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
       sortNode.setInSchema(subOp.getSchema());
       sortNode.setOutSchema(subOp.getSchema());
       child = new ExternalSortExec(context, sortNode, subOp);
-      LOG.info("The planner chooses [Sort Aggregation] in (" + TUtil.arrayToString(sortSpecs) + ")");
+      LOG.info("The planner chooses [Sort Aggregation] in (" + StringUtils.join(sortSpecs) + ")");
     }
 
     return new WindowAggExec(context, windowAggNode, child);
@@ -1080,7 +1095,7 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     SortNode sortNode = LogicalPlan.createNodeWithoutPID(SortNode.class);
     //2 phase: seq, groupby columns, distinct1 keys, distinct2 keys,
     //3 phase: groupby columns, seq, distinct1 keys, distinct2 keys,
-    List<SortSpec> sortSpecs = new ArrayList<SortSpec>();
+    List<SortSpec> sortSpecs = new ArrayList<>();
     if (phase == 2) {
       sortSpecs.add(new SortSpec(distinctNode.getTargets()[0].getNamedColumn()));
     }
@@ -1176,19 +1191,10 @@ public class PhysicalPlannerImpl implements PhysicalPlanner {
     Preconditions.checkNotNull(ctx.getTable(annotation.getCanonicalName()),
         "Error: There is no table matched to %s", annotation.getCanonicalName());
 
-    FragmentProto [] fragmentProtos = ctx.getTables(annotation.getTableName());
-    List<FileFragment> fragments =
-        FragmentConvertor.convert(ctx.getConf(), fragmentProtos);
-
-    String indexName = IndexUtil.getIndexNameOfFrag(fragments.get(0), annotation.getSortKeys());
-    FileStorageManager sm = (FileStorageManager)StorageManager.getFileStorageManager(ctx.getConf());
-    Path indexPath = new Path(sm.getTablePath(annotation.getTableName()), "index");
-
-    TupleComparator comp = new BaseTupleComparator(annotation.getKeySchema(),
-        annotation.getSortKeys());
-    return new BSTIndexScanExec(ctx, annotation, fragments.get(0), new Path(indexPath, indexName),
-        annotation.getKeySchema(), comp, annotation.getDatum());
-
+    FragmentProto [] fragments = ctx.getTables(annotation.getTableName());
+    Preconditions.checkState(fragments.length == 1);
+    return new BSTIndexScanExec(ctx, annotation, fragments[0], annotation.getIndexPath(),
+        annotation.getKeySchema(), annotation.getPredicates());
   }
 
   public static EnforceProperty getAlgorithmEnforceProperty(Enforcer enforcer, LogicalNode node) {

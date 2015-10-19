@@ -24,16 +24,12 @@ import org.apache.hadoop.fs.Path;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
-import org.apache.tajo.storage.Scanner;
-import org.apache.tajo.storage.StorageManager;
-import org.apache.tajo.storage.Tuple;
-import org.apache.tajo.storage.VTuple;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.fragment.FileFragment;
 import org.junit.Test;
 
@@ -68,12 +64,12 @@ public class TestJsonSerDe {
   public void testVarioutType() throws IOException {
     TajoConf conf = new TajoConf();
 
-    TableMeta meta = CatalogUtil.newTableMeta(CatalogProtos.StoreType.JSON);
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
     Path tablePath = new Path(getResourcePath("dataset", "TestJsonSerDe"), "testVariousType.json");
     FileSystem fs = FileSystem.getLocal(conf);
     FileStatus status = fs.getFileStatus(tablePath);
     FileFragment fragment = new FileFragment("table", tablePath, 0, status.getLen());
-    Scanner scanner =  StorageManager.getFileStorageManager(conf).getScanner(meta, schema, fragment);
+    Scanner scanner =  TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
     scanner.init();
 
     Tuple tuple = scanner.next();
@@ -81,8 +77,7 @@ public class TestJsonSerDe {
     assertNull(scanner.next());
     scanner.close();
 
-    Tuple baseTuple = new VTuple(11);
-    baseTuple.put(new Datum[] {
+    Tuple baseTuple = new VTuple(new Datum[] {
         DatumFactory.createBool(true),                  // 0
         DatumFactory.createChar("hyunsik"),             // 1
         DatumFactory.createInt2((short) 17),            // 2
@@ -94,6 +89,38 @@ public class TestJsonSerDe {
         DatumFactory.createBlob("hyunsik".getBytes()),  // 8
         DatumFactory.createInet4("192.168.0.1"),        // 9
         NullDatum.get(),                                // 10
+    });
+
+    assertEquals(baseTuple, tuple);
+  }
+
+  @Test
+  public void testUnicodeWithControlChar() throws IOException {
+    TajoConf conf = new TajoConf();
+
+    TableMeta meta = CatalogUtil.newTableMeta("JSON");
+    Path tablePath = new Path(getResourcePath("dataset", "TestJsonSerDe"), "testUnicodeWithControlChar.json");
+    FileSystem fs = FileSystem.getLocal(conf);
+    FileStatus status = fs.getFileStatus(tablePath);
+    FileFragment fragment = new FileFragment("table", tablePath, 0, status.getLen());
+
+    Schema  schema = new Schema();
+    schema.addColumn("col1", TajoDataTypes.Type.TEXT);
+    schema.addColumn("col2", TajoDataTypes.Type.TEXT);
+    schema.addColumn("col3", TajoDataTypes.Type.TEXT);
+    Scanner scanner =  TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, null);
+    scanner.init();
+
+    Tuple tuple = scanner.next();
+    assertNotNull(tuple);
+    assertNull(scanner.next());
+    scanner.close();
+
+
+    Tuple baseTuple = new VTuple(new Datum[] {
+        DatumFactory.createText("tajo"),
+        DatumFactory.createText("타조"),
+        DatumFactory.createText("타\n조")
     });
 
     assertEquals(baseTuple, tuple);

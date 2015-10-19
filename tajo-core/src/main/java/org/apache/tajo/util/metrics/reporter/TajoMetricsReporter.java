@@ -32,10 +32,10 @@ public abstract class TajoMetricsReporter {
                               SortedMap<String, Timer> timers);
 
   public <T> Map<String, Map<String, T>> findMetricsItemGroup(SortedMap<String, T> metricsMap) {
-    Map<String, Map<String, T>> metricsGroup = new HashMap<String, Map<String, T>>();
+    Map<String, Map<String, T>> metricsGroup = new HashMap<>();
 
     String previousGroup = null;
-    Map<String, T> groupItems = new HashMap<String, T>();
+    Map<String, T> groupItems = new HashMap<>();
 
     for (Map.Entry<String, T> entry : metricsMap.entrySet()) {
       String key = entry.getKey();
@@ -48,15 +48,17 @@ public abstract class TajoMetricsReporter {
         groupName = keyTokens[0] + "." + keyTokens[1];
         itemName = "";
         String prefix = "";
+        StringBuilder itemNameBuilder = new StringBuilder();
         for (int i = 2; i < keyTokens.length; i++) {
-          itemName += prefix + keyTokens[i];
+          itemNameBuilder.append(prefix).append(keyTokens[i]);
           prefix = ".";
         }
+        itemName = itemNameBuilder.toString();
       } else {
         groupName = "";
         itemName = key;
         if(!metricsGroup.containsKey(groupName)) {
-          metricsGroup.put(groupName, new HashMap<String, T>());
+          metricsGroup.put(groupName, new HashMap<>());
         }
         metricsGroup.get(groupName).put(itemName, entry.getValue());
         continue;
@@ -64,7 +66,7 @@ public abstract class TajoMetricsReporter {
 
       if (previousGroup != null && !previousGroup.equals(groupName)) {
         metricsGroup.put(previousGroup, groupItems);
-        groupItems = new HashMap<String, T>();
+        groupItems = new HashMap<>();
       }
       groupItems.put(itemName, entry.getValue());
       previousGroup = groupName;
@@ -158,7 +160,11 @@ public abstract class TajoMetricsReporter {
     if(hostAndPort != null && !hostAndPort.isEmpty()) {
       sb.append(hostAndPort).append(" ");
     }
-    sb.append("histo").append(" ");
+    sb.append("histogram").append(" ");
+
+    if(!groupName.isEmpty()) {
+      sb.append(groupName).append(" ");
+    }
 
     String prefix = "";
     for(Map.Entry<String, Histogram> eachHistogram: histograms.entrySet()) {

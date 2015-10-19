@@ -19,9 +19,9 @@
 package org.apache.tajo.plan.expr;
 
 import com.google.gson.annotations.Expose;
+
 import org.apache.tajo.OverridableConf;
 import org.apache.tajo.SessionVars;
-import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.storage.Tuple;
@@ -31,7 +31,7 @@ import java.util.TimeZone;
 
 import static org.apache.tajo.common.TajoDataTypes.DataType;
 
-public class CastEval extends UnaryEval {
+public class CastEval extends UnaryEval implements Cloneable {
   @Expose private DataType target;
   @Expose private TimeZone timezone;
 
@@ -67,8 +67,11 @@ public class CastEval extends UnaryEval {
     return target.getType().name();
   }
 
-  public Datum eval(Schema schema, Tuple tuple) {
-    Datum operandDatum = child.eval(schema, tuple);
+  @Override
+  @SuppressWarnings("unchecked")
+  public Datum eval(Tuple tuple) {
+    super.eval(tuple);
+    Datum operandDatum = child.eval(tuple);
     if (operandDatum.isNull()) {
       return operandDatum;
     }
@@ -81,15 +84,37 @@ public class CastEval extends UnaryEval {
   }
 
   @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = super.hashCode();
+    result = prime * result + ((target == null) ? 0 : target.hashCode());
+    result = prime * result + ((timezone == null) ? 0 : timezone.hashCode());
+    return result;
+  }
+
+  @Override
   public boolean equals(Object obj) {
     boolean valid = obj != null && obj instanceof CastEval;
     if (valid) {
       CastEval another = (CastEval) obj;
-      return child.equals(another.child) &&
-          target.equals(another.target) &&
-          TUtil.checkEquals(timezone, another.timezone);
+      boolean b1 = child.equals(another.child);
+      boolean b2 = target.equals(another.target);
+      boolean b3 = TUtil.checkEquals(timezone, another.timezone);
+      return b1 && b2 && b3;
     } else {
       return false;
     }
+  }
+
+  @Override
+  public Object clone() throws CloneNotSupportedException {
+    CastEval clone = (CastEval) super.clone();
+    if (target != null) {
+      clone.target = target;
+    }
+    if (timezone != null) {
+      clone.timezone = timezone;
+    }
+    return clone;
   }
 }

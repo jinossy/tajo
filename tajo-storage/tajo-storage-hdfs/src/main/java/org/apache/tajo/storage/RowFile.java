@@ -34,6 +34,11 @@ import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.conf.TajoConf.ConfVars;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.plan.expr.EvalNode;
+import org.apache.tajo.plan.serder.PlanProto.ShuffleType;
+import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.storage.exception.AlreadyExistsStorageException;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.util.BitArray;
@@ -117,6 +122,8 @@ public class RowFile {
         buffer.flip();
       }
 
+      tuple = new VTuple(schema.size());
+
       super.init();
     }
 
@@ -180,7 +187,6 @@ public class RowFile {
       }
 
       int i;
-      tuple = new VTuple(schema.size());
 
       int nullFlagSize = buffer.getShort();
       byte[] nullFlagBytes = new byte[nullFlagSize];
@@ -299,6 +305,11 @@ public class RowFile {
     }
 
     @Override
+    public void setFilter(EvalNode filter) {
+      throw new TajoRuntimeException(new UnsupportedException());
+    }
+
+    @Override
     public boolean isSplittable(){
       return true;
     }
@@ -314,6 +325,7 @@ public class RowFile {
     private BitArray nullFlags;
     // statistics
     private TableStatistics stats;
+    private ShuffleType shuffleType;
 
     public RowFileAppender(Configuration conf, final TaskAttemptId taskAttemptId,
                            final Schema schema, final TableMeta meta, final Path workDir)
@@ -356,6 +368,9 @@ public class RowFile {
 
       if (enabledStats) {
         this.stats = new TableStatistics(this.schema);
+        this.shuffleType = PlannerUtil.getShuffleType(
+            meta.getOption(StorageConstants.SHUFFLE_TYPE,
+                PlannerUtil.getShuffleType(ShuffleType.NONE_SHUFFLE)));
       }
     }
 
@@ -375,57 +390,58 @@ public class RowFile {
       nullFlags.clear();
 
       for (int i = 0; i < schema.size(); i++) {
-        if (enabledStats) {
-          stats.analyzeField(i, t.get(i));
+        if (shuffleType == ShuffleType.RANGE_SHUFFLE) {
+          // it is to calculate min/max values, and it is only used for the intermediate file.
+          stats.analyzeField(i, t);
         }
 
-        if (t.isNull(i)) {
+        if (t.isBlankOrNull(i)) {
           nullFlags.set(i);
         } else {
           col = schema.getColumn(i);
           switch (col.getDataType().getType()) {
             case BOOLEAN:
-              buffer.put(t.get(i).asByte());
+              buffer.put(t.getByte(i));
               break;
             case BIT:
-              buffer.put(t.get(i).asByte());
+              buffer.put(t.getByte(i));
               break;
             case CHAR:
-              byte[] src = t.get(i).asByteArray();
+              byte[] src = t.getBytes(i);
               byte[] dst = Arrays.copyOf(src, col.getDataType().getLength());
               buffer.putInt(src.length);
               buffer.put(dst);
               break;
             case TEXT:
-              byte [] strbytes = t.get(i).asByteArray();
+              byte [] strbytes = t.getBytes(i);
               buffer.putShort((short)strbytes.length);
               buffer.put(strbytes, 0, strbytes.length);
               break;
             case INT2:
-              buffer.putShort(t.get(i).asInt2());
+              buffer.putShort(t.getInt2(i));
               break;
             case INT4:
-              buffer.putInt(t.get(i).asInt4());
+              buffer.putInt(t.getInt4(i));
               break;
             case INT8:
-              buffer.putLong(t.get(i).asInt8());
+              buffer.putLong(t.getInt8(i));
               break;
             case FLOAT4:
-              buffer.putFloat(t.get(i).asFloat4());
+              buffer.putFloat(t.getFloat4(i));
               break;
             case FLOAT8:
-              buffer.putDouble(t.get(i).asFloat8());
+              buffer.putDouble(t.getFloat8(i));
               break;
             case BLOB:
-              byte [] bytes = t.get(i).asByteArray();
+              byte [] bytes = t.getBytes(i);
               buffer.putShort((short)bytes.length);
               buffer.put(bytes);
               break;
             case INET4:
-              buffer.put(t.get(i).asByteArray());
+              buffer.put(t.getBytes(i));
               break;
             case INET6:
-              buffer.put(t.get(i).asByteArray());
+              buffer.put(t.getBytes(i));
               break;
             case NULL_TYPE:
               nullFlags.set(i);

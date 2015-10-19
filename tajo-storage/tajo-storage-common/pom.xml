@@ -21,7 +21,7 @@ limitations under the License.
   <parent>
     <artifactId>tajo-project</artifactId>
     <groupId>org.apache.tajo</groupId>
-    <version>0.10.0-SNAPSHOT</version>
+    <version>0.12.0-SNAPSHOT</version>
     <relativePath>../../tajo-project</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
@@ -49,15 +49,16 @@ limitations under the License.
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
-          <encoding>${project.build.sourceEncoding}</encoding>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.rat</groupId>
         <artifactId>apache-rat-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>src/main/resources/*.json</exclude>
+            <exclude>src/test/resources/*.json</exclude>
+          </excludes>
+        </configuration>
         <executions>
           <execution>
             <phase>verify</phase>
@@ -72,9 +73,9 @@ limitations under the License.
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
           <systemProperties>
-            <tajo.test>TRUE</tajo.test>
+            <tajo.test.enabled>TRUE</tajo.test.enabled>
           </systemProperties>
-          <argLine>-Xms512m -Xmx1024m -XX:MaxPermSize=128m -Dfile.encoding=UTF-8</argLine>
+          <argLine>-Xms512m -Xmx1024m -XX:MaxPermSize=128m -Dfile.encoding=UTF-8 -Dderby.storage.pageSize=1024 -Dderby.stream.error.file=/dev/null</argLine>
         </configuration>
       </plugin>
       <plugin>
@@ -221,6 +222,10 @@ limitations under the License.
           <groupId>com.sun.jersey.jersey-test-framework</groupId>
           <artifactId>jersey-test-framework-grizzly2</artifactId>
         </exclusion>
+        <exclusion>
+          <artifactId>netty-all</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
@@ -272,6 +277,10 @@ limitations under the License.
           <artifactId>hadoop-mapreduce-client-core</artifactId>
           <groupId>org.apache.hadoop</groupId>
         </exclusion>
+        <exclusion>
+          <artifactId>netty-all</artifactId>
+          <groupId>io.netty</groupId>
+        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
@@ -292,6 +301,10 @@ limitations under the License.
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-buffer</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>net.minidev</groupId>
+      <artifactId>json-smart</artifactId>
     </dependency>
   </dependencies>
 

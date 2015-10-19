@@ -23,20 +23,17 @@ package org.apache.tajo.engine.planner.global;
 
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.QueryId;
-import org.apache.tajo.plan.LogicalPlan;
-import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.engine.planner.enforce.Enforcer;
-import org.apache.tajo.util.graph.SimpleDirectedGraph;
 import org.apache.tajo.engine.query.QueryContext;
-import org.apache.tajo.ipc.TajoWorkerProtocol;
+import org.apache.tajo.plan.LogicalPlan;
+import org.apache.tajo.plan.serder.PlanProto.EnforceProperty;
+import org.apache.tajo.plan.serder.PlanProto.ShuffleType;
+import org.apache.tajo.plan.util.PlannerUtil;
+import org.apache.tajo.util.graph.DirectedGraphVisitor;
+import org.apache.tajo.util.graph.SimpleDirectedGraph;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.apache.tajo.plan.serder.PlanProto.ShuffleType;
 
 public class MasterPlan {
   private final QueryId queryId;
@@ -46,9 +43,9 @@ public class MasterPlan {
   private AtomicInteger nextId = new AtomicInteger(0);
 
   private ExecutionBlock terminalBlock;
-  private Map<ExecutionBlockId, ExecutionBlock> execBlockMap = new HashMap<ExecutionBlockId, ExecutionBlock>();
+  private Map<ExecutionBlockId, ExecutionBlock> execBlockMap = new HashMap<>();
   private SimpleDirectedGraph<ExecutionBlockId, DataChannel> execBlockGraph =
-      new SimpleDirectedGraph<ExecutionBlockId, DataChannel>();
+          new SimpleDirectedGraph<>();
 
   public ExecutionBlockId newExecutionBlockId() {
     return new ExecutionBlockId(queryId, nextId.incrementAndGet());
@@ -106,6 +103,20 @@ public class MasterPlan {
 
   public ExecutionBlock getExecBlock(ExecutionBlockId execBlockId) {
     return execBlockMap.get(execBlockId);
+  }
+
+  public void removeExecBlock(ExecutionBlockId execBlockId) throws IllegalStateException {
+    List<DataChannel> channels = getIncomingChannels(execBlockId);
+    if (channels != null && channels.size() > 0) {
+      throw new IllegalStateException("Cannot remove execution blocks because some other execution blocks are connected");
+    }
+
+    channels = getOutgoingChannels(execBlockId);
+    if (channels != null && channels.size() > 0) {
+      throw new IllegalStateException("Cannot remove execution blocks because some other execution blocks are connected");
+    }
+
+    execBlockMap.remove(execBlockId);
   }
 
   public void addConnect(DataChannel dataChannel) {
@@ -185,7 +196,7 @@ public class MasterPlan {
   }
 
   public List<ExecutionBlock> getChilds(ExecutionBlockId id) {
-    List<ExecutionBlock> childBlocks = new ArrayList<ExecutionBlock>();
+    List<ExecutionBlock> childBlocks = new ArrayList<>();
     for (ExecutionBlockId cid : execBlockGraph.getChilds(id)) {
       childBlocks.add(execBlockMap.get(cid));
     }
@@ -204,6 +215,10 @@ public class MasterPlan {
     return getChild(executionBlock.getId(), idx);
   }
 
+  public void accept(ExecutionBlockId v, DirectedGraphVisitor<ExecutionBlockId> visitor) {
+    execBlockGraph.accept(v, visitor);
+  }
+
   @Override
   public String toString() {
     StringBuilder sb = new StringBuilder();
@@ -218,15 +233,13 @@ public class MasterPlan {
     sb.append("Order of Execution\n");
     sb.append("-------------------------------------------------------------------------------");
     int order = 1;
-    while (executionOrderCursor.hasNext()) {
-      ExecutionBlock currentEB = executionOrderCursor.nextBlock();
+    for (ExecutionBlock currentEB : executionOrderCursor) {
       sb.append("\n").append(order).append(": ").append(currentEB.getId());
       order++;
     }
     sb.append("\n-------------------------------------------------------------------------------\n");
 
-    while(cursor.hasNext()) {
-      ExecutionBlock block = cursor.nextBlock();
+    for (ExecutionBlock block : executionOrderCursor) {
 
       boolean terminal = false;
       sb.append("\n");
@@ -271,7 +284,14 @@ public class MasterPlan {
       if (block.getEnforcer().getProperties().size() > 0) {
         sb.append("\n[Enforcers]\n");
         int i = 0;
-        for (TajoWorkerProtocol.EnforceProperty enforce : block.getEnforcer().getProperties()) {
+        List<EnforceProperty> enforceProperties = block.getEnforcer().getProperties();
+        Collections.sort(enforceProperties, new Comparator<EnforceProperty>() {
+          @Override
+          public int compare(EnforceProperty o1, EnforceProperty o2) {
+            return o1.toString().compareTo(o2.toString());
+          }
+        });
+        for (EnforceProperty enforce : enforceProperties) {
           sb.append(" ").append(i++).append(": ");
           sb.append(Enforcer.toString(enforce));
           sb.append("\n");

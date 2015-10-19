@@ -21,14 +21,20 @@
  */
 package org.apache.tajo.catalog.store;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.tajo.catalog.CatalogUtil;
-import org.apache.tajo.catalog.exception.CatalogException;
-import org.apache.tajo.exception.InternalException;
+import org.apache.tajo.exception.TajoInternalError;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 
 public class DerbyStore extends AbstractDBStore {
+
+  private static final Log LOG = LogFactory.getLog(DerbyStore.class);
 
   private static final String CATALOG_DRIVER="org.apache.derby.jdbc.EmbeddedDriver";
 
@@ -36,7 +42,7 @@ public class DerbyStore extends AbstractDBStore {
     return CATALOG_DRIVER;
   }
 
-  public DerbyStore(final Configuration conf) throws InternalException {
+  public DerbyStore(final Configuration conf) {
     super(conf);
   }
 
@@ -45,12 +51,11 @@ public class DerbyStore extends AbstractDBStore {
   }
 
   @Override
-  public String readSchemaFile(String filename) throws CatalogException {
+  public String readSchemaFile(String filename) {
     return super.readSchemaFile("derby/" + filename);
   }
 
-  @Override
-  public final void close() {
+  public static void shutdown() {
     Connection conn = null;
     // shutdown embedded database.
     try {
@@ -62,16 +67,16 @@ public class DerbyStore extends AbstractDBStore {
         // tajo got the expected exception
         LOG.info("Derby shutdown complete normally.");
       } else {
-        LOG.info("Derby shutdown complete abnormally. - message:" + se.getMessage());
+        LOG.info("Derby shutdown complete abnormally. - message: " + se.getMessage());
       }
     } finally {
       CatalogUtil.closeQuietly(conn);
     }
-    LOG.info("Shutdown database (" + catalogUri + ")");
+    LOG.info("Shutdown database");
   }
 
   @Override
-  protected void createDatabaseDependants() throws CatalogException {
+  protected void createDatabaseDependants() {
     String schemaName = catalogSchemaManager.getCatalogStore().getSchema().getSchemaName();
     Statement stmt = null;
     
@@ -80,7 +85,9 @@ public class DerbyStore extends AbstractDBStore {
         stmt = getConnection().createStatement();
         stmt.executeUpdate("CREATE SCHEMA " + schemaName);
       } catch (SQLException e) {
-        throw new CatalogException(e);
+        throw new TajoInternalError(e);
+      } finally {
+        CatalogUtil.closeQuietly(stmt);
       }
     }
   }

@@ -24,24 +24,23 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.compress.CompressionCodec;
 import org.apache.hadoop.io.compress.CompressionCodecFactory;
 import org.apache.hadoop.io.compress.Decompressor;
 import org.apache.hadoop.io.compress.SplittableCompressionCodec;
-import org.apache.tajo.common.exception.NotImplementedException;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.storage.BufferPool;
-import org.apache.tajo.storage.ByteBufInputChannel;
-import org.apache.tajo.storage.FileScanner;
+import org.apache.tajo.exception.NotImplementedException;
+import org.apache.tajo.exception.TajoRuntimeException;
+import org.apache.tajo.exception.UnsupportedException;
+import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.compress.CodecPool;
 import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.unit.StorageUnit;
 
-import java.io.Closeable;
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.nio.channels.FileChannel;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DelimitedLineReader implements Closeable {
@@ -73,33 +72,66 @@ public class DelimitedLineReader implements Closeable {
     this.codec = factory.getCodec(fragment.getPath());
     this.bufferSize = bufferSize;
     if (this.codec instanceof SplittableCompressionCodec) {
-      throw new NotImplementedException(); // bzip2 does not support multi-thread model
+      // bzip2 does not support multi-thread model
+      throw new TajoRuntimeException(
+          new NotImplementedException(this.getClass() + " does not support " + this.codec.getDefaultExtension()));
     }
   }
 
   public void init() throws IOException {
+    if (is != null) {
+      throw new IOException(this.getClass() + " was already initialized.");
+    }
+
     if (fs == null) {
       fs = FileScanner.getFileSystem((TajoConf) conf, fragment.getPath());
     }
-    if (fis == null) fis = fs.open(fragment.getPath());
+
     pos = startOffset = fragment.getStartKey();
     end = startOffset + fragment.getLength();
 
     if (codec != null) {
+      fis = fs.open(fragment.getPath());
+
       decompressor = CodecPool.getDecompressor(codec);
       is = new DataInputStream(codec.createInputStream(fis, decompressor));
-      ByteBufInputChannel channel = new ByteBufInputChannel(is);
 
       ByteBuf buf = BufferPool.directBuffer(bufferSize);
-      lineReader = new ByteBufLineReader(channel, buf);
+      lineReader = new ByteBufLineReader(new ByteBufInputChannel(is), buf);
     } else {
-      fis.seek(startOffset);
-      is = fis;
-
-      ByteBufInputChannel channel = new ByteBufInputChannel(is);
-      lineReader = new ByteBufLineReader(channel,
-          BufferPool.directBuffer((int) Math.min(bufferSize, end)));
+      if (fs instanceof LocalFileSystem) {
+        File file;
+        try {
+          if (fragment.getPath().toUri().getScheme() != null) {
+            file = new File(fragment.getPath().toUri());
+          } else {
+            file = new File(fragment.getPath().toString());
+          }
+        } catch (IllegalArgumentException iae) {
+          throw new IOException(iae);
+        }
+        FileInputStream inputStream = new FileInputStream(file);
+        FileChannel channel = inputStream.getChannel();
+        channel.position(startOffset);
+        is = inputStream;
+        lineReader = new ByteBufLineReader(new LocalFileInputChannel(inputStream),
+            BufferPool.directBuffer((int) Math.min(bufferSize, end)));
+      } else {
+        fis = fs.open(fragment.getPath());
+        fis.seek(startOffset);
+        is = fis;
+        lineReader = new ByteBufLineReader(new FSDataInputChannel(fis),
+            BufferPool.directBuffer((int) Math.min(bufferSize, end)));
+      }
     }
+    eof = false;
+  }
+
+  public void seek(long offset) throws IOException {
+    if (isCompressed()) throw new TajoRuntimeException(new UnsupportedException());
+
+    lineReader.seek(offset);
+    pos = offset;
     eof = false;
   }
 
@@ -149,7 +181,7 @@ public class DelimitedLineReader implements Closeable {
   @Override
   public void close() throws IOException {
     try {
-      IOUtils.cleanup(LOG, lineReader, is, fis);
+      IOUtils.cleanup(LOG, lineReader);
       fs = null;
       is = null;
       fis = null;

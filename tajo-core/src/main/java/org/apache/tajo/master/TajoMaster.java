@@ -18,6 +18,8 @@
 
 package org.apache.tajo.master;
 
+import com.codahale.metrics.Gauge;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -26,9 +28,7 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
-import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.service.CompositeService;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.util.Clock;
@@ -36,50 +36,58 @@ import org.apache.hadoop.yarn.util.RackResolver;
 import org.apache.hadoop.yarn.util.SystemClock;
 import org.apache.tajo.catalog.CatalogServer;
 import org.apache.tajo.catalog.CatalogService;
+import org.apache.tajo.catalog.FunctionDesc;
 import org.apache.tajo.catalog.LocalCatalogWrapper;
+import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.catalog.proto.CatalogProtos.AlterTablespaceProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.AlterTablespaceProto.AlterTablespaceCommand;
+import org.apache.tajo.catalog.store.AbstractDBStore;
+import org.apache.tajo.catalog.store.DerbyStore;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.conf.TajoConf.ConfVars;
 import org.apache.tajo.engine.function.FunctionLoader;
-import org.apache.tajo.ha.HAService;
-import org.apache.tajo.ha.HAServiceHDFSImpl;
-import org.apache.tajo.metrics.CatalogMetricsGaugeSet;
-import org.apache.tajo.metrics.WorkerResourceMetricsGaugeSet;
-import org.apache.tajo.master.rm.TajoWorkerResourceManager;
-import org.apache.tajo.master.rm.WorkerResourceManager;
-import org.apache.tajo.session.SessionManager;
-import org.apache.tajo.rpc.RpcChannelFactory;
+import org.apache.tajo.exception.*;
+import org.apache.tajo.function.FunctionSignature;
+import org.apache.tajo.master.rm.TajoResourceManager;
+import org.apache.tajo.metrics.ClusterResourceMetricSet;
+import org.apache.tajo.metrics.Master;
+import org.apache.tajo.plan.function.python.PythonScriptEngine;
+import org.apache.tajo.rpc.RpcClientManager;
 import org.apache.tajo.rule.EvaluationContext;
 import org.apache.tajo.rule.EvaluationFailedException;
 import org.apache.tajo.rule.SelfDiagnosisRuleEngine;
 import org.apache.tajo.rule.SelfDiagnosisRuleSession;
-import org.apache.tajo.storage.FileStorageManager;
-import org.apache.tajo.storage.StorageManager;
+import org.apache.tajo.service.ServiceTracker;
+import org.apache.tajo.service.ServiceTrackerFactory;
+import org.apache.tajo.session.SessionManager;
+import org.apache.tajo.storage.TablespaceManager;
 import org.apache.tajo.util.*;
 import org.apache.tajo.util.history.HistoryReader;
 import org.apache.tajo.util.history.HistoryWriter;
 import org.apache.tajo.util.metrics.TajoSystemMetrics;
 import org.apache.tajo.webapp.QueryExecutorServlet;
 import org.apache.tajo.webapp.StaticHttpServer;
+import org.apache.tajo.ws.rs.TajoRestService;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.Writer;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
-import java.lang.reflect.Constructor;
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Collection;
+import java.util.Map;
 
 import static org.apache.tajo.TajoConstants.DEFAULT_DATABASE_NAME;
 import static org.apache.tajo.TajoConstants.DEFAULT_TABLESPACE_NAME;
 
 public class TajoMaster extends CompositeService {
-  private static final String METRICS_GROUP_NAME = "tajomaster";
 
   /** Class Logger */
   private static final Log LOG = LogFactory.getLog(TajoMaster.class);
 
-  public static final int SHUTDOWN_HOOK_PRIORITY = 30;
+  public static final int SHUTDOWN_HOOK_PRIORITY = 10;
 
   /** rw-r--r-- */
   @SuppressWarnings("OctalInteger")
@@ -110,16 +118,16 @@ public class TajoMaster extends CompositeService {
 
   private CatalogServer catalogServer;
   private CatalogService catalog;
-  private FileStorageManager storeManager;
   private GlobalEngine globalEngine;
   private AsyncDispatcher dispatcher;
   private TajoMasterClientService tajoMasterClientService;
   private QueryCoordinatorService tajoMasterService;
   private SessionManager sessionManager;
 
-  private WorkerResourceManager resourceManager;
+  private TajoResourceManager resourceManager;
   //Web Server
   private StaticHttpServer webServer;
+  private TajoRestService restServer;
 
   private QueryManager queryManager;
 
@@ -127,13 +135,15 @@ public class TajoMaster extends CompositeService {
 
   private TajoSystemMetrics systemMetrics;
 
-  private HAService haService;
+  private ServiceTracker haService;
 
   private JvmPauseMonitor pauseMonitor;
 
   private HistoryWriter historyWriter;
 
   private HistoryReader historyReader;
+
+  private static final long CLUSTER_STARTUP_TIME = System.currentTimeMillis();
 
   public TajoMaster() throws Exception {
     super(TajoMaster.class.getName());
@@ -152,72 +162,85 @@ public class TajoMaster extends CompositeService {
   }
 
   @Override
-  public void serviceInit(Configuration _conf) throws Exception {
-    this.systemConf = (TajoConf) _conf;
-    Runtime.getRuntime().addShutdownHook(new Thread(new ShutdownHook()));
+  public void serviceInit(Configuration conf) throws Exception {
+
+    this.systemConf = TUtil.checkTypeAndGet(conf, TajoConf.class);
+    ShutdownHookManager.get().addShutdownHook(new ShutdownHook(), SHUTDOWN_HOOK_PRIORITY);
 
     context = new MasterContext(systemConf);
     clock = new SystemClock();
+    RackResolver.init(systemConf);
 
+    initResourceManager();
+
+    this.dispatcher = new AsyncDispatcher();
+    addIfService(dispatcher);
+
+    // check the system directory and create if they are not created.
+    checkAndInitializeSystemDirectories();
+    diagnoseTajoMaster();
+
+    catalogServer = new CatalogServer(TablespaceManager.getMetadataProviders(), loadFunctions());
+    addIfService(catalogServer);
+    catalog = new LocalCatalogWrapper(catalogServer, systemConf);
+
+    sessionManager = new SessionManager(dispatcher);
+    addIfService(sessionManager);
+
+    globalEngine = new GlobalEngine(context);
+    addIfService(globalEngine);
+
+    queryManager = new QueryManager(context);
+    addIfService(queryManager);
+
+    tajoMasterClientService = new TajoMasterClientService(context);
+    addIfService(tajoMasterClientService);
+
+    tajoMasterService = new QueryCoordinatorService(context);
+    addIfService(tajoMasterService);
+
+    restServer = new TajoRestService(context);
+    addIfService(restServer);
+
+    PythonScriptEngine.initPythonScriptEngineFiles();
+    
+    // Try to start up all services in TajoMaster.
+    // If anyone is failed, the master prints out the errors and immediately should shutdowns
     try {
-      RackResolver.init(systemConf);
-
-      initResourceManager();
-      initWebServer();
-
-      this.dispatcher = new AsyncDispatcher();
-      addIfService(dispatcher);
-
-      // check the system directory and create if they are not created.
-      checkAndInitializeSystemDirectories();
-      diagnoseTajoMaster();
-      this.storeManager = (FileStorageManager)StorageManager.getFileStorageManager(systemConf, null);
-
-      catalogServer = new CatalogServer(FunctionLoader.load());
-      addIfService(catalogServer);
-      catalog = new LocalCatalogWrapper(catalogServer, systemConf);
-
-      sessionManager = new SessionManager(dispatcher);
-      addIfService(sessionManager);
-
-      globalEngine = new GlobalEngine(context);
-      addIfService(globalEngine);
-
-      queryManager = new QueryManager(context);
-      addIfService(queryManager);
-
-      tajoMasterClientService = new TajoMasterClientService(context);
-      addIfService(tajoMasterClientService);
-
-      tajoMasterService = new QueryCoordinatorService(context);
-      addIfService(tajoMasterService);
-    } catch (Exception e) {
-      LOG.error(e.getMessage(), e);
-      throw e;
+      super.serviceInit(systemConf);
+    } catch (Throwable t) {
+      t.printStackTrace();
+      Runtime.getRuntime().halt(-1);
     }
-
-    super.serviceInit(systemConf);
     LOG.info("Tajo Master is initialized.");
   }
 
+  private Collection<FunctionDesc> loadFunctions() throws IOException {
+    Map<FunctionSignature, FunctionDesc> functionMap = FunctionLoader.load();
+    return FunctionLoader.loadUserDefinedFunctions(systemConf, functionMap).values();
+  }
+
   private void initSystemMetrics() {
-    systemMetrics = new TajoSystemMetrics(systemConf, METRICS_GROUP_NAME, getMasterName());
+    systemMetrics = new TajoSystemMetrics(systemConf, Master.class, getMasterName());
     systemMetrics.start();
 
-    systemMetrics.register("resource", new WorkerResourceMetricsGaugeSet(context));
-    systemMetrics.register("catalog", new CatalogMetricsGaugeSet(context));
+    systemMetrics.register(Master.Cluster.UPTIME, new Gauge<Long>() {
+      @Override
+      public Long getValue() {
+        return context.getClusterUptime();
+      }
+    });
+
+    systemMetrics.register(Master.Cluster.class, new ClusterResourceMetricSet(context));
   }
 
   private void initResourceManager() throws Exception {
-    Class<WorkerResourceManager>  resourceManagerClass = (Class<WorkerResourceManager>)
-        systemConf.getClass(ConfVars.RESOURCE_MANAGER_CLASS.varname, TajoWorkerResourceManager.class);
-    Constructor<WorkerResourceManager> constructor = resourceManagerClass.getConstructor(MasterContext.class);
-    resourceManager = constructor.newInstance(context);
+    resourceManager = new TajoResourceManager(context);
     addIfService(resourceManager);
   }
 
   private void initWebServer() throws Exception {
-    if (!systemConf.get(CommonTestingUtil.TAJO_TEST_KEY, "FALSE").equalsIgnoreCase("TRUE")) {
+    if (!systemConf.getBoolVar(ConfVars.$TEST_MODE)) {
       InetSocketAddress address = systemConf.getSocketAddrVar(ConfVars.TAJO_MASTER_INFO_ADDRESS);
       webServer = StaticHttpServer.getInstance(this ,"admin", address.getHostName(), address.getPort(),
           true, null, context.getConf(), null);
@@ -225,20 +248,6 @@ public class TajoMaster extends CompositeService {
       webServer.start();
     }
   }
-
-
-  private void initHAManger() throws Exception {
-    // If tajo provides haService based on ZooKeeper, following codes need to update.
-    if (systemConf.getBoolVar(ConfVars.TAJO_MASTER_HA_ENABLE)) {
-      haService = new HAServiceHDFSImpl(context);
-      haService.register();
-    }
-  }
-
-  public boolean isActiveMaster() {
-    return (haService != null ? haService.isActiveStatus() : true);
-  }
-
 
   private void checkAndInitializeSystemDirectories() throws IOException {
     // Get Tajo root dir
@@ -324,13 +333,11 @@ public class TajoMaster extends CompositeService {
       LOG.error(e.getMessage(), e);
     }
 
+    initWebServer();
     initSystemMetrics();
 
-    try {
-      initHAManger();
-    } catch (IOException e) {
-      LOG.error(e.getMessage(), e);
-    }
+    haService = ServiceTrackerFactory.get(systemConf);
+    haService.register();
 
     historyWriter = new HistoryWriter(getMasterName(), true);
     historyWriter.init(getConfig());
@@ -352,18 +359,56 @@ public class TajoMaster extends CompositeService {
       defaultFS.delete(systemConfPath, false);
     }
 
-    FSDataOutputStream out = FileSystem.create(defaultFS, systemConfPath,
+    // In TajoMaster HA, some master might see LeaseExpiredException because of lease mismatch. Thus,
+    // we need to create below xml file at HdfsServiceTracker::writeSystemConf.
+    if (!systemConf.getBoolVar(TajoConf.ConfVars.TAJO_MASTER_HA_ENABLE)) {
+      FSDataOutputStream out = FileSystem.create(defaultFS, systemConfPath,
         new FsPermission(SYSTEM_CONF_FILE_PERMISSION));
-    try {
-      systemConf.writeXml(out);
-    } finally {
-      out.close();
+      try {
+        systemConf.writeXml(out);
+      } finally {
+        out.close();
+      }
+      defaultFS.setReplication(systemConfPath, (short) systemConf.getIntVar(ConfVars.SYSTEM_CONF_REPLICA_COUNT));
     }
-    defaultFS.setReplication(systemConfPath, (short) systemConf.getIntVar(ConfVars.SYSTEM_CONF_REPLICA_COUNT));
   }
 
-  private void checkBaseTBSpaceAndDatabase() throws IOException {
-    if (!catalog.existTablespace(DEFAULT_TABLESPACE_NAME)) {
+  private void checkBaseTBSpaceAndDatabase()
+      throws IOException, DuplicateDatabaseException, DuplicateTablespaceException {
+
+    if (catalog.existTablespace(DEFAULT_TABLESPACE_NAME)) { // if default tablespace already exists
+
+      CatalogProtos.TablespaceProto tablespace = null;
+      try {
+        tablespace = catalog.getTablespace(DEFAULT_TABLESPACE_NAME);
+      } catch (UndefinedTablespaceException e) {
+        throw new TajoInternalError(e);
+      }
+
+      // if warehouse directory and the location of default tablespace are different from each other
+      if (!tablespace.getUri().equals(context.getConf().getVar(ConfVars.WAREHOUSE_DIR))) {
+        AlterTablespaceCommand.Builder alterCommand =
+            AlterTablespaceCommand.newBuilder()
+                .setType(AlterTablespaceProto.AlterTablespaceType.LOCATION)
+                .setLocation(context.getConf().getVar(ConfVars.WAREHOUSE_DIR));
+
+        AlterTablespaceProto alterTablespace = AlterTablespaceProto.newBuilder()
+            .setSpaceName(DEFAULT_TABLESPACE_NAME)
+            .addCommand(alterCommand).build();
+
+        // update the location of default tablespace
+        try {
+          catalog.alterTablespace(alterTablespace);
+        } catch (TajoException e) {
+          throw new TajoInternalError(e);
+        }
+
+        LOG.warn(
+            "The location of default tablespace has been changed. " +
+            "You may not accept existing managed tables stored in the previous default tablespace");
+      }
+
+    } else if (!catalog.existTablespace(DEFAULT_TABLESPACE_NAME)) { // if the default tablespace does not exists
       catalog.createTablespace(DEFAULT_TABLESPACE_NAME, context.getConf().getVar(ConfVars.WAREHOUSE_DIR));
     } else {
       LOG.info(String.format("Default tablespace (%s) is already prepared.", DEFAULT_TABLESPACE_NAME));
@@ -377,33 +422,27 @@ public class TajoMaster extends CompositeService {
   }
 
   @Override
-  public void stop() {
-    if (haService != null) {
-      try {
-        haService.delete();
-      } catch (Exception e) {
-        LOG.error(e);
-      }
-    }
+  public void serviceStop() throws Exception {
+    if (haService != null) haService.delete();
 
-    if (webServer != null) {
-      try {
-        webServer.stop();
-      } catch (Exception e) {
-        LOG.error(e);
-      }
-    }
+    if (restServer != null) restServer.stop();
 
-    IOUtils.cleanup(LOG, catalogServer);
+    if (webServer != null) webServer.stop();
 
-    if(systemMetrics != null) {
-      systemMetrics.stop();
-    }
+    if (systemMetrics != null) systemMetrics.stop();
 
-    if(pauseMonitor != null) pauseMonitor.stop();
-    super.stop();
+    if (pauseMonitor != null) pauseMonitor.stop();
+    super.serviceStop();
 
     LOG.info("Tajo Master main thread exiting");
+  }
+
+  /**
+   * This is only for unit tests.
+   */
+  @VisibleForTesting
+  public void refresh() {
+    catalogServer.refresh(TablespaceManager.getMetadataProviders());
   }
 
   public EventHandler getEventHandler() {
@@ -422,10 +461,6 @@ public class TajoMaster extends CompositeService {
     return this.catalogServer;
   }
 
-  public FileStorageManager getStorageManager() {
-    return this.storeManager;
-  }
-
   public class MasterContext {
     private final TajoConf conf;
 
@@ -441,11 +476,15 @@ public class TajoMaster extends CompositeService {
       return clock;
     }
 
+    public long getClusterUptime() {
+      return getClock().getTime() - CLUSTER_STARTUP_TIME;
+    }
+
     public QueryManager getQueryJobManager() {
       return queryManager;
     }
 
-    public WorkerResourceManager getResourceManager() {
+    public TajoResourceManager getResourceManager() {
       return resourceManager;
     }
 
@@ -465,19 +504,15 @@ public class TajoMaster extends CompositeService {
       return globalEngine;
     }
 
-    public StorageManager getStorageManager() {
-      return storeManager;
-    }
-
     public QueryCoordinatorService getTajoMasterService() {
       return tajoMasterService;
     }
 
-    public TajoSystemMetrics getSystemMetrics() {
+    public TajoSystemMetrics getMetrics() {
       return systemMetrics;
     }
 
-    public HAService getHAService() {
+    public ServiceTracker getHAService() {
       return haService;
     }
 
@@ -487,6 +522,10 @@ public class TajoMaster extends CompositeService {
 
     public HistoryReader getHistoryReader() {
       return historyReader;
+    }
+    
+    public TajoRestService getRestServer() {
+      return restServer;
     }
   }
 
@@ -531,40 +570,6 @@ public class TajoMaster extends CompositeService {
     }
   }
 
-  public static List<File> getMountPath() throws Exception {
-    BufferedReader mountOutput = null;
-    Process mountProcess = null;
-    try {
-      mountProcess = Runtime.getRuntime ().exec("mount");
-      mountOutput = new BufferedReader(new InputStreamReader(mountProcess.getInputStream()));
-      List<File> mountPaths = new ArrayList<File>();
-      while (true) {
-        String line = mountOutput.readLine();
-        if (line == null) {
-          break;
-        }
-
-        int indexStart = line.indexOf(" on /");
-        int indexEnd = line.indexOf(" ", indexStart + 4);
-
-        mountPaths.add(new File(line.substring (indexStart + 4, indexEnd)));
-      }
-      return mountPaths;
-    } catch (Exception e) {
-      e.printStackTrace();
-      throw e;
-    } finally {
-      if(mountOutput != null) {
-        mountOutput.close();
-      }
-      if (mountProcess != null) {
-        org.apache.commons.io.IOUtils.closeQuietly(mountProcess.getInputStream());
-        org.apache.commons.io.IOUtils.closeQuietly(mountProcess.getOutputStream());
-        org.apache.commons.io.IOUtils.closeQuietly(mountProcess.getErrorStream());
-      }
-    }
-  }
-
   private class ShutdownHook implements Runnable {
     @Override
     public void run() {
@@ -573,17 +578,25 @@ public class TajoMaster extends CompositeService {
         LOG.info("TajoMaster received SIGINT Signal");
         LOG.info("============================================");
         stop();
-        RpcChannelFactory.shutdown();
+
+        // If embedded derby is used as catalog, shutdown it.
+        if (catalogServer != null &&
+            catalogServer.getStoreClassName().equals("org.apache.tajo.catalog.store.DerbyStore")
+            && AbstractDBStore.needShutdown(catalogServer.getStoreUri())) {
+          DerbyStore.shutdown();
+        }
+        RpcClientManager.shutdown();
       }
     }
   }
 
   public static void main(String[] args) throws Exception {
+    Thread.setDefaultUncaughtExceptionHandler(new TajoUncaughtExceptionHandler());
     StringUtils.startupShutdownMessage(TajoMaster.class, args, LOG);
 
     try {
       TajoMaster master = new TajoMaster();
-      TajoConf conf = new TajoConf(new YarnConfiguration());
+      TajoConf conf = new TajoConf();
       master.init(conf);
       master.start();
     } catch (Throwable t) {

@@ -29,7 +29,7 @@ public class TajoConstants {
 
   public static final String DEFAULT_TABLESPACE_NAME = "default";
   public static final String DEFAULT_DATABASE_NAME = "default";
-  public static final String DEFAULT_SCHEMA_NAME = "public";
+  public static final String DEFAULT_SCHEMA_NAME = "";
 
   /** Java 6 only recognize GMT instead of UTC. So, we should keep using GMT. */
   public static final String DEFAULT_SYSTEM_TIMEZONE = "GMT";
@@ -42,6 +42,12 @@ public class TajoConstants {
 
   public static final int UNKNOWN_ROW_NUMBER = -1;
   public static final int UNKNOWN_LENGTH = -1;
+
+  public static final String TEST_KEY = "tajo.test.enabled";
+  public static final String DEBUG_KEY = "tajo.debug.enabled";
+
+  public static final boolean IS_TEST_MODE = Boolean.parseBoolean(System.getProperty(TEST_KEY, "false"));
+  public static final boolean IS_DEBUG_MODE = Boolean.parseBoolean(System.getProperty(DEBUG_KEY, "false"));
 
   private TajoConstants() {}
 }

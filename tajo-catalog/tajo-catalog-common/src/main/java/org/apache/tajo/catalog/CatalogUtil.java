@@ -18,20 +18,28 @@
 
 package org.apache.tajo.catalog;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
 import org.apache.hadoop.fs.Path;
+import org.apache.tajo.BuiltinStorages;
 import org.apache.tajo.DataTypeUtil;
 import org.apache.tajo.TajoConstants;
+import org.apache.tajo.annotation.Nullable;
+import org.apache.tajo.catalog.partition.PartitionDesc;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
 import org.apache.tajo.catalog.proto.CatalogProtos;
-import org.apache.tajo.catalog.proto.CatalogProtos.ColumnProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionKeyProto;
 import org.apache.tajo.catalog.proto.CatalogProtos.SchemaProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.DataFormat;
 import org.apache.tajo.catalog.proto.CatalogProtos.TableDescProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.TableIdentifierProto;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.exception.InvalidOperationException;
+import org.apache.tajo.exception.UndefinedOperatorException;
 import org.apache.tajo.storage.StorageConstants;
 import org.apache.tajo.util.KeyValueSet;
+import org.apache.tajo.util.Pair;
 import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.util.TUtil;
 
@@ -39,17 +47,12 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
-import static org.apache.tajo.catalog.proto.CatalogProtos.StoreType;
 import static org.apache.tajo.common.TajoDataTypes.Type;
 
 public class CatalogUtil {
 
-  public static final String TEXTFILE_NAME = "TEXT";
   /**
    * Normalize an identifier. Normalization means a translation from a identifier to be a refined identifier name.
    *
@@ -172,6 +175,16 @@ public class CatalogUtil {
     return openQuote && closeQuote;
   }
 
+  /**
+   * True if a given name is a simple identifier, meaning is not a dot-chained name.
+   *
+   * @param columnOrTableName Column or Table name to be checked
+   * @return True if a given name is a simple identifier. Otherwise, it will return False.
+   */
+  public static boolean isSimpleIdentifier(String columnOrTableName) {
+    return columnOrTableName.split(CatalogConstants.IDENTIFIER_DELIMITER_REGEXP).length == 1;
+  }
+
   public static boolean isFQColumnName(String tableName) {
     return tableName.split(CatalogConstants.IDENTIFIER_DELIMITER_REGEXP).length == 3;
   }
@@ -184,7 +197,7 @@ public class CatalogUtil {
   public static String [] splitFQTableName(String qualifiedName) {
     String [] splitted = CatalogUtil.splitTableName(qualifiedName);
     if (splitted.length == 1) {
-      throw new IllegalArgumentException("createTable() requires a qualified table name, but it is \""
+      throw new IllegalArgumentException("Table name is expected to be qualified, but was \""
           + qualifiedName + "\".");
     }
     return splitted;
@@ -216,6 +229,11 @@ public class CatalogUtil {
     }
 
     return sb.toString();
+  }
+
+  public static Pair<String, String> separateQualifierAndName(String name) {
+    Preconditions.checkArgument(isFQTableName(name), "Must be a qualified name.");
+    return new Pair<>(extractQualifier(name), extractSimpleName(name));
   }
 
   /**
@@ -262,57 +280,54 @@ public class CatalogUtil {
     return sb.toString();
   }
 
-  public static String getStoreTypeString(final StoreType type) {
-    if (type == StoreType.TEXTFILE) {
-      return TEXTFILE_NAME;
-    } else if (type == StoreType.CSV ||
-               type == StoreType.RAW ||
-               type == StoreType.ROWFILE ||
-               type == StoreType.RCFILE ||
-               type == StoreType.PARQUET ||
-               type == StoreType.SEQUENCEFILE ||
-               type == StoreType.AVRO ||
-               type == StoreType.JSON ||
-               type == StoreType.HBASE) {
+
+  public static String getBackwardCompitableDataFormat(String dataFormat) {
+    return getDataFormatAsString(asDataFormat(dataFormat));
+  }
+
+  public static String getDataFormatAsString(final DataFormat type) {
+    if (type == DataFormat.TEXTFILE) {
+      return BuiltinStorages.TEXT;
+    } else {
       return type.name();
+    }
+  }
+
+  public static DataFormat asDataFormat(final String typeStr) {
+    if (typeStr.equalsIgnoreCase("CSV")) {
+      return DataFormat.TEXTFILE;
+    } else if (typeStr.equalsIgnoreCase(DataFormat.RAW.name())) {
+      return CatalogProtos.DataFormat.RAW;
+    } else if (typeStr.equalsIgnoreCase(CatalogProtos.DataFormat.ROWFILE.name())) {
+      return DataFormat.ROWFILE;
+    } else if (typeStr.equalsIgnoreCase(DataFormat.RCFILE.name())) {
+      return DataFormat.RCFILE;
+    } else if (typeStr.equalsIgnoreCase(CatalogProtos.DataFormat.ORC.name())) {
+      return CatalogProtos.DataFormat.ORC;
+    } else if (typeStr.equalsIgnoreCase(DataFormat.PARQUET.name())) {
+      return DataFormat.PARQUET;
+    } else if (typeStr.equalsIgnoreCase(DataFormat.SEQUENCEFILE.name())) {
+      return DataFormat.SEQUENCEFILE;
+    } else if (typeStr.equalsIgnoreCase(DataFormat.AVRO.name())) {
+      return CatalogProtos.DataFormat.AVRO;
+    } else if (typeStr.equalsIgnoreCase(BuiltinStorages.TEXT)) {
+      return CatalogProtos.DataFormat.TEXTFILE;
+    } else if (typeStr.equalsIgnoreCase(CatalogProtos.DataFormat.JSON.name())) {
+      return CatalogProtos.DataFormat.JSON;
+    } else if (typeStr.equalsIgnoreCase(CatalogProtos.DataFormat.HBASE.name())) {
+      return CatalogProtos.DataFormat.HBASE;
     } else {
       return null;
     }
   }
 
-  public static StoreType getStoreType(final String typeStr) {
-    if (typeStr.equalsIgnoreCase(StoreType.CSV.name())) {
-      return StoreType.CSV;
-    } else if (typeStr.equalsIgnoreCase(StoreType.RAW.name())) {
-      return StoreType.RAW;
-    } else if (typeStr.equalsIgnoreCase(StoreType.ROWFILE.name())) {
-      return StoreType.ROWFILE;
-    } else if (typeStr.equalsIgnoreCase(StoreType.RCFILE.name())) {
-      return StoreType.RCFILE;
-    } else if (typeStr.equalsIgnoreCase(StoreType.PARQUET.name())) {
-      return StoreType.PARQUET;
-    } else if (typeStr.equalsIgnoreCase(StoreType.SEQUENCEFILE.name())) {
-      return StoreType.SEQUENCEFILE;
-    } else if (typeStr.equalsIgnoreCase(StoreType.AVRO.name())) {
-      return StoreType.AVRO;
-    } else if (typeStr.equalsIgnoreCase(TEXTFILE_NAME)) {
-      return StoreType.TEXTFILE;
-    } else if (typeStr.equalsIgnoreCase(StoreType.JSON.name())) {
-      return StoreType.JSON;
-    } else if (typeStr.equalsIgnoreCase(StoreType.HBASE.name())) {
-      return StoreType.HBASE;
-    } else {
-      return null;
-    }
+  public static TableMeta newTableMeta(String dataFormat) {
+    KeyValueSet defaultProperties = CatalogUtil.newDefaultProperty(dataFormat);
+    return new TableMeta(dataFormat, defaultProperties);
   }
 
-  public static TableMeta newTableMeta(StoreType type) {
-    KeyValueSet defaultProperties = CatalogUtil.newPhysicalProperties(type);
-    return new TableMeta(type, defaultProperties);
-  }
-
-  public static TableMeta newTableMeta(StoreType type, KeyValueSet options) {
-    return new TableMeta(type, options);
+  public static TableMeta newTableMeta(String dataFormat, KeyValueSet options) {
+    return new TableMeta(dataFormat, options);
   }
 
   public static TableDesc newTableDesc(String tableName, Schema schema, TableMeta meta, Path path) {
@@ -328,8 +343,7 @@ public class CatalogUtil {
   }
 
   /**
-  * This method transforms the unqualified names of a given schema into
-  * the qualified names.
+  * This method transforms the unqualified names of a schema to the qualified names.
   *
   * @param tableName a table name to be prefixed
   * @param schema a schema to be transformed
@@ -337,15 +351,9 @@ public class CatalogUtil {
   * @return
   */
   public static SchemaProto getQualfiedSchema(String tableName, SchemaProto schema) {
-    SchemaProto.Builder revisedSchema = SchemaProto.newBuilder(schema);
-    revisedSchema.clearFields();
-    for (ColumnProto col : schema.getFieldsList()) {
-      ColumnProto.Builder builder = ColumnProto.newBuilder(col);
-      builder.setName(tableName + CatalogConstants.IDENTIFIER_DELIMITER + extractSimpleName(col.getName()));
-      revisedSchema.addFields(builder.build());
-    }
-
-    return revisedSchema.build();
+    Schema restored = new Schema(schema);
+    restored.setQualifier(tableName);
+    return restored.getProto();
   }
 
   public static DataType newDataType(Type type, String code) {
@@ -361,13 +369,30 @@ public class CatalogUtil {
   }
 
   public static DataType newSimpleDataType(Type type) {
-    return DataType.newBuilder().setType(type).build();
+		if (type != Type.CHAR) {
+			return DataType.newBuilder().setType(type).build();
+		} else {
+			return newDataTypeWithLen(Type.CHAR, 1);
+		}
+  }
+
+  /**
+   * Create a record type
+   *
+   * @param nestedFieldNum The number of nested fields
+   * @return RECORD DataType
+   */
+  public static DataType newRecordType(int nestedFieldNum) {
+    DataType.Builder builder = DataType.newBuilder();
+    builder.setType(Type.RECORD);
+    builder.setNumNestedFields(nestedFieldNum);
+    return builder.build();
   }
 
   public static DataType [] newSimpleDataTypeArray(Type... types) {
     DataType [] dataTypes = new DataType[types.length];
     for (int i = 0; i < types.length; i++) {
-      dataTypes[i] = DataType.newBuilder().setType(types[i]).build();
+      dataTypes[i] = newSimpleDataType(types[i]);
     }
     return dataTypes;
   }
@@ -422,7 +447,7 @@ public class CatalogUtil {
     //     (a)                    ()
     //    (a,b)                   (a)
 
-    int definedSize = definedTypes == null ? 0 : definedTypes.size();
+    int definedSize = definedTypes.size();
     int givenParamSize = givenTypes == null ? 0 : givenTypes.size();
     int paramDiff = givenParamSize - definedSize;
     if (paramDiff < 0) {
@@ -475,9 +500,13 @@ public class CatalogUtil {
           basisTypeOfVarLengthType = givenTypes.get(j).getType();
         } else if (basisTypeOfVarLengthType != null) {
           // If there are more than one type, we choose the most widen type as the basis type.
-          basisTypeOfVarLengthType =
-              getWidestType(CatalogUtil.newSimpleDataTypeArray(basisTypeOfVarLengthType, givenTypes.get(j).getType()))
-              .getType();
+          try {
+            basisTypeOfVarLengthType =
+                getWidestType(CatalogUtil.newSimpleDataTypeArray(basisTypeOfVarLengthType, givenTypes.get(j).getType()))
+                .getType();
+          } catch (UndefinedOperatorException e) {
+            continue;
+          }
         }
       }
 
@@ -651,7 +680,7 @@ public class CatalogUtil {
    * @param types A list of DataTypes
    * @return The widest DataType
    */
-  public static DataType getWidestType(DataType...types) {
+  public static DataType getWidestType(DataType...types) throws UndefinedOperatorException {
     DataType widest = types[0];
     for (int i = 1; i < types.length; i++) {
 
@@ -663,8 +692,7 @@ public class CatalogUtil {
       if (types[i].getType() != Type.NULL_TYPE) {
         Type candidate = TUtil.getFromNestedMap(OPERATION_CASTING_MAP, widest.getType(), types[i].getType());
         if (candidate == null) {
-          throw new InvalidOperationException("No matched operation for those types: " + TUtil.arrayToString
-              (types));
+          throw new UndefinedOperatorException(StringUtils.join(types));
         }
         widest = newSimpleDataType(candidate);
       }
@@ -673,11 +701,11 @@ public class CatalogUtil {
     return widest;
   }
 
-  public static CatalogProtos.TableIdentifierProto buildTableIdentifier(String databaseName, String tableName) {
-    CatalogProtos.TableIdentifierProto.Builder builder = CatalogProtos.TableIdentifierProto.newBuilder();
-    builder.setDatabaseName(databaseName);
-    builder.setTableName(tableName);
-    return builder.build();
+  public static TableIdentifierProto buildTableIdentifier(String databaseName, String tableName) {
+    return TableIdentifierProto.newBuilder()
+        .setDatabaseName(databaseName)
+        .setTableName(tableName)
+        .build();
   }
 
   public static void closeQuietly(Connection conn) {
@@ -712,7 +740,7 @@ public class CatalogUtil {
     }
   }
 
-  public static final Set<String> RESERVED_KEYWORDS_SET = new HashSet<String>();
+  public static final Set<String> RESERVED_KEYWORDS_SET = new HashSet<>();
 
   static final String [] RESERVED_KEYWORDS = {
       "AS", "ALL", "AND", "ANY", "ASYMMETRIC", "ASC",
@@ -752,11 +780,15 @@ public class CatalogUtil {
     return alterTableDesc;
   }
 
-  public static AlterTableDesc renameTable(String tableName, String newTableName, AlterTableType alterTableType) {
+  public static AlterTableDesc renameTable(String tableName, String newTableName, AlterTableType alterTableType,
+                                           @Nullable Path newTablePath) {
     final AlterTableDesc alterTableDesc = new AlterTableDesc();
     alterTableDesc.setTableName(tableName);
     alterTableDesc.setNewTableName(newTableName);
     alterTableDesc.setAlterTableType(alterTableType);
+    if (newTablePath != null) {
+      alterTableDesc.setNewTablePath(newTablePath);
+    }
     return alterTableDesc;
   }
 
@@ -768,7 +800,103 @@ public class CatalogUtil {
     return alterTableDesc;
   }
 
-  /* It is the relationship graph of type conversions. */
+  public static AlterTableDesc setProperty(String tableName, KeyValueSet params, AlterTableType alterTableType) {
+    final AlterTableDesc alterTableDesc = new AlterTableDesc();
+    alterTableDesc.setTableName(tableName);
+    alterTableDesc.setProperties(params);
+    alterTableDesc.setAlterTableType(alterTableType);
+    return alterTableDesc;
+  }
+
+  /**
+   * Converts passed parameters to a AlterTableDesc. This method would be called when adding a partition or dropping
+   * a table. This creates AlterTableDesc that is a wrapper class for protocol buffer.
+   * *
+   * @param tableName
+   * @param columns
+   * @param values
+   * @param path
+   * @param alterTableType
+   * @return
+   */
+  public static AlterTableDesc addOrDropPartition(String tableName, String[] columns, String[] values, @Nullable
+    String path, AlterTableType alterTableType) {
+    return addOrDropPartition(tableName, columns, values, path, alterTableType, 0L);
+  }
+  /**
+   * Converts passed parameters to a AlterTableDesc. This method would be called when adding a partition or dropping
+   * a table. This creates AlterTableDesc that is a wrapper class for protocol buffer.
+   *
+   * @param tableName table name
+   * @param columns partition column names
+   * @param values partition values
+   * @param path partition directory path
+   * @param alterTableType ADD_PARTITION or DROP_PARTITION
+   * @param numBytes contents length
+   * @return AlterTableDesc
+   */
+  public static AlterTableDesc addOrDropPartition(String tableName, String[] columns, String[] values,
+    @Nullable String path, AlterTableType alterTableType, long numBytes) {
+
+    final AlterTableDesc alterTableDesc = new AlterTableDesc();
+    alterTableDesc.setTableName(tableName);
+
+    PartitionDesc partitionDesc = new PartitionDesc();
+    Pair<List<PartitionKeyProto>, String> pair = getPartitionKeyNamePair(columns, values);
+
+    partitionDesc.setPartitionKeys(pair.getFirst());
+    partitionDesc.setPartitionName(pair.getSecond());
+
+    if (alterTableType.equals(AlterTableType.ADD_PARTITION)) {
+      if (path != null) {
+        partitionDesc.setPath(path);
+      }
+      partitionDesc.setNumBytes(numBytes);
+    }
+
+    alterTableDesc.setPartitionDesc(partitionDesc);
+    alterTableDesc.setAlterTableType(alterTableType);
+    return alterTableDesc;
+  }
+
+  /**
+   * Get partition key/value list and partition name
+   *
+   * ex) partition key/value list :
+   *   - col1, 2015-07-01
+   *   - col2, tajo
+   *     partition name : col1=2015-07-01/col2=tajo
+   *
+   * @param columns partition column names
+   * @param values partition values
+   * @return partition key/value list and partition name
+   */
+  public static Pair<List<PartitionKeyProto>, String> getPartitionKeyNamePair(String[] columns, String[] values) {
+    Pair<List<PartitionKeyProto>, String> pair = null;
+    List<PartitionKeyProto> partitionKeyList = TUtil.newList();
+
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < columns.length; i++) {
+      PartitionKeyProto.Builder builder = PartitionKeyProto.newBuilder();
+      builder.setColumnName(columns[i]);
+      builder.setPartitionValue(values[i]);
+
+      if (i > 0) {
+        sb.append("/");
+      }
+      sb.append(columns[i]).append("=").append(values[i]);
+      partitionKeyList.add(builder.build());
+    }
+
+    pair = new Pair<>(partitionKeyList, sb.toString());
+    return pair;
+  }
+
+  /*
+   * It is the relationship graph of type conversions.
+   * It contains tuples, each of which (LHS type, RHS type, Result type).
+   */
+
   public static final Map<Type, Map<Type, Type>> OPERATION_CASTING_MAP = Maps.newHashMap();
 
   static {
@@ -824,9 +952,16 @@ public class CatalogUtil {
     TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.FLOAT8, Type.TEXT, Type.TEXT);
 
     TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TEXT, Type.TIMESTAMP, Type.TIMESTAMP);
+    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TEXT, Type.TEXT, Type.TEXT);
+    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TEXT, Type.VARCHAR, Type.TEXT);
+
+    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.VARCHAR, Type.TIMESTAMP, Type.TIMESTAMP);
+    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.VARCHAR, Type.TEXT, Type.TEXT);
+    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.VARCHAR, Type.VARCHAR, Type.TEXT);
+
     TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TIMESTAMP, Type.TIMESTAMP, Type.TIMESTAMP);
     TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TIMESTAMP, Type.TEXT, Type.TEXT);
-    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TEXT, Type.TEXT, Type.TEXT);
+    TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TIMESTAMP, Type.VARCHAR, Type.TEXT);
 
     TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.TIME, Type.TIME, Type.TIME);
     TUtil.putToNestedMap(OPERATION_CASTING_MAP, Type.DATE, Type.DATE, Type.DATE);
@@ -844,21 +979,21 @@ public class CatalogUtil {
   /**
    * Create new table property with default configs. It is used to make TableMeta to be stored in Catalog.
    *
-   * @param type StoreType
+   * @param dataFormat DataFormat
    * @return Table properties
    */
-  public static KeyValueSet newPhysicalProperties(StoreType type) {
+  public static KeyValueSet newDefaultProperty(String dataFormat) {
     KeyValueSet options = new KeyValueSet();
-    if (StoreType.CSV == type || StoreType.TEXTFILE == type) {
+    if (dataFormat.equalsIgnoreCase(BuiltinStorages.TEXT)) {
       options.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
-    } else if (StoreType.JSON == type) {
+    } else if (dataFormat.equalsIgnoreCase("JSON")) {
       options.set(StorageConstants.TEXT_SERDE_CLASS, "org.apache.tajo.storage.json.JsonLineSerDe");
-    } else if (StoreType.RCFILE == type) {
+    } else if (dataFormat.equalsIgnoreCase("RCFILE")) {
       options.set(StorageConstants.RCFILE_SERDE, StorageConstants.DEFAULT_BINARY_SERDE);
-    } else if (StoreType.SEQUENCEFILE == type) {
+    } else if (dataFormat.equalsIgnoreCase("SEQUENCEFILE")) {
       options.set(StorageConstants.SEQUENCEFILE_SERDE, StorageConstants.DEFAULT_TEXT_SERDE);
       options.set(StorageConstants.SEQUENCEFILE_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
-    } else if (type == StoreType.PARQUET) {
+    } else if (dataFormat.equalsIgnoreCase("PARQUET")) {
       options.set(BLOCK_SIZE, StorageConstants.PARQUET_DEFAULT_BLOCK_SIZE);
       options.set(PAGE_SIZE, StorageConstants.PARQUET_DEFAULT_PAGE_SIZE);
       options.set(COMPRESSION, StorageConstants.PARQUET_DEFAULT_COMPRESSION_CODEC_NAME);
@@ -867,5 +1002,44 @@ public class CatalogUtil {
     }
 
     return options;
+  }
+
+  /**
+   * Make a unique name by concatenating column names.
+   * The concatenation is performed in sequence of columns' occurrence in the relation schema.
+   *
+   * @param originalSchema original relation schema
+   * @param columnNames column names which will be unified
+   * @return unified name
+   */
+  public static String getUnifiedSimpleColumnName(Schema originalSchema, String[] columnNames) {
+    String[] simpleNames = new String[columnNames.length];
+    for (int i = 0; i < simpleNames.length; i++) {
+      String[] identifiers = columnNames[i].split(CatalogConstants.IDENTIFIER_DELIMITER_REGEXP);
+      simpleNames[i] = identifiers[identifiers.length-1];
+    }
+    Arrays.sort(simpleNames, new ColumnPosComparator(originalSchema));
+    StringBuilder sb = new StringBuilder();
+    for (String colName : simpleNames) {
+      sb.append(colName).append(",");
+    }
+    sb.deleteCharAt(sb.length()-1);
+    return sb.toString();
+  }
+
+  /**
+   * Given column names, compare the position of columns in the relation schema.
+   */
+  public static class ColumnPosComparator implements Comparator<String> {
+
+    private Schema originlSchema;
+    public ColumnPosComparator(Schema originalSchema) {
+      this.originlSchema = originalSchema;
+    }
+
+    @Override
+    public int compare(String o1, String o2) {
+      return originlSchema.getColumnId(o1) - originlSchema.getColumnId(o2);
+    }
   }
 }

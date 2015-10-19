@@ -19,7 +19,10 @@
 package org.apache.tajo.plan.verifier;
 
 import org.apache.tajo.catalog.Column;
-import org.apache.tajo.plan.PlanningException;
+import org.apache.tajo.error.Errors;
+import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.TajoInternalError;
+import org.apache.tajo.exception.UndefinedOperatorException;
 import org.apache.tajo.plan.expr.*;
 import org.apache.tajo.plan.logical.LogicalNode;
 
@@ -43,13 +46,12 @@ public class ExprsVerifier extends BasicEvalNodeVisitor<VerificationState, EvalN
     instance = new ExprsVerifier();
   }
 
-  public static VerificationState verify(VerificationState state, LogicalNode currentNode, EvalNode expression)
-      throws PlanningException {
-    instance.visitChild(state, expression, new Stack<EvalNode>());
+  public static VerificationState verify(VerificationState state, LogicalNode currentNode, EvalNode expression) {
+    instance.visit(state, expression, new Stack<>());
     Set<Column> referredColumns = EvalTreeUtil.findUniqueColumns(expression);
     for (Column referredColumn : referredColumns) {
       if (!currentNode.getInSchema().contains(referredColumn)) {
-        throw new PlanningException("Invalid State: " + referredColumn + " cannot be accessible at Node ("
+        throw new TajoInternalError("Invalid State: " + referredColumn + " cannot be accessible at Node ("
             + currentNode.getPID() + ")");
       }
     }
@@ -86,7 +88,7 @@ public class ExprsVerifier extends BasicEvalNodeVisitor<VerificationState, EvalN
     DataType leftType = expr.getLeftExpr().getValueType();
     DataType rightType = expr.getRightExpr().getValueType();
     if (!isCompatibleType(leftType, rightType)) {
-      state.addVerification("No operator matches the given name and argument type(s): " + expr.toString());
+      state.addVerification(new UndefinedOperatorException(expr.toString()));
     }
   }
 
@@ -134,7 +136,7 @@ public class ExprsVerifier extends BasicEvalNodeVisitor<VerificationState, EvalN
     if (evalNode.getRightExpr().getType() == EvalType.CONST) {
       ConstEval constEval = evalNode.getRightExpr();
       if (constEval.getValue().asFloat8() == 0) {
-        state.addVerification("division by zero");
+        state.addVerification(new TajoException(Errors.ResultCode.DIVISION_BY_ZERO, evalNode.toString()));
       }
     }
   }
@@ -173,7 +175,7 @@ public class ExprsVerifier extends BasicEvalNodeVisitor<VerificationState, EvalN
     }
 
     if (!(checkNumericType(leftDataType) && checkNumericType(rightDataType))) {
-      state.addVerification("No operator matches the given name and argument type(s): " + evalNode.toString());
+      state.addVerification(new UndefinedOperatorException(evalNode.toString()));
     }
   }
 
@@ -244,7 +246,7 @@ public class ExprsVerifier extends BasicEvalNodeVisitor<VerificationState, EvalN
     super.visitFuncCall(context, evalNode, stack);
     if (evalNode.getArgs() != null) {
       for (EvalNode param : evalNode.getArgs()) {
-        visitChild(context, param, stack);
+        visit(context, param, stack);
       }
     }
     return evalNode;

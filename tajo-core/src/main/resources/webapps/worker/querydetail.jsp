@@ -20,44 +20,36 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 
 <%@ page import="org.apache.tajo.QueryId" %>
+<%@ page import="org.apache.tajo.SessionVars" %>
 <%@ page import="org.apache.tajo.querymaster.Query" %>
 <%@ page import="org.apache.tajo.querymaster.QueryMasterTask" %>
 <%@ page import="org.apache.tajo.util.JSPUtil" %>
 <%@ page import="org.apache.tajo.util.TajoIdUtils" %>
+<%@ page import="org.apache.tajo.util.history.QueryHistory" %>
+<%@ page import="org.apache.tajo.util.history.StageHistory" %>
 <%@ page import="org.apache.tajo.webapp.StaticHttpServer" %>
 <%@ page import="org.apache.tajo.worker.TajoWorker" %>
 <%@ page import="java.text.SimpleDateFormat" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.util.Map" %>
-<%@ page import="org.apache.tajo.SessionVars" %>
-<%@ page import="org.apache.tajo.util.history.QueryHistory" %>
-<%@ page import="org.apache.tajo.util.history.StageHistory" %>
-<%@ page import="org.apache.tajo.util.history.HistoryReader" %>
 
 <%
   QueryId queryId = TajoIdUtils.parseQueryId(request.getParameter("queryId"));
 
   TajoWorker tajoWorker = (TajoWorker) StaticHttpServer.getInstance().getAttribute("tajo.info.server.object");
   QueryMasterTask queryMasterTask = tajoWorker.getWorkerContext()
-          .getQueryMasterManagerService().getQueryMaster().getQueryMasterTask(queryId, true);
-
-  boolean runningQuery = queryMasterTask != null;
+          .getQueryMasterManagerService().getQueryMaster().getQueryMasterTask(queryId);
 
   QueryHistory queryHistory = null;
-
-  Query query = null;
+  Query query;
   if (queryMasterTask != null) {
     query = queryMasterTask.getQuery();
     if (query != null) {
       queryHistory = query.getQueryHistory();
     }
   } else {
-    HistoryReader reader = tajoWorker.getWorkerContext().getHistoryReader();
-    queryHistory = reader.getQueryHistory(queryId.toString());
-  }
-
-  if (!runningQuery && queryHistory == null) {
-    out.write("<script type='text/javascript'>alert('no query history'); history.back(0); </script>");
+    String tajoMasterHttp = request.getScheme() + "://" + JSPUtil.getTajoMasterHttpAddr(tajoWorker.getConfig());
+    response.sendRedirect(tajoMasterHttp + request.getRequestURI() + "?" + request.getQueryString());
     return;
   }
 
@@ -65,6 +57,7 @@
       queryHistory != null ? JSPUtil.sortStageHistories(queryHistory.getStageHistories()) : null;
 
   SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
 %>
 
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
@@ -80,7 +73,7 @@
   <h2>Tajo Worker: <a href='index.jsp'><%=tajoWorker.getWorkerContext().getWorkerName()%></a></h2>
   <hr/>
 <%
-if (runningQuery && query == null) {
+if (query == null) {
   out.write("Query Status: " + queryMasterTask.getState());
   String errorMessage = queryMasterTask.getErrorMessage();
   if (errorMessage != null && !errorMessage.isEmpty()) {

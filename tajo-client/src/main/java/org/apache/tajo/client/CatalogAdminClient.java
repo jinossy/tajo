@@ -18,17 +18,18 @@
 
 package org.apache.tajo.client;
 
-import com.google.protobuf.ServiceException;
-import org.apache.hadoop.fs.Path;
 import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
 import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.catalog.proto.CatalogProtos.IndexDescProto;
+import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
+import org.apache.tajo.exception.*;
 
 import java.io.Closeable;
-import java.sql.SQLException;
+import java.net.URI;
 import java.util.List;
 
 public interface CatalogAdminClient extends Closeable {
@@ -37,27 +38,27 @@ public interface CatalogAdminClient extends Closeable {
    *
    * @param databaseName The database name to be created. This name is case sensitive.
    * @return True if created successfully.
-   * @throws com.google.protobuf.ServiceException
+   * @throws DuplicateDatabaseException
    */
-  public boolean createDatabase(final String databaseName) throws ServiceException;
+  void createDatabase(final String databaseName) throws DuplicateDatabaseException;
   /**
    * Does the database exist?
    *
    * @param databaseName The database name to be checked. This name is case sensitive.
    * @return True if so.
-   * @throws ServiceException
    */
-  public boolean existDatabase(final String databaseName) throws ServiceException;
+  boolean existDatabase(final String databaseName);
   /**
    * Drop the database
    *
    * @param databaseName The database name to be dropped. This name is case sensitive.
    * @return True if the database is dropped successfully.
-   * @throws ServiceException
+   * @throws UndefinedDatabaseException
    */
-  public boolean dropDatabase(final String databaseName) throws ServiceException;
+  void dropDatabase(final String databaseName)
+      throws UndefinedDatabaseException, InsufficientPrivilegeException, CannotDropCurrentDatabaseException;
 
-  public List<String> getAllDatabaseNames() throws ServiceException;
+  List<String> getAllDatabaseNames();
 
   /**
    * Does the table exist?
@@ -65,7 +66,7 @@ public interface CatalogAdminClient extends Closeable {
    * @param tableName The table name to be checked. This name is case sensitive.
    * @return True if so.
    */
-  public boolean existTable(final String tableName) throws ServiceException;
+  boolean existTable(final String tableName);
 
   /**
    * Create an external table.
@@ -76,11 +77,11 @@ public interface CatalogAdminClient extends Closeable {
    * @param path The external table location
    * @param meta Table meta
    * @return the created table description.
-   * @throws java.sql.SQLException
-   * @throws ServiceException
+   * @throws DuplicateTableException
    */
-  public TableDesc createExternalTable(final String tableName, final Schema schema, final Path path,
-                                       final TableMeta meta) throws SQLException, ServiceException;
+  TableDesc createExternalTable(final String tableName, final Schema schema, final URI path,
+                                       final TableMeta meta)
+      throws DuplicateTableException, UnavailableTableLocationException, InsufficientPrivilegeException;
 
   /**
    * Create an external table.
@@ -92,20 +93,20 @@ public interface CatalogAdminClient extends Closeable {
    * @param meta Table meta
    * @param partitionMethodDesc Table partition description
    * @return the created table description.
-   * @throws SQLException
-   * @throws ServiceException
+   * @throws DuplicateTableException
    */
-  public TableDesc createExternalTable(final String tableName, final Schema schema, final Path path,
+  TableDesc createExternalTable(final String tableName, final Schema schema, final URI path,
                                        final TableMeta meta, final PartitionMethodDesc partitionMethodDesc)
-      throws SQLException, ServiceException;
+      throws DuplicateTableException, InsufficientPrivilegeException, UnavailableTableLocationException;
 
   /**
    * Drop a table
    *
    * @param tableName The table name to be dropped. This name is case sensitive.
    * @return True if the table is dropped successfully.
+   * @throws InsufficientPrivilegeException
    */
-  public boolean dropTable(final String tableName) throws ServiceException;
+  void dropTable(final String tableName) throws UndefinedTableException, InsufficientPrivilegeException;
 
   /**
    * Drop a table.
@@ -113,8 +114,11 @@ public interface CatalogAdminClient extends Closeable {
    * @param tableName The table name to be dropped. This name is case sensitive.
    * @param purge If purge is true, this call will remove the entry in catalog as well as the table contents.
    * @return True if the table is dropped successfully.
+   * @throws UndefinedTableException
+   * @throws InsufficientPrivilegeException
    */
-  public boolean dropTable(final String tableName, final boolean purge) throws ServiceException;
+  void dropTable(final String tableName, final boolean purge) throws UndefinedTableException,
+      InsufficientPrivilegeException;
 
   /**
    * Get a list of table names.
@@ -123,15 +127,39 @@ public interface CatalogAdminClient extends Closeable {
    *                     If it is null, this method will show all tables
    *                     in the current database of this session.
    */
-  public List<String> getTableList(@Nullable final String databaseName) throws ServiceException;
+  List<String> getTableList(@Nullable final String databaseName);
 
   /**
    * Get a table description
    *
    * @param tableName The table name to get. This name is case sensitive.
    * @return Table description
+   * @throws UndefinedTableException
    */
-  public TableDesc getTableDesc(final String tableName) throws ServiceException;
+  TableDesc getTableDesc(final String tableName) throws UndefinedTableException;
 
-  public List<CatalogProtos.FunctionDescProto> getFunctions(final String functionName) throws ServiceException;
+  /**
+   * Get all partition lists of specified table.
+   *
+   * @param tableName The table name to get. This name is case sensitive.
+   * @return lists of partitions
+   */
+  List<PartitionDescProto> getPartitionsOfTable(final String tableName) throws UndefinedDatabaseException,
+    UndefinedTableException, UndefinedPartitionMethodException;
+
+  List<CatalogProtos.FunctionDescProto> getFunctions(final String functionName);
+
+  IndexDescProto getIndex(final String indexName);
+
+  boolean existIndex(final String indexName);
+
+  List<IndexDescProto> getIndexes(final String tableName);
+
+  boolean hasIndexes(final String tableName);
+
+  IndexDescProto getIndex(final String tableName, final String[] columnNames);
+
+  boolean existIndex(final String tableName, final String[] columnName);
+
+  boolean dropIndex(final String indexName);
 }

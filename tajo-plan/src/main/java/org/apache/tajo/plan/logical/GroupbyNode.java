@@ -25,7 +25,10 @@ import org.apache.tajo.plan.PlanString;
 import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.plan.Target;
 import org.apache.tajo.plan.expr.AggregationFunctionCallEval;
+import org.apache.tajo.util.StringUtils;
 import org.apache.tajo.util.TUtil;
+
+import java.util.Arrays;
 
 public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
   /** Grouping key sets */
@@ -38,6 +41,10 @@ public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
    * */
   @Expose private Target [] targets;
   @Expose private boolean hasDistinct = false;
+  /**
+   * A flag to indicate if this groupby is for distinct block (i.e., SELECT DISTINCT x,y,z, ...)
+   */
+  @Expose private boolean forDistinctBlock = false;
 
   public GroupbyNode(int pid) {
     super(pid, NodeType.GROUP_BY);
@@ -65,6 +72,14 @@ public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
 
   public void setDistinct(boolean distinct) {
     hasDistinct = distinct;
+  }
+
+  public final void setForDistinctBlock() {
+    forDistinctBlock = true;
+  }
+
+  public boolean isForDistinctBlock() {
+    return forDistinctBlock;
   }
 
   public boolean hasAggFunctions() {
@@ -106,17 +121,28 @@ public class GroupbyNode extends UnaryNode implements Projectable, Cloneable {
   
   public String toString() {
     StringBuilder sb = new StringBuilder("GroupBy (");
-    if (groupingKeys != null || groupingKeys.length > 0) {
-      sb.append("grouping set=").append(TUtil.arrayToString(groupingKeys));
+    if (groupingKeys != null && groupingKeys.length > 0) {
+      sb.append("grouping set=").append(StringUtils.join(groupingKeys));
       sb.append(", ");
     }
     if (hasAggFunctions()) {
-      sb.append("funcs=").append(TUtil.arrayToString(aggrFunctions));
+      sb.append("funcs=").append(StringUtils.join(aggrFunctions));
     }
     sb.append(")");
     return sb.toString();
   }
   
+  @Override
+  public int hashCode() {
+    final int prime = 31;
+    int result = 1;
+    result = prime * result + Arrays.hashCode(aggrFunctions);
+    result = prime * result + Arrays.hashCode(groupingKeys);
+    result = prime * result + (hasDistinct ? 1231 : 1237);
+    result = prime * result + Arrays.hashCode(targets);
+    return result;
+  }
+
   @Override
   public boolean equals(Object obj) {
     if (obj instanceof GroupbyNode) {

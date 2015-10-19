@@ -48,7 +48,7 @@ public final class Rank extends WindowAggFunc {
 
   public static boolean checkIfDistinctValue(RankContext context, Tuple params) {
     for (int i = 0; i < context.latest.length; i++) {
-      if (!context.latest[i].equalsTo(params.get(i)).isTrue()) {
+      if (!context.latest[i].equalsTo(params.asDatum(i)).isTrue()) {
         return true;
       }
     }
@@ -77,7 +77,7 @@ public final class Rank extends WindowAggFunc {
     return new RankContext();
   }
 
-  private class RankContext implements FunctionContext {
+  private static class RankContext implements FunctionContext {
     long rank = 0;
     long accumulatedCount = 1;
     Datum [] latest = null;

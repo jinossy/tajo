@@ -141,10 +141,19 @@ public class ClassSize {
    */
   static {
     //Default value is set to 8, covering the case when arcModel is unknown
-    if (is32BitJVM()) {
-      REFERENCE = 4;
-    } else {
-      REFERENCE = 8;
+    switch (UnsafeUtil.ADDRESS_MODE) {
+      case MEM_32BIT:
+        REFERENCE = 4;
+        break;
+      case MEM_64BIT:
+        REFERENCE = 8;
+        break;
+      case MEM_64BIT_COMPRESSED_OOPS:
+        REFERENCE = 4;
+        break;
+      default:
+        REFERENCE = is32BitJVM() ? 4 : 8;
+        break;
     }
 
     OBJECT = 2 * REFERENCE;

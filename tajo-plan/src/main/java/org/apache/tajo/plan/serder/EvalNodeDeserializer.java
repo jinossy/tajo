@@ -20,23 +20,28 @@ package org.apache.tajo.plan.serder;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+
 import org.apache.tajo.OverridableConf;
 import org.apache.tajo.algebra.WindowSpec.WindowFrameEndBoundType;
 import org.apache.tajo.algebra.WindowSpec.WindowFrameStartBoundType;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.FunctionDesc;
 import org.apache.tajo.catalog.SortSpec;
-import org.apache.tajo.catalog.exception.NoSuchFunctionException;
+import org.apache.tajo.exception.UndefinedFunctionException;
 import org.apache.tajo.catalog.proto.CatalogProtos;
+import org.apache.tajo.catalog.proto.CatalogProtos.FunctionSignatureProto;
+import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.datum.*;
-import org.apache.tajo.exception.InternalException;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.plan.expr.*;
-import org.apache.tajo.plan.function.AggFunction;
-import org.apache.tajo.plan.function.GeneralFunction;
+import org.apache.tajo.plan.function.python.PythonScriptEngine;
+import org.apache.tajo.plan.logical.TableSubQueryNode;
 import org.apache.tajo.plan.logical.WindowSpec;
 import org.apache.tajo.plan.serder.PlanProto.WinFunctionEvalSpec;
 
 import java.util.*;
+
+import static org.apache.tajo.function.FunctionUtil.buildSimpleFunctionSignature;
 
 /**
  * It deserializes a serialized eval tree consisting of a number of EvalNodes.
@@ -49,7 +54,7 @@ import java.util.*;
  */
 public class EvalNodeDeserializer {
 
-  public static EvalNode deserialize(OverridableConf context, PlanProto.EvalNodeTree tree) {
+  public static EvalNode deserialize(OverridableConf context, EvalContext evalContext, PlanProto.EvalNodeTree tree) {
     Map<Integer, EvalNode> evalNodeMap = Maps.newHashMap();
 
     // sort serialized eval nodes in an ascending order of their IDs.
@@ -101,7 +106,7 @@ public class EvalNodeDeserializer {
 
         switch (type) {
         case IN:
-          current = new InEval(lhs, (RowConstantEval) rhs, binProto.getNegative());
+          current = new InEval(lhs, (ValueSetEval) rhs, binProto.getNegative());
           break;
         case LIKE: {
           PlanProto.PatternMatchEvalSpec patternMatchProto = protoNode.getPatternMatch();
@@ -137,6 +142,12 @@ public class EvalNodeDeserializer {
           values[i] = deserialize(rowConstProto.getValues(i));
         }
         current = new RowConstantEval(values);
+
+      } else if (type == EvalType.SUBQUERY) {
+        PlanProto.SubqueryEval subqueryProto = protoNode.getSubquery();
+        TableSubQueryNode subQueryNode = (TableSubQueryNode) LogicalNodeDeserializer.deserialize(context, evalContext,
+            subqueryProto.getSubquery());
+        current = new SubqueryEval(subQueryNode);
 
       } else if (type == EvalType.FIELD) {
         CatalogProtos.ColumnProto columnProto = protoNode.getField();
@@ -177,28 +188,40 @@ public class EvalNodeDeserializer {
         try {
           funcDesc = new FunctionDesc(funcProto.getFuncion());
           if (type == EvalType.FUNCTION) {
-            GeneralFunction instance = (GeneralFunction) funcDesc.newInstance();
-            current = new GeneralFunctionEval(context, new FunctionDesc(funcProto.getFuncion()), instance, params);
-
+            current = new GeneralFunctionEval(context, funcDesc, params);
+            if (evalContext != null && funcDesc.getInvocation().hasPython()) {
+              evalContext.addScriptEngine(current, new PythonScriptEngine(funcDesc));
+            }
           } else if (type == EvalType.AGG_FUNCTION || type == EvalType.WINDOW_FUNCTION) {
-            AggFunction instance = (AggFunction) funcDesc.newInstance();
             if (type == EvalType.AGG_FUNCTION) {
               AggregationFunctionCallEval aggFunc =
-                  new AggregationFunctionCallEval(new FunctionDesc(funcProto.getFuncion()), instance, params);
+                  new AggregationFunctionCallEval(new FunctionDesc(funcProto.getFuncion()), params);
 
               PlanProto.AggFunctionEvalSpec aggFunctionProto = protoNode.getAggFunction();
-              aggFunc.setIntermediatePhase(aggFunctionProto.getIntermediatePhase());
-              aggFunc.setFinalPhase(aggFunctionProto.getFinalPhase());
+              if (aggFunctionProto.getFirstPhase() && aggFunctionProto.getLastPhase()) {
+                aggFunc.setFirstAndLastPhase();
+              } else if (aggFunctionProto.getFirstPhase()) {
+                aggFunc.setFirstPhase();
+              } else if (aggFunctionProto.getLastPhase()) {
+                aggFunc.setLastPhase();
+              } else {
+                aggFunc.setIntermediatePhase();
+              }
               if (aggFunctionProto.hasAlias()) {
                 aggFunc.setAlias(aggFunctionProto.getAlias());
               }
               current = aggFunc;
 
+              if (evalContext != null && funcDesc.getInvocation().hasPythonAggregation()) {
+                evalContext.addScriptEngine(current, new PythonScriptEngine(funcDesc,
+                    aggFunc.isFirstPhase()  , aggFunc.isLastPhase()));
+              }
+
             } else {
               WinFunctionEvalSpec windowFuncProto = protoNode.getWinFunction();
 
               WindowFunctionEval winFunc =
-                  new WindowFunctionEval(new FunctionDesc(funcProto.getFuncion()), instance, params,
+                  new WindowFunctionEval(new FunctionDesc(funcProto.getFuncion()), params,
                       convertWindowFrame(windowFuncProto.getWindowFrame()));
 
               if (windowFuncProto.getSortSpecCount() > 0) {
@@ -210,12 +233,24 @@ public class EvalNodeDeserializer {
             }
           }
         } catch (ClassNotFoundException cnfe) {
-          throw new NoSuchFunctionException(funcDesc.getFunctionName(), funcDesc.getParamTypes());
-        } catch (InternalException ie) {
-          throw new NoSuchFunctionException(funcDesc.getFunctionName(), funcDesc.getParamTypes());
+          String functionName = "Unknown";
+          DataType[] parameterTypes = new DataType[0];
+          if (funcProto.getFuncion() != null && funcProto.getFuncion().getSignature() != null) {
+            FunctionSignatureProto funcSignatureProto = funcProto.getFuncion().getSignature();
+
+            if (funcSignatureProto.hasName()) {
+              functionName = funcSignatureProto.getName();
+            }
+
+            parameterTypes = funcSignatureProto.getParameterTypesList().toArray(
+                new DataType[funcSignatureProto.getParameterTypesCount()]);
+          }
+          throw new TajoInternalError(
+              new UndefinedFunctionException(buildSimpleFunctionSignature(functionName, parameterTypes))
+          );
         }
       } else {
-        throw new RuntimeException("Unknown EvalType: " + type.name());
+        throw new TajoInternalError("Unknown EvalType: " + type.name());
       }
 
       evalNodeMap.put(protoNode.getId(), current);
@@ -294,6 +329,8 @@ public class EvalNodeDeserializer {
       return new IntervalDatum(datum.getInterval().getMonth(), datum.getInterval().getMsec());
     case NULL_TYPE:
       return NullDatum.get();
+    case ANY:
+      return DatumFactory.createAny(deserialize(datum.getActual()));
     default:
       throw new RuntimeException("Unknown data type: " + datum.getType().name());
     }

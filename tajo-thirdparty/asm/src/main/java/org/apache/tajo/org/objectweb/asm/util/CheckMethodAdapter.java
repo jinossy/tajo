@@ -371,7 +371,7 @@ public class CheckMethodAdapter extends MethodVisitor {
      * {@link #CheckMethodAdapter(int,String,String,MethodVisitor,Map)}).
      * <i>Subclasses must not use this constructor</i>. Instead, they must use
      * the {@link #CheckMethodAdapter(int, MethodVisitor, Map)} version.
-     * 
+     *
      * @param mv
      *            the method visitor to which this adapter must delegate calls.
      */
@@ -410,8 +410,8 @@ public class CheckMethodAdapter extends MethodVisitor {
             final Map<Label, Integer> labels) {
         super(api, mv);
         this.labels = labels;
-        this.usedLabels = new HashSet<Label>();
-        this.handlers = new ArrayList<Label>();
+        this.usedLabels = new HashSet<>();
+        this.handlers = new ArrayList<>();
     }
 
     /**
@@ -437,7 +437,7 @@ public class CheckMethodAdapter extends MethodVisitor {
         this(new MethodNode(access, name, desc, null, null) {
             @Override
             public void visitEnd() {
-                Analyzer<BasicValue> a = new Analyzer<BasicValue>(
+                Analyzer<BasicValue> a = new Analyzer<>(
                         new BasicVerifier());
                 try {
                     a.analyze("dummy", this);

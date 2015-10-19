@@ -38,13 +38,15 @@ public class CreateTable extends Expr {
   private String tableName;
   @Expose @SerializedName("Attributes")
   private ColumnDefinition [] tableElements;
+  @Expose @SerializedName("SpaceName")
+  private String spaceName;
   @Expose @SerializedName("StorageType")
   private String storageType;
   @Expose @SerializedName("Location")
   private String location;
   @Expose @SerializedName("SubPlan")
   private Expr subquery;
-  @Expose @SerializedName("TableProperties")
+  @Expose @SerializedName("Properties")
   private Map<String, String> params;
   @Expose @SerializedName("PartitionMethodDesc")
   private PartitionMethodDescExpr partition;
@@ -52,6 +54,8 @@ public class CreateTable extends Expr {
   private boolean ifNotExists;
   @Expose @SerializedName("LikeParentTable")
   private String likeParentTable;
+  @Expose @SerializedName("HasSelfDescSchema")
+  private boolean selfDescSchema = false;
 
   public CreateTable(final String tableName, boolean ifNotExists) {
     super(OpType.CreateTable);
@@ -98,6 +102,18 @@ public class CreateTable extends Expr {
 
   public void setTableElements(ColumnDefinition [] tableElements) {
     this.tableElements = tableElements;
+  }
+
+  public boolean hasTableSpaceName() {
+    return spaceName != null;
+  }
+
+  public void setTableSpaceName(String spaceName) {
+    this.spaceName = spaceName;
+  }
+
+  public String getTableSpaceName() {
+    return spaceName;
   }
 
   public boolean hasStorageType() {
@@ -160,6 +176,18 @@ public class CreateTable extends Expr {
     return likeParentTable;
   }
 
+  public void setHasSelfDescSchema() {
+    selfDescSchema = true;
+  }
+
+  public void unsetHasSelfDescSchema() {
+    selfDescSchema = false;
+  }
+
+  public boolean hasSelfDescSchema() {
+    return selfDescSchema;
+  }
+
 
   @Override
   public int hashCode() {
@@ -196,8 +224,12 @@ public class CreateTable extends Expr {
     createTable.storageType = storageType;
     createTable.location = location;
     createTable.subquery = subquery;
-    createTable.params = new HashMap<String, String>(params);
-    createTable.partition = (PartitionMethodDescExpr) partition.clone();
+    if (params != null) {
+      createTable.params = new HashMap<>(params);
+    }
+    if (partition != null) {
+      createTable.partition = (PartitionMethodDescExpr) partition.clone();
+    }
     createTable.ifNotExists = ifNotExists;
     return createTable;
   }
@@ -305,12 +337,14 @@ public class CreateTable extends Expr {
     @Override
     public Object clone() throws CloneNotSupportedException {
       RangePartition range = (RangePartition) super.clone();
-      range.columns = new ColumnReferenceExpr[columns.length];
-      for (int i = 0; i < columns.length; i++) {
-        range.columns[i] = (ColumnReferenceExpr) columns[i].clone();
+      if (columns != null) {
+        range.columns = new ColumnReferenceExpr[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+          range.columns[i] = (ColumnReferenceExpr) columns[i].clone();
+        }
       }
-      if (range.specifiers != null) {
-        range.specifiers = new ArrayList<RangePartitionSpecifier>();
+      if (specifiers != null) {
+        range.specifiers = new ArrayList<>();
         for (int i = 0; i < specifiers.size(); i++) {
           range.specifiers.add(specifiers.get(i));
         }
@@ -376,13 +410,15 @@ public class CreateTable extends Expr {
     @Override
     public Object clone() throws CloneNotSupportedException {
       HashPartition hash = (HashPartition) super.clone();
-      hash.columns = new ColumnReferenceExpr[columns.length];
-      for (int i = 0; i < columns.length; i++) {
-        hash.columns[i] = (ColumnReferenceExpr) columns[i].clone();
+      if (columns != null) {
+        hash.columns = new ColumnReferenceExpr[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+          hash.columns[i] = (ColumnReferenceExpr) columns[i].clone();
+        }
       }
       hash.quantity = quantity;
       if (specifiers != null) {
-        hash.specifiers = new ArrayList<PartitionSpecifier>();
+        hash.specifiers = new ArrayList<>();
         for (PartitionSpecifier specifier : specifiers) {
           hash.specifiers.add(specifier);
         }
@@ -428,12 +464,14 @@ public class CreateTable extends Expr {
     @Override
     public Object clone() throws CloneNotSupportedException {
       ListPartition listPartition = (ListPartition) super.clone();
-      listPartition.columns = new ColumnReferenceExpr[columns.length];
-      for (int i = 0; i < columns.length; i++) {
-        listPartition.columns[i] = (ColumnReferenceExpr) columns[i].clone();
+      if (columns != null) {
+        listPartition.columns = new ColumnReferenceExpr[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+          listPartition.columns[i] = (ColumnReferenceExpr) columns[i].clone();
+        }
       }
       if (specifiers != null) {
-        listPartition.specifiers = new ArrayList<ListPartitionSpecifier>();
+        listPartition.specifiers = new ArrayList<>();
         for (ListPartitionSpecifier specifier : specifiers) {
           listPartition.specifiers.add(specifier);
         }
@@ -472,9 +510,11 @@ public class CreateTable extends Expr {
     @Override
     public Object clone() throws CloneNotSupportedException {
       ColumnPartition columnPartition = (ColumnPartition) super.clone();
-      columnPartition.columns = new ColumnDefinition[columns.length];
-      for (int i = 0; i < columns.length; i++) {
-        columnPartition.columns[i] = (ColumnDefinition) columns[i].clone();
+      if (columns != null) {
+        columnPartition.columns = new ColumnDefinition[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+          columnPartition.columns[i] = (ColumnDefinition) columns[i].clone();
+        }
       }
       return columnPartition;
     }
@@ -524,7 +564,9 @@ public class CreateTable extends Expr {
     @Override
     public Object clone() throws CloneNotSupportedException {
       RangePartitionSpecifier specifier = (RangePartitionSpecifier) super.clone();
-      specifier.end = (Expr) end.clone();
+      if (end != null) {
+        specifier.end = (Expr) end.clone();
+      }
       specifier.maxValue = maxValue;
       return specifier;
     }

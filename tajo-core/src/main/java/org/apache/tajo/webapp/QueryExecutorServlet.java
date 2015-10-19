@@ -1,6 +1,5 @@
 package org.apache.tajo.webapp;
 
-import com.google.protobuf.ServiceException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.util.StringUtils;
@@ -9,10 +8,15 @@ import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.TajoProtos;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.TableDesc;
-import org.apache.tajo.client.*;
+import org.apache.tajo.client.QueryStatus;
+import org.apache.tajo.client.TajoClient;
+import org.apache.tajo.client.TajoClientImpl;
+import org.apache.tajo.client.TajoClientUtil;
 import org.apache.tajo.conf.TajoConf;
+import org.apache.tajo.exception.TajoException;
 import org.apache.tajo.ipc.ClientProtos;
-import org.apache.tajo.jdbc.TajoResultSet;
+import org.apache.tajo.jdbc.FetchResultSet;
+import org.apache.tajo.service.ServiceTrackerFactory;
 import org.apache.tajo.util.JSPUtil;
 import org.apache.tajo.util.TajoIdUtils;
 import org.codehaus.jackson.map.DeserializationConfig;
@@ -24,16 +28,22 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.io.NotSerializableException;
 import java.io.OutputStream;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.apache.tajo.exception.ReturnStateUtil.isError;
 
 /**
  * Licensed to the Apache Software Foundation (ASF) under one
@@ -55,17 +65,26 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class QueryExecutorServlet extends HttpServlet {
   private static final Log LOG = LogFactory.getLog(QueryExecutorServlet.class);
+  private static final long serialVersionUID = -1517586415463171579L;
 
-  ObjectMapper om = new ObjectMapper();
+  transient ObjectMapper om = new ObjectMapper();
 
   //queryRunnerId -> QueryRunner
   //TODO We must handle the session.
-  private final Map<String, QueryRunner> queryRunners = new HashMap<String, QueryRunner>();
+  private transient final Map<String, QueryRunner> queryRunners = new HashMap<>();
 
-  private TajoConf tajoConf;
-  private TajoClient tajoClient;
+  private transient TajoConf tajoConf;
+  private transient TajoClient tajoClient;
 
-  private ExecutorService queryRunnerExecutor = Executors.newFixedThreadPool(5);
+  private transient ExecutorService queryRunnerExecutor = Executors.newFixedThreadPool(5);
+
+  private void writeObject(java.io.ObjectOutputStream stream) throws java.io.IOException {
+    throw new NotSerializableException( getClass().getName() );
+  }
+
+  private void readObject(java.io.ObjectInputStream stream) throws java.io.IOException, ClassNotFoundException {
+    throw new NotSerializableException( getClass().getName() );
+  }
 
   @Override
   public void init(ServletConfig config) throws ServletException {
@@ -74,11 +93,11 @@ public class QueryExecutorServlet extends HttpServlet {
 
     try {
       tajoConf = new TajoConf();
-      tajoClient = new TajoClientImpl(tajoConf);
+      tajoClient = new TajoClientImpl(ServiceTrackerFactory.get(tajoConf));
 
       new QueryRunnerCleaner().start();
-    } catch (IOException e) {
-      LOG.error(e.getMessage());
+    } catch (Throwable e) {
+      LOG.error(e.getMessage(), e);
     }
   }
 
@@ -86,7 +105,7 @@ public class QueryExecutorServlet extends HttpServlet {
   public void service(HttpServletRequest request,
                       HttpServletResponse response) throws ServletException, IOException {
     String action = request.getParameter("action");
-    Map<String, Object> returnValue = new HashMap<String, Object>();
+    Map<String, Object> returnValue = new HashMap<>();
     try {
       if(tajoClient == null) {
         errorResponse(response, "TajoClient not initialized");
@@ -128,10 +147,11 @@ public class QueryExecutorServlet extends HttpServlet {
             if(!queryRunners.containsKey(queryRunnerId)) {
               break;
             }
-            try {
-              Thread.sleep(100);
-            } catch (InterruptedException e) {
-            }
+          }
+
+          try {
+            Thread.sleep(100);
+          } catch (InterruptedException e) {
           }
         }
         String database = request.getParameter("database");
@@ -221,7 +241,7 @@ public class QueryExecutorServlet extends HttpServlet {
   }
 
   private void errorResponse(HttpServletResponse response, String message) throws IOException {
-    Map<String, Object> errorMessage = new HashMap<String, Object>();
+    Map<String, Object> errorMessage = new HashMap<>();
     errorMessage.put("success", "false");
     errorMessage.put("errorMessage", message);
     writeHttpResponse(response, errorMessage);
@@ -241,7 +261,7 @@ public class QueryExecutorServlet extends HttpServlet {
     public void run() {
       List<QueryRunner> queryRunnerList;
       synchronized(queryRunners) {
-        queryRunnerList = new ArrayList<QueryRunner>(queryRunners.values());
+        queryRunnerList = new ArrayList<>(queryRunners.values());
         for(QueryRunner eachQueryRunner: queryRunnerList) {
           if(!eachQueryRunner.running.get() &&
               (System.currentTimeMillis() - eachQueryRunner.finishTime > 180 * 1000)) {
@@ -271,7 +291,7 @@ public class QueryExecutorServlet extends HttpServlet {
 
     AtomicInteger progress = new AtomicInteger(0);
 
-    List<String> columnNames = new ArrayList<String>();
+    List<String> columnNames = new ArrayList<>();
 
     List<List<Object>> queryResult;
 
@@ -291,48 +311,47 @@ public class QueryExecutorServlet extends HttpServlet {
     }
 
     public void run() {
-      startTime = System.currentTimeMillis();
-      try {
-        tajoClient = TajoHAClientUtil.getTajoClient(tajoConf, tajoClient);
 
-        if (!tajoClient.getCurrentDatabase().equals(database))
+      startTime = System.currentTimeMillis();
+
+      try {
+        if (!tajoClient.getCurrentDatabase().equals(database)) {
           tajoClient.selectDatabase(database);
+        }
 
         response = tajoClient.executeQuery(query);
 
-        if (response == null) {
-          LOG.error("Internal Error: SubmissionResponse is NULL");
-          error = new Exception("Internal Error: SubmissionResponse is NULL");
+        if (isError(response.getState())) {
+          StringBuffer errorMessage = new StringBuffer(response.getState().getMessage());
+          String modifiedMessage;
 
-        } else if (response.getResultCode() == ClientProtos.ResultCode.OK) {
-          if (response.getIsForwarded()) {
+          if (errorMessage.length() > 200) {
+            modifiedMessage = errorMessage.substring(0, 200);
+          } else {
+            modifiedMessage = errorMessage.toString();
+          }
+
+          String lineSeparator = System.getProperty("line.separator");
+          modifiedMessage = modifiedMessage.replaceAll(lineSeparator, "<br/>");
+
+          error = new Exception(modifiedMessage);
+
+        } else {
+
+          switch (response.getResultType()) {
+          case ENCLOSED:
+            getSimpleQueryResult(response);
+            break;
+          case FETCH:
             queryId = new QueryId(response.getQueryId());
             getQueryResult(queryId);
-          } else {
-            if (!response.hasTableDesc() && !response.hasResultSet()) {
-            } else {
-              getSimpleQueryResult(response);
-            }
-
-            progress.set(100);
+            break;
+          default:;
           }
-        } else if (response.getResultCode() == ClientProtos.ResultCode.ERROR) {
-          if (response.hasErrorMessage()) {
-            StringBuffer errorMessage = new StringBuffer(response.getErrorMessage());
-            String modifiedMessage;
 
-            if (errorMessage.length() > 200) {
-              modifiedMessage = errorMessage.substring(0, 200);
-            } else {
-              modifiedMessage = errorMessage.toString();
-            }
-            
-            String lineSeparator = System.getProperty("line.separator");
-            modifiedMessage = modifiedMessage.replaceAll(lineSeparator, "<br/>");
-
-            error = new Exception(modifiedMessage);
-          }
+          progress.set(100);
         }
+
       } catch (Exception e) {
         LOG.error(e.getMessage(), e);
         error = e;
@@ -342,7 +361,11 @@ public class QueryExecutorServlet extends HttpServlet {
         finishTime = System.currentTimeMillis();
 
         if (queryId != null) {
-          tajoClient.closeQuery(queryId);
+          try {
+            tajoClient.closeQuery(queryId);
+          } catch (Throwable e) {
+            LOG.warn(e);
+          }
         }
       }
     }
@@ -357,7 +380,7 @@ public class QueryExecutorServlet extends HttpServlet {
           // non-forwarded INSERT INTO query does not have any query id.
           // In this case, it just returns succeeded query information without printing the query results.
         } else {
-          res = TajoClientUtil.createResultSet(tajoConf, tajoClient, response);
+          res = TajoClientUtil.createResultSet(tajoClient, response, sizeLimit);
           MakeResultText(res, desc);
         }
         progress.set(100);
@@ -374,7 +397,7 @@ public class QueryExecutorServlet extends HttpServlet {
       }
     }
 
-    private QueryStatus waitForComplete(QueryId queryid) throws ServiceException {
+    private QueryStatus waitForComplete(QueryId queryid) throws TajoException {
       QueryStatus status = null;
 
       while (!stop.get()) {
@@ -438,7 +461,7 @@ public class QueryExecutorServlet extends HttpServlet {
                 ClientProtos.GetQueryResultResponse response = tajoClient.getResultResponse(tajoQueryId);
                 TableDesc desc = CatalogUtil.newTableDesc(response.getTableDesc());
                 tajoConf.setVar(TajoConf.ConfVars.USERNAME, response.getTajoUserName());
-                res = new TajoResultSet(tajoClient, queryId, tajoConf, desc);
+                res = new FetchResultSet(tajoClient, desc.getLogicalSchema(), queryId, sizeLimit);
 
                 MakeResultText(res, desc);
 
@@ -453,7 +476,7 @@ public class QueryExecutorServlet extends HttpServlet {
               try {
                 tajoClient.closeQuery(queryId);
               } catch (Exception e) {
-                LOG.warn(e);
+                LOG.warn(e, e);
               }
             }
           }
@@ -467,16 +490,16 @@ public class QueryExecutorServlet extends HttpServlet {
     private void MakeResultText(ResultSet res, TableDesc desc) throws SQLException {
       ResultSetMetaData rsmd = res.getMetaData();
       resultRows = desc.getStats() == null ? 0 : desc.getStats().getNumRows();
-      if (resultRows == 0) {
+      if (resultRows <= 0) {
         resultRows = 1000;
       }
-      LOG.info("Tajo Query Result: " + desc.getPath() + "\n");
+      LOG.info("Tajo Query Result: " + desc.getUri() + "\n");
 
       int numOfColumns = rsmd.getColumnCount();
       for(int i = 0; i < numOfColumns; i++) {
         columnNames.add(rsmd.getColumnName(i + 1));
       }
-      queryResult = new ArrayList<List<Object>>();
+      queryResult = new ArrayList<>();
 
       if(sizeLimit < resultRows) {
         numOfRows = (long)((float)(resultRows) * ((float)sizeLimit / (float) resultRows));
@@ -489,9 +512,9 @@ public class QueryExecutorServlet extends HttpServlet {
         if(rowCount > numOfRows) {
           break;
         }
-        List<Object> row = new ArrayList<Object>();
+        List<Object> row = new ArrayList<>();
         for(int i = 0; i < numOfColumns; i++) {
-          row.add(res.getObject(i + 1).toString());
+          row.add(String.valueOf(res.getObject(i + 1)));
         }
         queryResult.add(row);
         rowCount++;

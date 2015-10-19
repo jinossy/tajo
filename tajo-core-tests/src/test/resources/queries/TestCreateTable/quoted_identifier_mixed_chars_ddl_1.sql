@@ -1,0 +1,1 @@
+CREATE EXTERNAL TABLE ${0} ("aGe" int, "teXt" text, "Number" int) using text location ${table.path};

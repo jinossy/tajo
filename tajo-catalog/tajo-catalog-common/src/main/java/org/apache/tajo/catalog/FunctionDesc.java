@@ -21,14 +21,14 @@ package org.apache.tajo.catalog;
 import com.google.common.base.Objects;
 import com.google.gson.annotations.Expose;
 import org.apache.tajo.annotation.NotNull;
-import org.apache.tajo.function.*;
-import org.apache.tajo.json.GsonObject;
 import org.apache.tajo.catalog.json.CatalogGsonHelper;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionDescProto;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
 import org.apache.tajo.common.ProtoObject;
 import org.apache.tajo.common.TajoDataTypes.DataType;
-import org.apache.tajo.exception.InternalException;
+import org.apache.tajo.exception.TajoInternalError;
+import org.apache.tajo.function.*;
+import org.apache.tajo.json.GsonObject;
 
 import java.lang.reflect.Constructor;
 
@@ -38,7 +38,6 @@ import java.lang.reflect.Constructor;
  *
  */
 public class FunctionDesc implements ProtoObject<FunctionDescProto>, Cloneable, GsonObject, Comparable<FunctionDesc> {
-  private FunctionDescProto.Builder builder = FunctionDescProto.newBuilder();
 
   @Expose private FunctionSignature signature;
   @Expose private FunctionInvocation invocation;
@@ -51,7 +50,7 @@ public class FunctionDesc implements ProtoObject<FunctionDescProto>, Cloneable, 
       FunctionType funcType, DataType retType, @NotNull DataType [] params) {
     this.signature = new FunctionSignature(funcType, signature.toLowerCase(), retType, params);
     this.invocation = new FunctionInvocation();
-    this.invocation.setLegacy(new ClassBaseInvocationDesc<Function>(clazz));
+    this.invocation.setLegacy(new ClassBaseInvocationDesc<>(clazz));
     this.supplement = new FunctionSupplement();
   }
 
@@ -86,16 +85,14 @@ public class FunctionDesc implements ProtoObject<FunctionDescProto>, Cloneable, 
   }
 
   /**
-   * 
    * @return Function Instance
-   * @throws org.apache.tajo.exception.InternalException
    */
-  public Function newInstance() throws InternalException {
+  public Function newInstance() {
     try {
-      Constructor<? extends Function> cons = getFuncClass().getConstructor();
+      Constructor<? extends Function> cons = getLegacyFuncClass().getConstructor();
       return cons.newInstance();
     } catch (Exception ioe) {
-      throw new InternalException("Cannot initiate function " + signature);
+      throw new TajoInternalError("Cannot initiate function " + signature);
     }
   }
 
@@ -124,7 +121,7 @@ public class FunctionDesc implements ProtoObject<FunctionDescProto>, Cloneable, 
   ////////////////////////////////////////
 
   @SuppressWarnings("unchecked")
-  public Class<? extends Function> getFuncClass() {
+  public Class<? extends Function> getLegacyFuncClass() {
     return invocation.getLegacy().getFunctionClass();
   }
 
@@ -184,11 +181,7 @@ public class FunctionDesc implements ProtoObject<FunctionDescProto>, Cloneable, 
 
   @Override
   public FunctionDescProto getProto() {
-    if (builder == null) {
-      builder = FunctionDescProto.newBuilder();
-    } else {
-      builder.clear();
-    }
+    FunctionDescProto.Builder builder = FunctionDescProto.newBuilder();
     builder.setSignature(signature.getProto());
     builder.setSupplement(supplement.getProto());
     builder.setInvocation(invocation.getProto());

@@ -1,0 +1,1 @@
+select max(point) as maximum, count(distinct age) as unique_key from testGroupByWithNullData7 where age > 100;

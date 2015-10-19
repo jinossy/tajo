@@ -29,9 +29,7 @@ public class BasicPhysicalExecutorVisitor<CONTEXT, RESULT> implements PhysicalEx
 
     // Please keep all physical executors except for abstract class.
     // They should be ordered in an lexicography order of their names for easy code maintenance.
-    if (exec instanceof BNLJoinExec) {
-      return visitBNLJoin(context, (BNLJoinExec) exec, stack);
-    } else if (exec instanceof BSTIndexScanExec) {
+    if (exec instanceof BSTIndexScanExec) {
       return visitBSTIndexScan(context, (BSTIndexScanExec) exec, stack);
     } else if (exec instanceof EvalExprExec) {
       return visitEvalExpr(context, (EvalExprExec) exec, stack);
@@ -63,10 +61,6 @@ public class BasicPhysicalExecutorVisitor<CONTEXT, RESULT> implements PhysicalEx
       return visitMergeFullOuterJoin(context, (MergeFullOuterJoinExec) exec, stack);
     } else if (exec instanceof MergeJoinExec) {
       return visitMergeJoin(context, (MergeJoinExec) exec, stack);
-    } else if (exec instanceof NLJoinExec) {
-      return visitNLJoin(context, (NLJoinExec) exec, stack);
-    } else if (exec instanceof NLLeftOuterJoinExec) {
-      return visitNLLeftOuterJoin(context, (NLLeftOuterJoinExec) exec, stack);
     } else if (exec instanceof ProjectionExec) {
       return visitProjection(context, (ProjectionExec) exec, stack);
     } else if (exec instanceof RangeShuffleFileWriteExec) {
@@ -83,6 +77,8 @@ public class BasicPhysicalExecutorVisitor<CONTEXT, RESULT> implements PhysicalEx
       return visitSortBasedColPartitionStore(context, (SortBasedColPartitionStoreExec) exec, stack);
     } else if (exec instanceof StoreTableExec) {
       return visitStoreTable(context, (StoreTableExec) exec, stack);
+    } else if (exec instanceof StoreIndexExec) {
+      return visitStoreIndex(context, (StoreIndexExec) exec, stack);
     }
 
     throw new PhysicalPlanningException("Unsupported Type: " + exec.getClass().getSimpleName());
@@ -103,12 +99,6 @@ public class BasicPhysicalExecutorVisitor<CONTEXT, RESULT> implements PhysicalEx
     visit(exec.getRightChild(), stack, context);
     stack.pop();
     return r;
-  }
-
-  @Override
-  public RESULT visitBNLJoin(CONTEXT context, BNLJoinExec exec, Stack<PhysicalExec> stack)
-      throws PhysicalPlanningException {
-    return visitBinaryExecutor(context, exec, stack);
   }
 
   @Override
@@ -208,18 +198,6 @@ public class BasicPhysicalExecutorVisitor<CONTEXT, RESULT> implements PhysicalEx
   }
 
   @Override
-  public RESULT visitNLJoin(CONTEXT context, NLJoinExec exec, Stack<PhysicalExec> stack) throws
-      PhysicalPlanningException {
-    return visitBinaryExecutor(context, exec, stack);
-  }
-
-  @Override
-  public RESULT visitNLLeftOuterJoin(CONTEXT context, NLLeftOuterJoinExec exec, Stack<PhysicalExec> stack)
-      throws PhysicalPlanningException {
-    return visitBinaryExecutor(context, exec, stack);
-  }
-
-  @Override
   public RESULT visitProjection(CONTEXT context, ProjectionExec exec, Stack<PhysicalExec> stack)
       throws PhysicalPlanningException {
     return visitUnaryExecutor(context, exec, stack);
@@ -261,7 +239,14 @@ public class BasicPhysicalExecutorVisitor<CONTEXT, RESULT> implements PhysicalEx
   }
 
   @Override
-  public RESULT visitStoreTable(CONTEXT context, StoreTableExec exec, Stack<PhysicalExec> stack) throws PhysicalPlanningException {
+  public RESULT visitStoreTable(CONTEXT context, StoreTableExec exec, Stack<PhysicalExec> stack)
+      throws PhysicalPlanningException {
+    return visitUnaryExecutor(context, exec, stack);
+  }
+
+  @Override
+  public RESULT visitStoreIndex(CONTEXT context, StoreIndexExec exec, Stack<PhysicalExec> stack)
+      throws PhysicalPlanningException {
     return visitUnaryExecutor(context, exec, stack);
   }
 }

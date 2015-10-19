@@ -19,19 +19,14 @@
 package org.apache.tajo.engine.planner.physical;
 
 import org.apache.hadoop.io.IOUtils;
-import org.apache.tajo.catalog.Column;
-import org.apache.tajo.catalog.Schema;
-import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.partition.PartitionMethodDesc;
 import org.apache.tajo.catalog.proto.CatalogProtos;
-import org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.datum.Datum;
+import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.engine.codegen.CompilationError;
 import org.apache.tajo.engine.planner.Projector;
-import org.apache.tajo.engine.utils.TupleCache;
-import org.apache.tajo.engine.utils.TupleCacheKey;
-import org.apache.tajo.catalog.SchemaUtil;
 import org.apache.tajo.plan.Target;
 import org.apache.tajo.plan.expr.ConstEval;
 import org.apache.tajo.plan.expr.EvalNode;
@@ -42,18 +37,16 @@ import org.apache.tajo.plan.rewrite.rules.PartitionedTableRewriter;
 import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.fragment.FileFragment;
-import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.storage.fragment.FragmentConvertor;
 import org.apache.tajo.worker.TaskAttemptContext;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 
-public class SeqScanExec extends PhysicalExec {
+public class SeqScanExec extends ScanExec {
   private ScanNode plan;
 
   private Scanner scanner = null;
@@ -66,9 +59,10 @@ public class SeqScanExec extends PhysicalExec {
 
   private TableStats inputStats;
 
-  private TupleCacheKey cacheKey;
+  // scanner iterator with filter or without filter
+  private ScanIterator scanIt;
 
-  private boolean cacheRead = false;
+  private boolean needProjection;
 
   public SeqScanExec(TaskAttemptContext context, ScanNode plan,
                      CatalogProtos.FragmentProto [] fragments) throws IOException {
@@ -78,22 +72,8 @@ public class SeqScanExec extends PhysicalExec {
     this.qual = plan.getQual();
     this.fragments = fragments;
 
-    if (plan.isBroadcastTable()) {
-      String pathNameKey = "";
-      if (fragments != null) {
-        for (FragmentProto f : fragments) {
-          Fragment fragement = FragmentConvertor.convert(context.getConf(), f);
-          pathNameKey += fragement.getKey();
-        }
-      }
-
-      cacheKey = new TupleCacheKey(
-          context.getTaskId().getTaskId().getExecutionBlockId().toString(), plan.getTableName(), pathNameKey);
-    }
-
-    if (fragments != null
-        && plan.getTableDesc().hasPartition()
-        && plan.getTableDesc().getPartitionMethod().getPartitionType() == CatalogProtos.PartitionType.COLUMN) {
+    if (plan.getTableDesc().hasPartition() &&
+        plan.getTableDesc().getPartitionMethod().getPartitionType() == CatalogProtos.PartitionType.COLUMN) {
       rewriteColumnPartitionedTableSchema();
     }
   }
@@ -116,20 +96,25 @@ public class SeqScanExec extends PhysicalExec {
     // Remove partition key columns from an input schema.
     this.inSchema = plan.getTableDesc().getSchema();
 
-    List<FileFragment> fileFragments = FragmentConvertor.convert(FileFragment.class, fragments);
+    Tuple partitionRow = null;
+    if (fragments != null && fragments.length > 0) {
+      List<FileFragment> fileFragments = FragmentConvertor.convert(FileFragment.class, fragments);
 
-    // Get a partition key value from a given path
-    Tuple partitionRow =
-        PartitionedTableRewriter.buildTupleFromPartitionPath(columnPartitionSchema, fileFragments.get(0).getPath(),
-            false);
+      // Get a partition key value from a given path
+      partitionRow = PartitionedTableRewriter.buildTupleFromPartitionPath(
+              columnPartitionSchema, fileFragments.get(0).getPath(), false);
+    }
 
     // Targets or search conditions may contain column references.
     // However, actual values absent in tuples. So, Replace all column references by constant datum.
     for (Column column : columnPartitionSchema.toArray()) {
       FieldEval targetExpr = new FieldEval(column);
-      Datum datum = targetExpr.eval(columnPartitionSchema, partitionRow);
+      Datum datum = NullDatum.get();
+      if (partitionRow != null) {
+        targetExpr.bind(context.getEvalContext(), columnPartitionSchema);
+        datum = targetExpr.eval(partitionRow);
+      }
       ConstEval constExpr = new ConstEval(datum);
-
 
       for (int i = 0; i < plan.getTargets().length; i++) {
         Target target = plan.getTargets()[i];
@@ -151,12 +136,14 @@ public class SeqScanExec extends PhysicalExec {
     }
   }
 
-  public void init() throws IOException {
+  public Schema getProjectSchema() {
     Schema projected;
 
+    // in the case where projected column or expression are given
+    // the target can be an empty list.
     if (plan.hasTargets()) {
       projected = new Schema();
-      Set<Column> columnSet = new HashSet<Column>();
+      Set<Column> columnSet = new HashSet<>();
 
       if (plan.hasQual()) {
         columnSet.addAll(EvalTreeUtil.findUniqueColumns(qual));
@@ -166,43 +153,97 @@ public class SeqScanExec extends PhysicalExec {
         columnSet.addAll(EvalTreeUtil.findUniqueColumns(t.getEvalTree()));
       }
 
-      for (Column column : inSchema.getColumns()) {
+      for (Column column : inSchema.getAllColumns()) {
         if (columnSet.contains(column)) {
           projected.addColumn(column);
         }
       }
+
     } else {
+      // no any projected columns, meaning that all columns should be projected.
+      // TODO - this implicit rule makes code readability bad. So, we should remove it later
       projected = outSchema;
     }
 
-    if (cacheKey != null) {
-      TupleCache tupleCache = TupleCache.getInstance();
-      if (tupleCache.isBroadcastCacheReady(cacheKey)) {
-        openCacheScanner();
-      } else {
-        if (TupleCache.getInstance().lockBroadcastScan(cacheKey)) {
-          scanAndAddCache(projected);
-          openCacheScanner();
-        } else {
-          Object lockMonitor = tupleCache.getLockMonitor();
-          synchronized (lockMonitor) {
-            try {
-              lockMonitor.wait(20 * 1000);
-            } catch (InterruptedException e) {
-            }
-          }
-          if (tupleCache.isBroadcastCacheReady(cacheKey)) {
-            openCacheScanner();
-          } else {
-            initScanner(projected);
-          }
-        }
-      }
+    return projected;
+  }
+
+  private void initScanIterator() {
+    // We should use FilterScanIterator only if underlying storage does not support filter push down.
+    if (plan.hasQual() && !scanner.isSelectable()) {
+      scanIt = new FilterScanIterator(scanner, qual);
+
     } else {
-      initScanner(projected);
+      scanIt = new FullScanIterator(scanner);
+    }
+  }
+
+  @Override
+  public void init() throws IOException {
+
+    // Why we should check nullity? See https://issues.apache.org/jira/browse/TAJO-1422
+
+    if (fragments == null) {
+      scanIt = new EmptyScanIterator();
+
+    } else {
+      Schema projectedFields = getProjectSchema();
+      initScanner(projectedFields);
+
+      // See Scanner.isProjectable() method. Depending on the result of isProjectable(),
+      // the width of retrieved tuple is changed.
+      //
+      // If projectable, the retrieved tuple will contain only projected fields.
+      // Otherwise, the retrieved tuple will contain projected fields and NullDatum
+      // for non-projected fields.
+      Schema actualInSchema = scanner.isProjectable() ? projectedFields : inSchema;
+
+      initializeProjector(actualInSchema);
+
+      if (plan.hasQual()) {
+        qual.bind(context.getEvalContext(), actualInSchema);
+      }
+
+      initScanIterator();
     }
 
     super.init();
+  }
+
+  protected void initializeProjector(Schema actualInSchema){
+    Target[] realTargets;
+    if (plan.getTargets() == null) {
+      realTargets = PlannerUtil.schemaToTargets(outSchema);
+    } else {
+      realTargets = plan.getTargets();
+    }
+
+    //if all column is selected and there is no have expression, projection can be skipped
+    if (realTargets.length == inSchema.size()) {
+      for (int i = 0; i < inSchema.size(); i++) {
+        if (realTargets[i].getEvalTree() instanceof FieldEval) {
+          FieldEval f = realTargets[i].getEvalTree();
+          if(!f.getColumnRef().equals(inSchema.getColumn(i))) {
+            needProjection = true;
+            break;
+          }
+        } else {
+          needProjection = true;
+          break;
+        }
+      }
+    } else {
+      needProjection = true;
+    }
+
+    if(needProjection) {
+      projector = new Projector(context, actualInSchema, outSchema, plan.getTargets());
+    }
+  }
+
+  @Override
+  public ScanNode getScanNode() {
+    return plan;
   }
 
   @Override
@@ -213,93 +254,51 @@ public class SeqScanExec extends PhysicalExec {
   }
 
   private void initScanner(Schema projected) throws IOException {
-    this.projector = new Projector(context, inSchema, outSchema, plan.getTargets());
-    TableMeta meta = null;
-    try {
-      meta = (TableMeta) plan.getTableDesc().getMeta().clone();
-    } catch (CloneNotSupportedException e) {
-      throw new RuntimeException(e);
+    TableDesc table = plan.getTableDesc();
+    TableMeta meta = table.getMeta();
+
+    if (fragments.length > 1) {
+
+      this.scanner = new MergeScanner(
+          context.getConf(),
+          plan.getPhysicalSchema(), meta,
+          FragmentConvertor.convert(context.getConf(), fragments),
+          projected
+      );
+
+    } else {
+
+      Tablespace tablespace = TablespaceManager.get(table.getUri());
+      this.scanner = tablespace.getScanner(
+          meta,
+          plan.getPhysicalSchema(),
+          FragmentConvertor.convert(context.getConf(), fragments[0]),
+          projected);
     }
 
-    // set system default properties
-    PlannerUtil.applySystemDefaultToTableProperties(context.getQueryContext(), meta);
-
-    if (fragments != null) {
-      if (fragments.length > 1) {
-        this.scanner = new MergeScanner(context.getConf(), plan.getPhysicalSchema(), meta,
-            FragmentConvertor.convert(context.getConf(), fragments), projected
-        );
-      } else {
-        StorageManager storageManager = StorageManager.getStorageManager(
-            context.getConf(), plan.getTableDesc().getMeta().getStoreType());
-        this.scanner = storageManager.getScanner(meta,
-            plan.getPhysicalSchema(), fragments[0], projected);
-      }
-      scanner.init();
-    }
-  }
-
-  private void openCacheScanner() throws IOException {
-    Scanner cacheScanner = TupleCache.getInstance().openCacheScanner(cacheKey, plan.getPhysicalSchema());
-    if (cacheScanner != null) {
-      scanner = cacheScanner;
-      cacheRead = true;
-    }
-  }
-
-  private void scanAndAddCache(Schema projected) throws IOException {
-    initScanner(projected);
-
-    List<Tuple> broadcastTupleCacheList = new ArrayList<Tuple>();
-    while (true) {
-      Tuple tuple = next();
-      if (tuple != null) {
-        broadcastTupleCacheList.add(tuple);
-      } else {
-        break;
-      }
+    if (scanner.isSelectable()) { // TODO - isSelectable should be moved to FormatProperty
+      scanner.setFilter(qual);
     }
 
-    if (scanner != null) {
-      scanner.close();
-      scanner = null;
+    if (plan.hasLimit()) {
+      scanner.setLimit(plan.getLimit());
     }
-
-    TupleCache.getInstance().addBroadcastCache(cacheKey, broadcastTupleCacheList);
+    scanner.init();
   }
 
   @Override
   public Tuple next() throws IOException {
-    if (fragments == null) {
-      return null;
+
+    while(scanIt.hasNext()) {
+      Tuple t = scanIt.next();
+      if(!needProjection) return t;
+
+      Tuple outTuple = projector.eval(t);
+      outTuple.setOffset(t.getOffset());
+      return outTuple;
     }
 
-    Tuple tuple;
-    Tuple outTuple = new VTuple(outColumnNum);
-
-    if (!plan.hasQual()) {
-      if ((tuple = scanner.next()) != null) {
-        if (cacheRead) {
-          return tuple;
-        }
-        projector.eval(tuple, outTuple);
-        outTuple.setOffset(tuple.getOffset());
-        return outTuple;
-      } else {
-        return null;
-      }
-    } else {
-      while ((tuple = scanner.next()) != null) {
-        if (cacheRead) {
-          return tuple;
-        }
-        if (qual.eval(inSchema, tuple).isTrue()) {
-          projector.eval(tuple, outTuple);
-          return outTuple;
-        }
-      }
-      return null;
-    }
+    return null;
   }
 
   @Override
@@ -321,13 +320,21 @@ public class SeqScanExec extends PhysicalExec {
       }
     }
     scanner = null;
-    plan = null;
-    qual = null;
-    projector = null;
   }
 
+  @Override
   public String getTableName() {
     return plan.getTableName();
+  }
+
+  @Override
+  public String getCanonicalName() {
+    return plan.getCanonicalName();
+  }
+
+  @Override
+  public CatalogProtos.FragmentProto[] getFragments() {
+    return fragments;
   }
 
   @Override

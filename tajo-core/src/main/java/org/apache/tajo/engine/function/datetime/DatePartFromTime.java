@@ -27,7 +27,6 @@ import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.DatumFactory;
 import org.apache.tajo.datum.NullDatum;
-import org.apache.tajo.datum.TimeDatum;
 import org.apache.tajo.engine.function.annotation.Description;
 import org.apache.tajo.engine.function.annotation.ParamTypes;
 import org.apache.tajo.plan.expr.FunctionEval;
@@ -39,6 +38,7 @@ import org.apache.tajo.util.datetime.TimeMeta;
 
 import java.util.TimeZone;
 
+import static org.apache.tajo.common.TajoDataTypes.Type.TIME;
 import static org.apache.tajo.common.TajoDataTypes.Type.FLOAT8;
 import static org.apache.tajo.common.TajoDataTypes.Type.TEXT;
 
@@ -69,21 +69,13 @@ public class DatePartFromTime extends GeneralFunction {
 
   @Override
   public Datum eval(Tuple params) {
-    Datum target = params.get(0);
-    TimeDatum time = null;
 
-    if(target instanceof NullDatum || params.get(1) instanceof NullDatum) {
-      return NullDatum.get();
-    }
-
-    if(params.get(1) instanceof TimeDatum) {
-      time = (TimeDatum)(params.get(1));
-    } else {
+    if (params.isBlankOrNull(0) || params.isBlankOrNull(1) || params.type(1) != TIME) {
       return NullDatum.get();
     }
 
     if (extractor == null) {
-      String extractType = target.asChars().toLowerCase();
+      String extractType = params.getText(0).toLowerCase();
 
       if (extractType.equals("hour")) {
         extractor = new HourExtractorFromTime();
@@ -95,18 +87,12 @@ public class DatePartFromTime extends GeneralFunction {
         extractor = new MinuteExtractorFromTime();
       } else if (extractType.equals("second")) {
         extractor = new SecondExtractorFromTime();
-      } else if (extractType.equals("timezone")) {
-        extractor = new NullExtractorFromTime();
-      } else if (extractType.equals("timezone_hour")) {
-        extractor = new NullExtractorFromTime();
-      } else if (extractType.equals("timezone_minute")) {
-        extractor = new NullExtractorFromTime();
       } else {
         extractor = new NullExtractorFromTime();
       }
     }
 
-    TimeMeta tm = time.toTimeMeta();
+    TimeMeta tm = params.getTimeDate(1);
     DateTimeUtil.toUserTimezone(tm, timezone);
     return extractor.extract(tm);
   }
@@ -115,35 +101,35 @@ public class DatePartFromTime extends GeneralFunction {
     public Datum extract(TimeMeta tm);
   }
 
-  private class HourExtractorFromTime implements DatePartExtractorFromTime {
+  private static class HourExtractorFromTime implements DatePartExtractorFromTime {
     @Override
     public Datum extract(TimeMeta tm) {
       return DatumFactory.createFloat8((double) tm.hours);
     }
   }
 
-  private class MicrosecondsExtractorFromTime implements DatePartExtractorFromTime {
+  private static class MicrosecondsExtractorFromTime implements DatePartExtractorFromTime {
     @Override
     public Datum extract(TimeMeta tm) {
       return DatumFactory.createFloat8((double) (tm.secs * 1000000 + tm.fsecs));
     }
   }
 
-  private class MillisecondsExtractorFromTime implements DatePartExtractorFromTime {
+  private static class MillisecondsExtractorFromTime implements DatePartExtractorFromTime {
     @Override
     public Datum extract(TimeMeta tm) {
       return DatumFactory.createFloat8((double) (tm.secs * 1000 + tm.fsecs / 1000.0));
     }
   }
 
-  private class MinuteExtractorFromTime implements DatePartExtractorFromTime {
+  private static class MinuteExtractorFromTime implements DatePartExtractorFromTime {
     @Override
     public Datum extract(TimeMeta tm) {
       return DatumFactory.createFloat8((double) tm.minutes);
     }
   }
 
-  private class SecondExtractorFromTime implements DatePartExtractorFromTime {
+  private static class SecondExtractorFromTime implements DatePartExtractorFromTime {
     @Override
     public Datum extract(TimeMeta tm) {
       if (tm.fsecs != 0) {
@@ -154,7 +140,7 @@ public class DatePartFromTime extends GeneralFunction {
     }
   }
 
-  private class NullExtractorFromTime implements DatePartExtractorFromTime {
+  private static class NullExtractorFromTime implements DatePartExtractorFromTime {
     @Override
     public Datum extract(TimeMeta tm) {
       return NullDatum.get();

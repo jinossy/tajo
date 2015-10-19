@@ -32,10 +32,7 @@ import org.apache.hadoop.io.compress.CompressionCodecFactory;
 import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
-import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.statistics.TableStats;
-import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.datum.Datum;
 import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.datum.ProtobufDatum;
 import org.apache.tajo.storage.*;
@@ -43,7 +40,6 @@ import org.apache.tajo.storage.exception.AlreadyExistsStorageException;
 import org.apache.tajo.storage.rcfile.NonSyncByteArrayOutputStream;
 import org.apache.tajo.util.BytesUtils;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 
 public class SequenceFileAppender extends FileAppender {
@@ -87,15 +83,6 @@ public class SequenceFileAppender extends FileAppender {
 
     this.fs = path.getFileSystem(conf);
 
-    //determine the intermediate file type
-    String store = conf.get(TajoConf.ConfVars.SHUFFLE_FILE_FORMAT.varname,
-        TajoConf.ConfVars.SHUFFLE_FILE_FORMAT.defaultVal);
-    if (enabledStats && CatalogProtos.StoreType.SEQUENCEFILE == CatalogProtos.StoreType.valueOf(store.toUpperCase())) {
-      isShuffle = true;
-    } else {
-      isShuffle = false;
-    }
-
     this.delimiter = StringEscapeUtils.unescapeJava(this.meta.getOption(StorageConstants.SEQUENCEFILE_DELIMITER,
         StorageConstants.DEFAULT_FIELD_DELIMITER)).charAt(0);
     this.columnNum = schema.size();
@@ -105,10 +92,6 @@ public class SequenceFileAppender extends FileAppender {
       nullChars = NullDatum.get().asTextBytes();
     } else {
       nullChars = nullCharacters.getBytes();
-    }
-
-    if (!fs.exists(path.getParent())) {
-      throw new FileNotFoundException(path.toString());
     }
 
     if(this.meta.containsOption(StorageConstants.COMPRESSION_CODEC)) {
@@ -125,6 +108,7 @@ public class SequenceFileAppender extends FileAppender {
       String serdeClass = this.meta.getOption(StorageConstants.SEQUENCEFILE_SERDE,
           TextSerializerDeserializer.class.getName());
       serde = (SerializerDeserializer) Class.forName(serdeClass).newInstance();
+      serde.init(schema);
     } catch (Exception e) {
       LOG.error(e.getMessage(), e);
       throw new IOException(e);
@@ -159,16 +143,13 @@ public class SequenceFileAppender extends FileAppender {
 
   @Override
   public void addTuple(Tuple tuple) throws IOException {
-    Datum datum;
 
     if (serde instanceof BinarySerializerDeserializer) {
       byte nullByte = 0;
       int lasti = 0;
       for (int i = 0; i < columnNum; i++) {
-        datum = tuple.get(i);
-
         // set bit to 1 if a field is not null
-        if (null != datum) {
+        if (!tuple.isBlank(i)) {
           nullByte |= 1 << (i % 8);
         }
 
@@ -179,30 +160,24 @@ public class SequenceFileAppender extends FileAppender {
           os.write(nullByte);
 
           for (int j = lasti; j <= i; j++) {
-            datum = tuple.get(j);
 
             switch (schema.getColumn(j).getDataType().getType()) {
               case TEXT:
-                BytesUtils.writeVLong(os, datum.asTextBytes().length);
+                BytesUtils.writeVLong(os, tuple.getTextBytes(j).length);
                 break;
               case PROTOBUF:
-                ProtobufDatum protobufDatum = (ProtobufDatum) datum;
+                ProtobufDatum protobufDatum = (ProtobufDatum) tuple.getProtobufDatum(j);
                 BytesUtils.writeVLong(os, protobufDatum.asByteArray().length);
                 break;
               case CHAR:
               case INET4:
               case BLOB:
-                BytesUtils.writeVLong(os, datum.asByteArray().length);
+                BytesUtils.writeVLong(os, tuple.getBytes(j).length);
                 break;
               default:
             }
 
-            serde.serialize(schema.getColumn(j), datum, os, nullChars);
-
-            if (isShuffle) {
-              // it is to calculate min/max values, and it is only used for the intermediate file.
-              stats.analyzeField(j, datum);
-            }
+            serde.serialize(j, tuple, os, nullChars);
           }
           lasti = i + 1;
           nullByte = 0;
@@ -215,18 +190,11 @@ public class SequenceFileAppender extends FileAppender {
 
     } else {
       for (int i = 0; i < columnNum; i++) {
-        datum = tuple.get(i);
-        serde.serialize(schema.getColumn(i), datum, os, nullChars);
+        serde.serialize(i, tuple, os, nullChars);
 
         if (columnNum -1 > i) {
           os.write((byte) delimiter);
         }
-
-        if (isShuffle) {
-          // it is to calculate min/max values, and it is only used for the intermediate file.
-          stats.analyzeField(i, datum);
-        }
-
       }
       writer.append(EMPTY_KEY, new Text(os.toByteArray()));
     }

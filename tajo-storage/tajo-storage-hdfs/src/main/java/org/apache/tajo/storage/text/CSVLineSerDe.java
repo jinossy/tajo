@@ -19,14 +19,16 @@
 package org.apache.tajo.storage.text;
 
 import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.storage.StorageConstants;
+import org.apache.tajo.util.Bytes;
 
 public class CSVLineSerDe extends TextLineSerDe {
   @Override
-  public TextLineDeserializer createDeserializer(Schema schema, TableMeta meta, int[] targetColumnIndexes) {
-    return new CSVLineDeserializer(schema, meta, targetColumnIndexes);
+  public TextLineDeserializer createDeserializer(Schema schema, TableMeta meta, Column [] projected) {
+    return new CSVLineDeserializer(schema, meta, projected);
   }
 
   @Override
@@ -34,8 +36,8 @@ public class CSVLineSerDe extends TextLineSerDe {
     return new CSVLineSerializer(schema, meta);
   }
 
-  public static char getFieldDelimiter(TableMeta meta) {
+  public static byte[] getFieldDelimiter(TableMeta meta) {
     return StringEscapeUtils.unescapeJava(meta.getOption(StorageConstants.TEXT_DELIMITER,
-        StorageConstants.DEFAULT_FIELD_DELIMITER)).charAt(0);
+        StorageConstants.DEFAULT_FIELD_DELIMITER)).getBytes(Bytes.UTF8_CHARSET);
   }
 }
