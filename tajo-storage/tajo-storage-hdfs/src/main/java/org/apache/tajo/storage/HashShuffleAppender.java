@@ -24,7 +24,8 @@ import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.catalog.statistics.TableStats;
 import org.apache.tajo.tuple.RowBlockReader;
-import org.apache.tajo.tuple.offheap.ZeroCopyTuple;
+import org.apache.tajo.tuple.memory.UnSafeTuple;
+import org.apache.tajo.tuple.memory.ZeroCopyTuple;
 import org.apache.tajo.util.Pair;
 
 import java.io.IOException;
@@ -62,7 +63,7 @@ public class HashShuffleAppender implements Appender {
 
   private ExecutionBlockId ebId;
 
-  private final ZeroCopyTuple zeroCopyTuple = new ZeroCopyTuple();
+  private final ZeroCopyTuple zeroCopyTuple = new UnSafeTuple();
 
   public HashShuffleAppender(ExecutionBlockId ebId, int partId, int pageSize, FileAppender appender, int volumeId) {
     this.ebId = ebId;
@@ -94,15 +95,17 @@ public class HashShuffleAppender implements Appender {
       }
       long currentPos = appender.getOffset();
 
+      int rows = 0;
       while (rowBlockReader.next(zeroCopyTuple)){
         appender.addTuple(zeroCopyTuple);
+        rows++;
       }
 
       long posAfterWritten = appender.getOffset();
 
       int writtenBytes = (int)(posAfterWritten - currentPos);
 
-      int nextRowNum = rowNumInPage + rowBlockReader.rows();
+      int nextRowNum = rowNumInPage + rows;
       List<Pair<Long, Pair<Integer, Integer>>> taskIndexes = taskTupleIndexes.get(taskId);
       if (taskIndexes == null) {
         taskIndexes = new ArrayList<>();
@@ -117,7 +120,7 @@ public class HashShuffleAppender implements Appender {
         rowNumInPage = 0;
       }
 
-      totalRows += rowBlockReader.rows();
+      totalRows += rows;
       return writtenBytes;
     }
   }

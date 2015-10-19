@@ -24,16 +24,18 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Column;
+import org.apache.tajo.catalog.SchemaUtil;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.conf.TajoConf.ConfVars;
 import org.apache.tajo.plan.logical.ShuffleFileWriteNode;
 import org.apache.tajo.storage.HashShuffleAppender;
 import org.apache.tajo.storage.HashShuffleAppenderManager;
-import org.apache.tajo.storage.RowStoreUtil;
 import org.apache.tajo.storage.Tuple;
-import org.apache.tajo.tuple.offheap.OffHeapRowBlock;
-import org.apache.tajo.tuple.offheap.RowWriter;
+import org.apache.tajo.tuple.memory.MemoryRowBlock;
+import org.apache.tajo.tuple.memory.RowBlock;
+import org.apache.tajo.tuple.memory.RowWriter;
 import org.apache.tajo.unit.StorageUnit;
 import org.apache.tajo.worker.TaskAttemptContext;
 
@@ -58,6 +60,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
   private HashShuffleAppenderManager hashShuffleAppenderManager;
   private int maxBufferSize;
   private int initialRowBufferSize;
+  private final DataType[] dataTypes;
 
   public HashShuffleFileWriteExec(TaskAttemptContext context,
                                   final ShuffleFileWriteNode plan, final PhysicalExec child) throws IOException {
@@ -80,11 +83,8 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
     this.partitioner = new HashPartitioner(shuffleKeyIds, numShuffleOutputs);
     this.hashShuffleAppenderManager = context.getHashShuffleAppenderManager();
     this.maxBufferSize = context.getConf().getIntVar(ConfVars.SHUFFLE_HASH_APPENDER_BUFFER_SIZE);
-    if(numShuffleOutputs > 0){
-      this.initialRowBufferSize = Math.max(maxBufferSize / numShuffleOutputs, 64 * StorageUnit.KB);
-    } else {
-      this.initialRowBufferSize = 64 * StorageUnit.KB;
-    }
+    this.initialRowBufferSize = 128 * StorageUnit.KB;
+    this.dataTypes = SchemaUtil.toDataTypes(outSchema);
   }
 
   @Override
@@ -102,7 +102,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
     return appender;
   }
 
-  Map<Integer, OffHeapRowBlock> partitionTuples = new HashMap<Integer, OffHeapRowBlock>();
+  Map<Integer, RowBlock> partitionTuples = new HashMap<Integer, RowBlock>();
   long writtenBytes = 0L;
   long usedMem = 0;
 
@@ -116,23 +116,24 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
         numRows++;
 
         partId = partitioner.getPartition(tuple);
-        OffHeapRowBlock rowBlock = partitionTuples.get(partId);
+        RowBlock rowBlock = partitionTuples.get(partId);
         if (rowBlock == null) {
-          rowBlock = new OffHeapRowBlock(outSchema, initialRowBufferSize);
+          rowBlock = new MemoryRowBlock(dataTypes, initialRowBufferSize);
           partitionTuples.put(partId, rowBlock);
         }
 
         RowWriter writer = rowBlock.getWriter();
-        long prevUsedMem = rowBlock.usedMem();
-        RowStoreUtil.convert(tuple, writer);
-        usedMem += (rowBlock.usedMem() - prevUsedMem);
+        long prevUsedMem = rowBlock.getMemory().readableBytes();
+        writer.addTuple(tuple);
+        usedMem += (rowBlock.getMemory().readableBytes() - prevUsedMem);
 
         if (usedMem >= maxBufferSize) {
           List<Future<Integer>> resultList = Lists.newArrayList();
-          for (Map.Entry<Integer, OffHeapRowBlock> entry : partitionTuples.entrySet()) {
+          for (Map.Entry<Integer, RowBlock> entry : partitionTuples.entrySet()) {
             int appendPartId = entry.getKey();
             HashShuffleAppender appender = getAppender(appendPartId);
 
+            //flush buffers
             resultList.add(hashShuffleAppenderManager.
                 writePartitions(appender, context.getTaskId(), entry.getValue(), false));
 
@@ -145,12 +146,13 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
         }
       }
 
-      // processing remained tuples
+      // write in-memory tuples
       List<Future<Integer>> resultList = Lists.newArrayList();
-      for (Map.Entry<Integer, OffHeapRowBlock> entry : partitionTuples.entrySet()) {
+      for (Map.Entry<Integer, RowBlock> entry : partitionTuples.entrySet()) {
         int appendPartId = entry.getKey();
         HashShuffleAppender appender = getAppender(appendPartId);
 
+        //flush buffers and release
         resultList.add(hashShuffleAppenderManager.
             writePartitions(appender, context.getTaskId(), entry.getValue(), true));
 
@@ -180,7 +182,12 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
 
   @Override
   public void rescan() throws IOException {
-    // nothing to do   
+    if(partitionTuples != null && partitionTuples.size() > 0){
+      for (RowBlock rowBlock : partitionTuples.values()) {
+        rowBlock.release();
+      }
+      partitionTuples.clear();
+    }
   }
 
   @Override
@@ -192,7 +199,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
     }
 
     if(partitionTuples != null && partitionTuples.size() > 0){
-      for (OffHeapRowBlock rowBlock : partitionTuples.values()) {
+      for (RowBlock rowBlock : partitionTuples.values()) {
         rowBlock.release();
       }
       partitionTuples.clear();

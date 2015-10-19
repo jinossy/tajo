@@ -33,7 +33,7 @@ import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.conf.TajoConf.ConfVars;
-import org.apache.tajo.tuple.offheap.OffHeapRowBlock;
+import org.apache.tajo.tuple.memory.RowBlock;
 import org.apache.tajo.util.Pair;
 
 import java.io.IOException;
@@ -47,7 +47,7 @@ public class HashShuffleAppenderManager {
   private static final Log LOG = LogFactory.getLog(HashShuffleAppenderManager.class);
 
   private ConcurrentMap<ExecutionBlockId, Map<Integer, PartitionAppenderMeta>> appenderMap = Maps.newConcurrentMap();
-  private ConcurrentMap<Integer, ExecutorService> executors = Maps.newConcurrentMap(); // parallel writing
+  private ConcurrentMap<Integer, ExecutorService> executors = Maps.newConcurrentMap(); // for parallel writing
   private List<String> temporalPaths = Lists.newArrayList();
 
   private TajoConf systemConf;
@@ -68,11 +68,11 @@ public class HashShuffleAppenderManager {
     pageSize = systemConf.getIntVar(ConfVars.SHUFFLE_HASH_APPENDER_PAGE_VOLUME) * 1024 * 1024;
 
     Iterable<Path> allLocalPath = lDirAllocator.getAllLocalPathsToRead(".", systemConf);
-    int parallelExecution = systemConf.getIntVar(ConfVars.SHUFFLE_HASH_PARALLEL_EXECUTION_NUM_PER_DISK);
+
+    //add async hash shuffle writer
     for (Path path : allLocalPath) {
       temporalPaths.add(localFS.makeQualified(path).toString());
-      //concurrency control of root path
-      executors.put(temporalPaths.size() - 1, Executors.newFixedThreadPool(parallelExecution));
+      executors.put(temporalPaths.size() - 1, Executors.newSingleThreadExecutor());
     }
   }
 
@@ -111,7 +111,7 @@ public class HashShuffleAppenderManager {
           fs.mkdirs(dataFile.getParent());
         }
 
-        FileTablespace space = (FileTablespace) TablespaceManager.get(dataFile.toUri());
+        FileTablespace space = TablespaceManager.get(dataFile.toUri());
         FileAppender appender = (FileAppender) space.getAppender(meta, outSchema, dataFile);
         appender.enableStats();
         appender.init();
@@ -202,14 +202,14 @@ public class HashShuffleAppenderManager {
    * Asynchronously write partitions.
    */
   public Future<Integer> writePartitions(final HashShuffleAppender appender, final TaskAttemptId taskId,
-                                         final OffHeapRowBlock rowBlock, final boolean releaseBlock) {
+                                         final RowBlock rowBlock, final boolean release) {
     ExecutorService executor = executors.get(appender.getVolumeId());
     return executor.submit(new Callable<Integer>() {
       @Override
       public Integer call() throws Exception {
         int bytes = appender.writeRowBlock(taskId, rowBlock.getReader());
         rowBlock.clear();
-        if (releaseBlock) rowBlock.release();
+        if (release) rowBlock.release();
         return bytes;
       }
     });
@@ -217,7 +217,7 @@ public class HashShuffleAppenderManager {
 
   public void shutdown() {
     for (ExecutorService service : executors.values()) {
-      service.shutdown();
+      service.shutdownNow();
     }
   }
 
