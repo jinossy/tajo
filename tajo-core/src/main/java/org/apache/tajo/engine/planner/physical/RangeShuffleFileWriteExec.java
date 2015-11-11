@@ -34,6 +34,7 @@ import org.apache.tajo.plan.logical.ShuffleFileWriteNode;
 import org.apache.tajo.plan.util.PlannerUtil;
 import org.apache.tajo.storage.*;
 import org.apache.tajo.storage.index.bst.BSTIndex;
+import org.apache.tajo.storage.rawfile.DirectRawFileWriter;
 import org.apache.tajo.worker.TaskAttemptContext;
 
 import java.io.IOException;
@@ -81,8 +82,11 @@ public class RangeShuffleFileWriteExec extends UnaryPhysicalExec {
 
     FileSystem fs = new RawLocalFileSystem();
     fs.mkdirs(storeTablePath);
-    this.appender = (FileAppender) ((FileTablespace) TablespaceManager.getDefault())
-        .getAppender(meta, outSchema, new Path(storeTablePath, "output"));
+    DirectRawFileWriter writer = new DirectRawFileWriter(
+        context.getConf(), null, outSchema, meta, new Path(storeTablePath, "output"), meta.getDataFormat());
+
+    writer.setStatColumns(keySchema);
+    this.appender = writer;
     this.appender.enableStats();
     this.appender.init();
     this.indexWriter = bst.getIndexWriter(new Path(storeTablePath, "index"),
