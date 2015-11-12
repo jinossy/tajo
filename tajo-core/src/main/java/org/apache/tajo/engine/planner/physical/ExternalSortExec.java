@@ -164,7 +164,8 @@ public class ExternalSortExec extends SortExec {
 
     long chunkWriteStart = System.currentTimeMillis();
     Path outputPath = getChunkPathForWrite(0, chunkId);
-    final DirectRawFileWriter appender = new DirectRawFileWriter(context.getConf(), null, inSchema, intermediateMeta, outputPath);
+    final DirectRawFileWriter appender =
+        new DirectRawFileWriter(context.getConf(), null, inSchema, intermediateMeta, outputPath);
     appender.init();
     for (Tuple t : sorted) {
       appender.addTuple(t);
@@ -669,11 +670,6 @@ public class ExternalSortExec extends SortExec {
       }
     }
 
-    private void prepareTuplesForFirstComparison() throws IOException {
-      leftTuple = leftScan.next();
-      rightTuple = rightScan.next();
-    }
-
     protected Tuple prepare(int index, Tuple tuple) {
       return tuple;
     }
@@ -736,7 +732,6 @@ public class ExternalSortExec extends SortExec {
         leftEOF = false;
         rightEOF = false;
 
-       // prepareTuplesForFirstComparison();
       } else {
         throw new IllegalStateException("Illegal State: init() is not allowed in " + state.name());
       }
