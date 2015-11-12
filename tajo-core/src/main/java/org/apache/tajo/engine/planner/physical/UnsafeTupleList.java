@@ -22,6 +22,7 @@ import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SchemaUtil;
 import org.apache.tajo.storage.Tuple;
 import org.apache.tajo.tuple.memory.MemoryRowBlock;
+import org.apache.tajo.tuple.memory.ResizableLimitSpec;
 
 import java.util.ArrayList;
 
@@ -38,9 +39,10 @@ public class UnsafeTupleList extends ArrayList<Tuple> {
     this.rowBlock = new MemoryRowBlock(SchemaUtil.toDataTypes(schema));
   }
 
-  public UnsafeTupleList(Schema schema, int initialCapacity) {
-    super(10000);
-    this.rowBlock = new MemoryRowBlock(SchemaUtil.toDataTypes(schema), initialCapacity);
+  public UnsafeTupleList(Schema schema, int initialArraySize, int initialCapacity, float allowedOVerflowRatio) {
+    super(initialArraySize);
+    this.rowBlock = new MemoryRowBlock(SchemaUtil.toDataTypes(schema),
+        new ResizableLimitSpec(initialCapacity, Integer.MAX_VALUE, allowedOVerflowRatio), true);
   }
 
   @Override

@@ -18,6 +18,7 @@
 
 package org.apache.tajo.engine.planner.physical;
 
+import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.LocalDirAllocator;
@@ -102,7 +103,7 @@ public class ExternalSortExec extends SortExec {
   /** the final result */
   private Scanner result;
   /** total bytes of input data */
-  private long sortAndStoredBytes;
+  private long bytesOfLatestChunk;
 
   private ExternalSortExec(final TaskAttemptContext context, final SortNode plan)
       throws PhysicalPlanningException {
@@ -117,12 +118,15 @@ public class ExternalSortExec extends SortExec {
     this.sortBufferBytesNum = context.getQueryContext().getInt(SessionVars.EXTSORT_BUFFER_SIZE) * StorageUnit.MB;
     this.allocatedCoreNum = context.getConf().getIntVar(ConfVars.EXECUTOR_EXTERNAL_SORT_THREAD_NUM);
     this.executorService = Executors.newFixedThreadPool(this.allocatedCoreNum);
-    this.inMemoryTable = new UnsafeTupleList(inSchema, StorageUnit.MB);
+    int initialArraySize = context.getQueryContext().getInt(SessionVars.SORT_LIST_SIZE);
+    float allowedOVerflowRatio = 0.2f;
+    this.inMemoryTable = new UnsafeTupleList(inSchema, initialArraySize,
+        (int) (sortBufferBytesNum * allowedOVerflowRatio), allowedOVerflowRatio);
 
     this.sortTmpDir = getExecutorTmpDir();
     this.localDirAllocator = new LocalDirAllocator(ConfVars.WORKER_TEMPORAL_DIR.varname);
     this.localFS = new RawLocalFileSystem();
-    this.intermediateMeta = CatalogUtil.newTableMeta(BuiltinStorages.DRAW); //TODO change to SHUFFLE_FILE_FORMAT
+    this.intermediateMeta = CatalogUtil.newTableMeta(BuiltinStorages.DRAW);
   }
 
   public ExternalSortExec(final TaskAttemptContext context,final SortNode plan, final ScanNode scanNode,
@@ -200,7 +204,7 @@ public class ExternalSortExec extends SortExec {
     while (!context.isStopped() && (tuple = child.next()) != null) { // partition sort start
       inMemoryTable.add(tuple);
 
-      if (inMemoryTable.usedMem() > sortBufferBytesNum * 0.9f) {
+      if (inMemoryTable.usedMem() > sortBufferBytesNum) {
         long runEndTime = System.currentTimeMillis();
         info(LOG, chunkId + " run loading time: " + (runEndTime - runStartTime) + " msec");
         runStartTime = runEndTime;
@@ -228,19 +232,10 @@ public class ExternalSortExec extends SortExec {
       }
     }
 
-    if (!memoryResident && !inMemoryTable.isEmpty()) { // if there are at least one or more input tuples
-      // check if data exceeds a sort buffer. If so, it store the remain data into a chunk.
-      long start = System.currentTimeMillis();
-      int rowNum = inMemoryTable.size();
-      chunkPaths.add(sortAndStoreChunk(chunkId, inMemoryTable));
-      long end = System.currentTimeMillis();
-      info(LOG, "Last Chunk #" + chunkId + " " + rowNum + " rows written (" + (end - start) + " msec)");
-    }
-
     // get total loaded (or stored) bytes and total row numbers
     TableStats childTableStats = child.getInputStats();
     if (childTableStats != null) {
-      sortAndStoredBytes = childTableStats.getNumBytes();
+      bytesOfLatestChunk = childTableStats.getNumBytes();
     }
     return chunkPaths;
   }
@@ -274,7 +269,7 @@ public class ExternalSortExec extends SortExec {
 
         if (memoryResident) { // if all sorted data reside in a main-memory table.
           TupleSorter sorter = getSorter(inMemoryTable);
-          result = new MemTableScanner(sorter.sort(), inMemoryTable.size(), sortAndStoredBytes);
+          this.result = new MemTableScanner(sorter.sort(), inMemoryTable.size(), bytesOfLatestChunk);
         } else { // if input data exceeds main-memory at least once
 
           try {
@@ -454,14 +449,14 @@ public class ExternalSortExec extends SortExec {
       final Path outputPath = getChunkPathForWrite(level + 1, nextRunId);
       info(LOG, mergeFanout + " files are being merged to an output file " + outputPath.getName());
       long mergeStartTime = System.currentTimeMillis();
-      final DirectRawFileWriter output = new DirectRawFileWriter(context.getConf(), null, inSchema, intermediateMeta, outputPath);
+      final DirectRawFileWriter output =
+          new DirectRawFileWriter(context.getConf(), null, inSchema, intermediateMeta, outputPath);
       output.init();
       final Scanner merger = createKWayMerger(inputFiles, startIdx, mergeFanout);
       merger.init();
       Tuple mergeTuple;
       while((mergeTuple = merger.next()) != null) {
         output.addTuple(mergeTuple);
-        //System.out.println(mergeTuple);
       }
       merger.close();
       output.close();
@@ -486,7 +481,7 @@ public class ExternalSortExec extends SortExec {
    * Create a merged file scanner or k-way merge scanner.
    */
   private Scanner createFinalMerger(List<Chunk> inputs) throws IOException {
-    if (inputs.size() == 1) {
+    if (inputs.size() == 1 && inMemoryTable.size() == 0) {
       this.result = getFileScanner(inputs.get(0));
     } else {
       this.result = createKWayMerger(inputs, 0, inputs.size());
@@ -499,12 +494,22 @@ public class ExternalSortExec extends SortExec {
   }
 
   private Scanner createKWayMerger(List<Chunk> inputs, final int startChunkId, final int num) throws IOException {
-    final Scanner [] sources = new Scanner[num];
-    for (int i = 0; i < num; i++) {
-      sources[i] = getFileScanner(inputs.get(startChunkId + i));
+    boolean tupleInMemory = inMemoryTable.size() > 0;
+
+    List<Scanner> scannerList = Lists.newArrayList();
+
+    // if tuples are still the in-memory block, the in-memory tuples will be included in merge phase.
+    if (tupleInMemory) {
+      TupleSorter sorter = getSorter(inMemoryTable);
+      scannerList.add(new MemTableScanner(sorter.sort(), inMemoryTable.size(), bytesOfLatestChunk));
     }
 
-    return createKWayMergerInternal(sources, 0, num);
+    for (int i = 0; i < num; i++) {
+      scannerList.add(getFileScanner(inputs.get(startChunkId + i)));
+    }
+    Scanner [] sources = scannerList.toArray(new Scanner[scannerList.size()]);
+
+    return createKWayMergerInternal(sources, 0, sources.length);
   }
 
   private Scanner createKWayMergerInternal(final Scanner [] sources, final int startIdx, final int num)
