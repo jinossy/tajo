@@ -56,8 +56,6 @@ public class DirectRawFileWriter extends FileAppender {
 
   public static final String WRITE_BUFFER_SIZE = "tajo.storage.raw.io.write-buffer.bytes";
   public static final int DEFAULT_BUFFER_SIZE = 128 * StorageUnit.KB;
-  public static final float BUFFER_THRESHHOLD = 0.9f;
-
   protected FileChannel channel;
 
   protected RandomAccessFile randomAccessFile;
@@ -85,11 +83,6 @@ public class DirectRawFileWriter extends FileAppender {
     this.hasExternalBuf = rowBlock != null;
   }
 
-  private Schema columns;
-  public void setStatColumns(Schema columns) {
-     this.columns = columns;
-  }
-
   @Override
   public void init() throws IOException {
     File file;
@@ -115,18 +108,16 @@ public class DirectRawFileWriter extends FileAppender {
     }
 
     if (enabledStats) {
+      this.stats = new TableStatistics(this.schema);
       if (ShuffleType.RANGE_SHUFFLE == PlannerUtil.getShuffleType(
           meta.getOption(StorageConstants.SHUFFLE_TYPE,
               PlannerUtil.getShuffleType(ShuffleType.NONE_SHUFFLE)))) {
         this.analyzeField = true;
-        this.stats = new TableStatistics(this.schema, this.columns);
-      } else {
-        this.stats = new TableStatistics(this.schema);
       }
     }
 
     if (rowBlock == null) {
-      int bufferSize = conf.getInt(WRITE_BUFFER_SIZE, DEFAULT_BUFFER_SIZE);
+      int bufferSize = (int) (conf.getInt(WRITE_BUFFER_SIZE, DEFAULT_BUFFER_SIZE) * 1.1f);
       rowBlock = new MemoryRowBlock(SchemaUtil.toDataTypes(schema), bufferSize, true, meta.getDataFormat());
     }
 
@@ -220,7 +211,7 @@ public class DirectRawFileWriter extends FileAppender {
 
     tupleConverter.convert(t, rowBlock.getWriter());
 
-    if(rowBlock.usage() > BUFFER_THRESHHOLD) {
+    if(rowBlock.usedMem() > DEFAULT_BUFFER_SIZE) {
       writeRowBlock(rowBlock);
       rowBlock.clear();
     }

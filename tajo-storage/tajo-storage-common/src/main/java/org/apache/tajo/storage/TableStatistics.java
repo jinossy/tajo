@@ -42,26 +42,6 @@ public class TableStatistics {
 
   private boolean [] comparable;
 
-  public TableStatistics(Schema schema, Schema target) {
-    this.schema = schema;
-    minValues = new VTuple(schema.size());
-    maxValues = new VTuple(schema.size());
-
-    numNulls = new long[schema.size()];
-    comparable = new boolean[schema.size()];
-
-    DataType type;
-    for (int i = 0; i < schema.size(); i++) {
-      type = schema.getColumn(i).getDataType();
-
-      if (!target.contains(schema.getColumn(i)) || type.getType() == Type.PROTOBUF) {
-        comparable[i] = false;
-      } else {
-        comparable[i] = true;
-      }
-    }
-  }
-
   public TableStatistics(Schema schema) {
     this.schema = schema;
     minValues = new VTuple(schema.size());
@@ -110,13 +90,13 @@ public class TableStatistics {
   }
 
   public void analyzeField(int idx, Tuple tuple) {
-    if (comparable[idx]) {
-      if (tuple.isBlankOrNull(idx)) {
-        numNulls[idx]++;
-        return;
-      }
+    if (tuple.isBlankOrNull(idx)) {
+      numNulls[idx]++;
+      return;
+    }
 
-      Datum datum = tuple.asDatum(idx);
+    Datum datum = tuple.asDatum(idx);
+    if (comparable[idx]) {
       if (!maxValues.contains(idx) ||
           maxValues.get(idx).compareTo(datum) < 0) {
         maxValues.put(idx, datum);
