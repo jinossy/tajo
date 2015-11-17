@@ -18,7 +18,6 @@
 
 package org.apache.tajo.engine.planner.physical;
 
-import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.LocalDirAllocator;
@@ -75,15 +74,16 @@ public class ExternalSortExec extends SortExec {
   /** the defaultFanout of external sort */
   private final int defaultFanout;
   /** It's the size of in-memory table. If memory consumption exceeds it, store the memory table into a disk. */
-  private long sortBufferBytesNum;
+  private int sortBufferBytesNum;
   /** the number of available cores */
   private final int allocatedCoreNum;
   /** If there are available multiple cores, it tries parallel merge. */
   private ExecutorService executorService;
   /** used for in-memory sort of each chunk. */
-  private UnsafeTupleList inMemoryTable;
+  private UnSafeTupleList inMemoryTable;
+  //private MemoryRowBlock rowBlock;
   /** temporal dir */
-  private final Path sortTmpDir;
+  private Path sortTmpDir;
   /** It enables round-robin disks allocation */
   private final LocalDirAllocator localDirAllocator;
   /** local file system */
@@ -117,13 +117,6 @@ public class ExternalSortExec extends SortExec {
     // TODO - sort buffer and core num should be changed to use the allocated container resource.
     this.sortBufferBytesNum = context.getQueryContext().getInt(SessionVars.EXTSORT_BUFFER_SIZE) * StorageUnit.MB;
     this.allocatedCoreNum = context.getConf().getIntVar(ConfVars.EXECUTOR_EXTERNAL_SORT_THREAD_NUM);
-    this.executorService = Executors.newFixedThreadPool(this.allocatedCoreNum);
-    int initialArraySize = context.getQueryContext().getInt(SessionVars.SORT_LIST_SIZE);
-    float allowedOVerflowRatio = 0.2f;
-    this.inMemoryTable = new UnsafeTupleList(inSchema, initialArraySize,
-        (int) (sortBufferBytesNum * allowedOVerflowRatio), allowedOVerflowRatio);
-
-    this.sortTmpDir = getExecutorTmpDir();
     this.localDirAllocator = new LocalDirAllocator(ConfVars.WORKER_TEMPORAL_DIR.varname);
     this.localFS = new RawLocalFileSystem();
     this.intermediateMeta = CatalogUtil.newTableMeta(BuiltinStorages.DRAW);
@@ -136,7 +129,7 @@ public class ExternalSortExec extends SortExec {
     mergedInputFragments = TUtil.newList();
     for (CatalogProtos.FragmentProto proto : fragments) {
       FileFragment fragment = FragmentConvertor.convert(FileFragment.class, proto);
-      mergedInputFragments.add(new Chunk(fragment, scanNode.getTableDesc().getMeta()));
+      mergedInputFragments.add(new Chunk(inSchema, fragment, scanNode.getTableDesc().getMeta()));
     }
   }
 
@@ -146,8 +139,16 @@ public class ExternalSortExec extends SortExec {
     setChild(child);
   }
 
+  @Override
   public void init() throws IOException {
     inputStats = new TableStats();
+    this.executorService = Executors.newFixedThreadPool(this.allocatedCoreNum);
+    this.sortTmpDir = getExecutorTmpDir();
+
+    int initialArraySize = context.getQueryContext().getInt(SessionVars.SORT_LIST_SIZE);
+    this.inMemoryTable = new UnSafeTupleList(inSchema, initialArraySize);
+
+
     super.init();
   }
 
@@ -175,7 +176,6 @@ public class ExternalSortExec extends SortExec {
       appender.addTuple(t);
     }
     appender.close();
-    tupleBlock.clear();
     long chunkWriteEnd = System.currentTimeMillis();
 
 
@@ -186,7 +186,7 @@ public class ExternalSortExec extends SortExec {
 
     FileFragment frag = new FileFragment("", outputPath, 0,
         new File(localFS.makeQualified(outputPath).toUri()).length());
-    return new Chunk(frag, intermediateMeta);
+    return new Chunk(inSchema, frag, intermediateMeta);
   }
 
   /**
@@ -201,6 +201,7 @@ public class ExternalSortExec extends SortExec {
 
     int chunkId = 0;
     long runStartTime = System.currentTimeMillis();
+
     while (!context.isStopped() && (tuple = child.next()) != null) { // partition sort start
       inMemoryTable.add(tuple);
 
@@ -213,7 +214,6 @@ public class ExternalSortExec extends SortExec {
         memoryResident = false;
 
         chunkPaths.add(sortAndStoreChunk(chunkId, inMemoryTable));
-
         inMemoryTable.clear();
         chunkId++;
 
@@ -232,6 +232,11 @@ public class ExternalSortExec extends SortExec {
       }
     }
 
+    if (inMemoryTable.size() > 0) {
+      LOG.warn("mem sort : " + inMemoryTable.size());
+      TupleSorter sorter = getSorter(inMemoryTable);
+      chunkPaths.add(new Chunk(inSchema, new MemTableScanner(sorter.sort(), inMemoryTable.size(), inMemoryTable.usedMem())));
+    }
     // get total loaded (or stored) bytes and total row numbers
     TableStats childTableStats = child.getInputStats();
     if (childTableStats != null) {
@@ -243,7 +248,7 @@ public class ExternalSortExec extends SortExec {
   /**
    * Get a local path from all temporal paths in round-robin manner.
    */
-  private synchronized Path getChunkPathForWrite(int level, int chunkId) throws IOException {
+  private Path getChunkPathForWrite(int level, int chunkId) throws IOException {
     return localFS.makeQualified(localDirAllocator.getLocalPathForWrite(
         sortTmpDir + "/" + level + "_" + chunkId, context.getConf()));
   }
@@ -256,7 +261,9 @@ public class ExternalSortExec extends SortExec {
       // if input files are given, it starts merging directly.
       if (mergedInputFragments != null) {
         try {
+          long startSort = System.currentTimeMillis();
           this.result = externalMergeAndSort(mergedInputFragments);
+          info(LOG, "mergedInputFragments sort time: "+ (System.currentTimeMillis() - startSort) + " msec");
         } catch (Exception e) {
           throw new PhysicalPlanningException(e);
         }
@@ -267,18 +274,35 @@ public class ExternalSortExec extends SortExec {
         long endTimeOfChunkSplit = System.currentTimeMillis();
         info(LOG, "Chunks creation time: " + (endTimeOfChunkSplit - startTimeOfChunkSplit) + " msec");
 
-        if (memoryResident) { // if all sorted data reside in a main-memory table.
-          TupleSorter sorter = getSorter(inMemoryTable);
-          this.result = new MemTableScanner(sorter.sort(), inMemoryTable.size(), bytesOfLatestChunk);
+        if (chunks.size() == 1) { // if all sorted data reside in one chunk.
+          long startSort = System.currentTimeMillis();
+          this.result = chunks.get(0).getScanner();
+          info(LOG, "sort time: " + (System.currentTimeMillis() - startSort) + "msec");
         } else { // if input data exceeds main-memory at least once
-
           try {
+            long startSort = System.currentTimeMillis();
             this.result = externalMergeAndSort(chunks);
+            info(LOG, "sort time: " + (System.currentTimeMillis() - startSort) + "msec");
           } catch (Exception e) {
             throw new PhysicalPlanningException(e);
           }
-
         }
+
+        /*if (memoryResident) { // if all sorted data reside in a main-memory table.
+          long startSort = System.currentTimeMillis();
+          TupleSorter sorter = getSorter(inMemoryTable);
+          this.result = new MemTableScanner(sorter.sort(), inMemoryTable.size(), bytesOfLatestChunk);
+
+        } else { // if input data exceeds main-memory at least once
+
+          try {
+            long startSort = System.currentTimeMillis();
+            this.result = externalMergeAndSort(chunks);
+            info(LOG, "sort time: "+ (System.currentTimeMillis() - startSort) + "msec");
+          } catch (Exception e) {
+            throw new PhysicalPlanningException(e);
+          }
+        }*/
       }
 
       sorted = true;
@@ -396,11 +420,15 @@ public class ExternalSortExec extends SortExec {
        */
       int numDeletedFiles = 0;
       for (Chunk chunk : inputFiles) {
-        if (chunk.getFragment().getTableName().contains(INTERMEDIATE_FILE_PREFIX)) {
+        if (!memoryResident && chunk.inMemory) {
+//          UnSafeTupleList unsafeTupleList = (UnSafeTupleList) chunk.tupleList;
+//          unsafeTupleList.release();
+          LOG.warn("mem release");
+        } else if (!chunk.inMemory && chunk.getFragment().getTableName().contains(INTERMEDIATE_FILE_PREFIX)) {
           localFS.delete(chunk.getFragment().getPath(), true);
           numDeletedFiles++;
 
-          if(LOG.isDebugEnabled()) LOG.debug("Delete merged intermediate file: " + chunk.getFragment());
+          if (LOG.isDebugEnabled()) LOG.debug("Delete merged intermediate file: " + chunk.getFragment());
         }
       }
       info(LOG, numDeletedFiles + " merged intermediate files deleted");
@@ -449,11 +477,14 @@ public class ExternalSortExec extends SortExec {
       final Path outputPath = getChunkPathForWrite(level + 1, nextRunId);
       info(LOG, mergeFanout + " files are being merged to an output file " + outputPath.getName());
       long mergeStartTime = System.currentTimeMillis();
+
+      final Scanner merger = createKWayMerger(inputFiles, startIdx, mergeFanout);
+      merger.init();
+
       final DirectRawFileWriter output =
           new DirectRawFileWriter(context.getConf(), null, inSchema, intermediateMeta, outputPath);
       output.init();
-      final Scanner merger = createKWayMerger(inputFiles, startIdx, mergeFanout);
-      merger.init();
+
       Tuple mergeTuple;
       while((mergeTuple = merger.next()) != null) {
         output.addTuple(mergeTuple);
@@ -466,7 +497,7 @@ public class ExternalSortExec extends SortExec {
           + " bytes, " + (mergeEndTime - mergeStartTime) + " msec)");
       File f = new File(localFS.makeQualified(outputPath).toUri());
       FileFragment frag = new FileFragment(INTERMEDIATE_FILE_PREFIX + outputPath.getName(), outputPath, 0, f.length());
-      return new Chunk(frag, intermediateMeta);
+      return new Chunk(inSchema, frag, intermediateMeta);
     }
   }
 
@@ -481,20 +512,17 @@ public class ExternalSortExec extends SortExec {
    * Create a merged file scanner or k-way merge scanner.
    */
   private Scanner createFinalMerger(List<Chunk> inputs) throws IOException {
-    if (inputs.size() == 1 && inMemoryTable.size() == 0) {
-      this.result = getFileScanner(inputs.get(0));
+    if (inputs.size() == 1) {
+      this.result = inputs.get(0).getScanner(); //TODO last one is in memory ?
     } else {
       this.result = createKWayMerger(inputs, 0, inputs.size());
     }
     return result;
   }
 
-  private Scanner getFileScanner(Chunk chunk) throws IOException {
-    return TablespaceManager.getLocalFs().getScanner(chunk.getMeta(), inSchema, chunk.getFragment(), outSchema);
-  }
 
   private Scanner createKWayMerger(List<Chunk> inputs, final int startChunkId, final int num) throws IOException {
-    boolean tupleInMemory = inMemoryTable.size() > 0;
+    /*boolean tupleInMemory = inMemoryTable.size() > 0;
 
     List<Scanner> scannerList = Lists.newArrayList();
 
@@ -509,7 +537,12 @@ public class ExternalSortExec extends SortExec {
     }
     Scanner [] sources = scannerList.toArray(new Scanner[scannerList.size()]);
 
-    return createKWayMergerInternal(sources, 0, sources.length);
+    return createKWayMergerInternal(sources, 0, sources.length);*/
+    final Scanner [] sources = new Scanner[num];
+    for (int i = 0; i < num; i++) {
+      sources[i] = inputs.get(startChunkId + i).getScanner();
+    }
+    return createKWayMergerInternal(sources, 0, num);
   }
 
   private Scanner createKWayMergerInternal(final Scanner [] sources, final int startIdx, final int num)
@@ -577,6 +610,7 @@ public class ExternalSortExec extends SortExec {
     public void close() throws IOException {
       iterator = null;
       scannerProgress = 1.0f;
+
     }
 
     @Override
@@ -811,16 +845,18 @@ public class ExternalSortExec extends SortExec {
 
     if (finalOutputFiles != null) {
       for (Chunk chunk : finalOutputFiles) {
-        FileFragment frag = chunk.getFragment();
-        File tmpFile = new File(localFS.makeQualified(frag.getPath()).toUri());
-        if (frag.getStartKey() == 0 && frag.getLength() == tmpFile.length()) {
-          localFS.delete(frag.getPath(), true);
-          LOG.info("Delete file: " + frag);
+        if (chunk.getFragment() != null) {
+          FileFragment frag = chunk.getFragment();
+          File tmpFile = new File(localFS.makeQualified(frag.getPath()).toUri());
+          if (frag.getStartKey() == 0 && frag.getLength() == tmpFile.length()) {
+            localFS.delete(frag.getPath(), true);
+            LOG.info("Delete file: " + frag);
+          }
         }
       }
     }
 
-    if(inMemoryTable != null){
+    if(inMemoryTable != null) {
       inMemoryTable.release();
       inMemoryTable = null;
     }
@@ -860,21 +896,44 @@ public class ExternalSortExec extends SortExec {
     }
   }
 
-  private static class Chunk {
+  private class Chunk {
     private FileFragment fragment;
     private TableMeta meta;
+    private Schema schema;
+    private Scanner scanner;
+    private boolean inMemory;
 
-    public Chunk(FileFragment fragment, TableMeta meta) {
+    public Chunk(Schema schema, FileFragment fragment, TableMeta meta) {
+      this.schema = schema;
       this.fragment = fragment;
       this.meta = meta;
     }
 
-    public FileFragment getFragment() {
+    public Chunk(Schema schema, Scanner scanner) {
+      this.scanner = scanner;
+      try {
+        this.scanner.init();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+      this.schema = schema;
+      this.inMemory = true;
+    }
+
+    private FileFragment getFragment() {
       return fragment;
     }
 
-    public TableMeta getMeta() {
+    private TableMeta getMeta() {
       return meta;
+    }
+
+    public Scanner getScanner() throws IOException {
+      if(inMemory) {
+        return scanner;
+      } else {
+        return TablespaceManager.getLocalFs().getScanner(meta, schema, fragment, schema);
+      }
     }
   }
 }

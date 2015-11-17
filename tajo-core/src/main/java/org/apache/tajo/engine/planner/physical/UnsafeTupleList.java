@@ -18,54 +18,75 @@
 
 package org.apache.tajo.engine.planner.physical;
 
+import com.google.common.collect.Lists;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.SchemaUtil;
+import org.apache.tajo.common.TajoDataTypes.DataType;
 import org.apache.tajo.storage.Tuple;
+import org.apache.tajo.tuple.memory.FixedSizeLimitSpec;
 import org.apache.tajo.tuple.memory.MemoryRowBlock;
-import org.apache.tajo.tuple.memory.ResizableLimitSpec;
+import org.apache.tajo.tuple.memory.UnSafeTuple;
+import org.apache.tajo.unit.StorageUnit;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * In TupleList, input tuples are automatically cloned whenever the add() method is called.
  * This data structure is usually used in physical operators like hash join or hash aggregation.
  */
-public class UnsafeTupleList extends ArrayList<Tuple> {
+public class UnSafeTupleList extends ArrayList<Tuple> {
 
-  private MemoryRowBlock rowBlock;
+  private final DataType[] dataTypes;
+  private List<MemoryRowBlock> rowBlocks;
+  private MemoryRowBlock currentRowBlock;
+  private int totalUsedMem;
+  private int pageSize;
 
-  public UnsafeTupleList(Schema schema) {
-    super();
-    this.rowBlock = new MemoryRowBlock(SchemaUtil.toDataTypes(schema));
-  }
-
-  public UnsafeTupleList(Schema schema, int initialArraySize, int initialCapacity, float allowedOVerflowRatio) {
+  public UnSafeTupleList(Schema schema, int initialArraySize) {
     super(initialArraySize);
-    this.rowBlock = new MemoryRowBlock(SchemaUtil.toDataTypes(schema),
-        new ResizableLimitSpec(initialCapacity, Integer.MAX_VALUE, allowedOVerflowRatio), true);
+    this.dataTypes = SchemaUtil.toDataTypes(schema);
+    this.pageSize = StorageUnit.MB;
+    this.rowBlocks = Lists.newArrayList();
+    this.currentRowBlock = new MemoryRowBlock(dataTypes, new FixedSizeLimitSpec(pageSize), true);
+    this.rowBlocks.add(currentRowBlock);
+
   }
 
   @Override
   public boolean add(Tuple tuple) {
-    return super.add(rowBlock.getWriter().addTuple(tuple));
+
+    int prevPos = currentRowBlock.getMemory().writerPosition();
+    if (currentRowBlock.getWriter().addTuple(tuple)) {
+      UnSafeTuple unSafeTuple = new UnSafeTuple();
+      unSafeTuple.set(currentRowBlock.getMemory(), prevPos, dataTypes);
+      return super.add(unSafeTuple);
+    } else {
+      this.totalUsedMem += currentRowBlock.usedMem();
+      this.currentRowBlock = new MemoryRowBlock(dataTypes, new FixedSizeLimitSpec(pageSize), true);
+      this.rowBlocks.add(currentRowBlock);
+      return this.add(tuple);
+    }
   }
 
   public void release() {
-    rowBlock.release();
+    for (MemoryRowBlock rowBlock : rowBlocks) {
+      rowBlock.release();
+    }
     super.clear();
+    rowBlocks.clear();
+    totalUsedMem = 0;
   }
 
   public int usedMem() {
-    return rowBlock.usedMem();
+    return totalUsedMem + currentRowBlock.usedMem();
   }
 
-  public float usage() {
-    return rowBlock.usage();
-  }
 
   @Override
   public void clear() {
-    super.clear();
-    rowBlock.clear();
+    release();
+    this.currentRowBlock = new MemoryRowBlock(dataTypes, new FixedSizeLimitSpec(pageSize), true);
+    this.rowBlocks.add(currentRowBlock);
   }
 }

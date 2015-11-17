@@ -110,6 +110,7 @@ public class TestProgressExternalSortExec {
     catalog.createTable(employee);
     analyzer = new SQLAnalyzer();
     planner = new LogicalPlanner(catalog, TablespaceManager.getInstance());
+    employeePath.getFileSystem(conf).deleteOnExit(employeePath);
   }
 
   @After
@@ -125,9 +126,9 @@ public class TestProgressExternalSortExec {
   @Test
   public void testExternalSortExecProgressWithMemTableScanner() throws Exception {
     QueryContext queryContext = LocalTajoTestingUtility.createDummyContext(conf);
-    int bufferSize = (int) (testDataStats.getNumBytes() * 2) / StorageUnit.MB; //multiply 2 for memory fit
-    queryContext.setInt(SessionVars.EXTSORT_BUFFER_SIZE, bufferSize);
-
+    int bufferSize = StorageUnit.MB; //multiply 2 for memory fit
+    queryContext.setInt(SessionVars.EXTSORT_BUFFER_SIZE, 200);
+//    queryContext.setInt(SessionVars.SORT_LIST_SIZE, 5000000);
     testProgress(queryContext);
   }
 
