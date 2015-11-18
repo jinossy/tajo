@@ -32,8 +32,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * In TupleList, input tuples are automatically cloned whenever the add() method is called.
- * This data structure is usually used in physical operators like hash join or hash aggregation.
+ * In UnSafeTupleList, input tuples are copied to off-heap memory page whenever the add() method is called.
+ * The memory pages are automatically added, if memory of a page are exceeded.
+ * This instance must be released
  */
 public class UnSafeTupleList extends ArrayList<Tuple> {
 
@@ -44,9 +45,14 @@ public class UnSafeTupleList extends ArrayList<Tuple> {
   private int pageSize;
 
   public UnSafeTupleList(Schema schema, int initialArraySize) {
+    this(schema, initialArraySize, StorageUnit.MB);
+
+  }
+
+  public UnSafeTupleList(Schema schema, int initialArraySize, int pageSize) {
     super(initialArraySize);
     this.dataTypes = SchemaUtil.toDataTypes(schema);
-    this.pageSize = StorageUnit.MB;
+    this.pageSize = pageSize;
     this.rowBlocks = Lists.newArrayList();
     this.currentRowBlock = new MemoryRowBlock(dataTypes, new FixedSizeLimitSpec(pageSize), true);
     this.rowBlocks.add(currentRowBlock);
@@ -69,6 +75,9 @@ public class UnSafeTupleList extends ArrayList<Tuple> {
     }
   }
 
+  /**
+   * Release the cached pages
+   */
   public void release() {
     for (MemoryRowBlock rowBlock : rowBlocks) {
       rowBlock.release();
@@ -78,11 +87,16 @@ public class UnSafeTupleList extends ArrayList<Tuple> {
     totalUsedMem = 0;
   }
 
+  /**
+   * Total used memory
+   */
   public int usedMem() {
     return totalUsedMem + currentRowBlock.usedMem();
   }
 
-
+  /**
+   * Release and reset
+   */
   @Override
   public void clear() {
     release();

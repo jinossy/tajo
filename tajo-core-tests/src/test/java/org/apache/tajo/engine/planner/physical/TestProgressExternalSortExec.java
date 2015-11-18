@@ -63,7 +63,7 @@ public class TestProgressExternalSortExec {
   private LogicalPlanner planner;
   private Path testDir;
 
-  private final int numTuple = 5000000;
+  private final int numTuple = 50000;
   private Random rnd = new Random(System.currentTimeMillis());
 
   private TableDesc employee;
@@ -126,9 +126,8 @@ public class TestProgressExternalSortExec {
   @Test
   public void testExternalSortExecProgressWithMemTableScanner() throws Exception {
     QueryContext queryContext = LocalTajoTestingUtility.createDummyContext(conf);
-    int bufferSize = StorageUnit.MB; //multiply 2 for memory fit
-    queryContext.setInt(SessionVars.EXTSORT_BUFFER_SIZE, 200);
-//    queryContext.setInt(SessionVars.SORT_LIST_SIZE, 5000000);
+    int bufferSize = (int) (testDataStats.getNumBytes() * 2) / StorageUnit.MB; //multiply 2 for memory fit
+    queryContext.setInt(SessionVars.EXTSORT_BUFFER_SIZE, bufferSize);
     testProgress(queryContext);
   }
 
@@ -195,10 +194,10 @@ public class TestProgressExternalSortExec {
 
     TableStats tableStats = exec.getInputStats();
     assertNotNull(tableStats);
-    //assertEquals(testDataStats.getNumBytes().longValue(), tableStats.getNumBytes().longValue());
+    assertEquals(testDataStats.getNumBytes().longValue(), tableStats.getNumBytes().longValue());
     assertEquals(testDataStats.getNumRows().longValue(), cnt);
     assertEquals(testDataStats.getNumRows().longValue(), tableStats.getNumRows().longValue());
-    assertTrue(testDataStats.getNumBytes().longValue() <= tableStats.getReadBytes().longValue());
+    assertTrue(testDataStats.getNumBytes() <= tableStats.getReadBytes());
 
     // for rescan test
     preVal = null;
@@ -213,18 +212,18 @@ public class TestProgressExternalSortExec {
       preVal = curVal;
       cnt++;
     }
-    assertEquals(numTuple, cnt);
     assertEquals(1.0f, exec.getProgress(), 0);
+    assertEquals(numTuple, cnt);
     exec.close();
     assertEquals(1.0f, exec.getProgress(), 0);
 
     tableStats = exec.getInputStats();
     assertNotNull(tableStats);
-//    assertEquals(testDataStats.getNumBytes().longValue(), tableStats.getNumBytes().longValue());
+    assertEquals(testDataStats.getNumBytes().longValue(), tableStats.getNumBytes().longValue());
     assertEquals(testDataStats.getNumRows().longValue(), cnt);
     assertEquals(testDataStats.getNumRows().longValue(), tableStats.getNumRows().longValue());
     //'ReadBytes' is actual read bytes
-    assertTrue(testDataStats.getNumBytes().longValue() <= tableStats.getReadBytes().longValue());
+    assertTrue(testDataStats.getNumBytes() <= tableStats.getReadBytes());
 
     conf.setIntVar(ConfVars.EXECUTOR_EXTERNAL_SORT_FANOUT, ConfVars.EXECUTOR_EXTERNAL_SORT_FANOUT.defaultIntVal);
   }
