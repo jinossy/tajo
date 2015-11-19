@@ -191,7 +191,6 @@ public class TaskImpl implements Task {
 
   @Override
   public void init() throws IOException {
-    LOG.info("Initializing: " + getId());
 
     initPlan();
     startScriptExecutors();
@@ -210,8 +209,10 @@ public class TaskImpl implements Task {
         for (String inputTable : context.getInputTables()) {
           tableDir = new Path(inputTableBaseDir, inputTable);
           if (!localFS.exists(tableDir)) {
-            LOG.info("the directory is created  " + tableDir.toUri());
             localFS.mkdirs(tableDir);
+            if(LOG.isDebugEnabled()) {
+              LOG.debug("the directory is created  " + tableDir.toUri());
+            }
           }
         }
       }
@@ -456,11 +457,6 @@ public class TaskImpl implements Task {
         queryMasterStub.done(null, report, NullCallback.get());
       }
       endTime = System.currentTimeMillis();
-      LOG.info(context.getTaskId() + " completed. " +
-          "Worker's task counter - total:" + executionBlockContext.completedTasksNum.intValue() +
-          ", succeeded: " + executionBlockContext.succeededTasksNum.intValue()
-          + ", killed: " + executionBlockContext.killedTasksNum.intValue()
-          + ", failed: " + executionBlockContext.failedTasksNum.intValue());
     }
   }
 

@@ -181,7 +181,6 @@ public class ExternalSortExec extends SortExec {
     appender.close();
     long chunkWriteEnd = System.currentTimeMillis();
 
-
     info(LOG, "Chunk #" + chunkId + " sort and written (" +
         FileUtil.humanReadableByteCount(appender.getOffset(), false) + " bytes, " + rowNum + " rows, " +
         "sort time: " + (sortEnd - sortStart) + " msec, " +
@@ -409,7 +408,7 @@ public class ExternalSortExec extends SortExec {
       for (Chunk chunk : inputFiles) {
         if (chunk.isMemory()) {
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Remove intermediate memory tuples: " + chunk.getMemoryTuples().usedMem());
+            debug(LOG, "Remove intermediate memory tuples: " + chunk.getMemoryTuples().usedMem());
           }
           chunk.getMemoryTuples().release();
         } else if (chunk.getFragment().getTableName().contains(INTERMEDIATE_FILE_PREFIX)) {
@@ -417,11 +416,13 @@ public class ExternalSortExec extends SortExec {
           numDeletedFiles++;
 
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Delete merged intermediate file: " + chunk.getFragment());
+            debug(LOG, "Delete merged intermediate file: " + chunk.getFragment());
           }
         }
       }
-      info(LOG, numDeletedFiles + " merged intermediate files deleted");
+      if(LOG.isDebugEnabled()) {
+        debug(LOG, numDeletedFiles + " merged intermediate files deleted");
+      }
 
       // switch input files to output files, and then clear outputFiles
       inputFiles.clear();
@@ -515,9 +516,11 @@ public class ExternalSortExec extends SortExec {
       long sortStart = System.currentTimeMillis();
       TupleSorter sorter = getSorter(inMemoryTable);
       Scanner scanner = new MemTableScanner(sorter.sort(), inMemoryTable.size(), inMemoryTable.usedMem());
-      info(LOG, "Memory Chunk sort (" + FileUtil.humanReadableByteCount(inMemoryTable.usedMem(), false)
-          + " bytes, " + inMemoryTable.size() + " rows, sort time: "
-          + (System.currentTimeMillis() - sortStart) + " msec)");
+      if(LOG.isDebugEnabled()) {
+        debug(LOG, "Memory Chunk sort (" + FileUtil.humanReadableByteCount(inMemoryTable.usedMem(), false)
+            + " bytes, " + inMemoryTable.size() + " rows, sort time: "
+            + (System.currentTimeMillis() - sortStart) + " msec)");
+      }
       return scanner;
     } else {
       return TablespaceManager.getLocalFs().getScanner(chunk.meta, chunk.schema, chunk.fragment, chunk.schema);
@@ -838,7 +841,7 @@ public class ExternalSortExec extends SortExec {
           if (frag.getStartKey() == 0 && frag.getLength() == tmpFile.length()) {
             localFS.delete(frag.getPath(), true);
             if(LOG.isDebugEnabled()) {
-              LOG.debug("Delete file: " + frag);
+              debug(LOG, "Delete file: " + frag);
             }
           }
         }
