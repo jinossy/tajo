@@ -76,7 +76,7 @@ public class StoreIndexExec extends UnaryPhysicalExec {
     // TODO: Create factory using reflection
     BSTIndex bst = new BSTIndex(conf);
     this.comparator = new BaseTupleComparator(keySchema, sortSpecs);
-    this.indexWriter = bst.getIndexWriter(indexPath, BSTIndex.TWO_LEVEL_INDEX, keySchema, comparator);
+    this.indexWriter = bst.getIndexWriter(indexPath, BSTIndex.TWO_LEVEL_INDEX, keySchema, comparator, true);
     this.indexWriter.setLoadNum(100);
     this.indexWriter.open();
   }
