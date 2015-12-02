@@ -26,7 +26,7 @@ import java.io.IOException;
 
 public interface IndexMethod {
   IndexWriter getIndexWriter(final Path fileName, int level, Schema keySchema,
-                             TupleComparator comparator, boolean flushOnClose) throws IOException;
+                             TupleComparator comparator) throws IOException;
   IndexReader getIndexReader(final Path fileName, Schema keySchema,
                              TupleComparator comparator) throws IOException;
 }

@@ -663,7 +663,7 @@ public class TajoPullServerService extends AbstractService {
     BSTIndex index = new BSTIndex(new TajoConf());
     BSTIndex.BSTIndexReader idxReader =
         index.getIndexReader(new Path(outDir, "index"));
-    idxReader.open();
+
     Schema keySchema = idxReader.getKeySchema();
     TupleComparator comparator = idxReader.getComparator();
 
@@ -710,6 +710,7 @@ public class TajoPullServerService extends AbstractService {
     long startOffset;
     long endOffset;
     try {
+      idxReader.init();
       startOffset = idxReader.find(start);
     } catch (IOException ioe) {
       LOG.error("State Dump (the requested range: "

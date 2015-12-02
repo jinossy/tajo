@@ -86,8 +86,8 @@ public class RangeShuffleFileWriteExec extends UnaryPhysicalExec {
     this.appender.enableStats(keySchema.getAllColumns());
     this.appender.init();
     this.indexWriter = bst.getIndexWriter(new Path(storeTablePath, "index"),
-        BSTIndex.TWO_LEVEL_INDEX, keySchema, comp, false);
-    this.indexWriter.open();
+        BSTIndex.TWO_LEVEL_INDEX, keySchema, comp, true);
+    this.indexWriter.init();
 
     super.init();
   }
