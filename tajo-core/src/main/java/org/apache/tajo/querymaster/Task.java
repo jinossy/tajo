@@ -25,7 +25,6 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.state.*;
 import org.apache.tajo.ExecutionBlockId;
@@ -34,6 +33,7 @@ import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.TaskId;
 import org.apache.tajo.catalog.statistics.TableStats;
+import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.master.TaskState;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
@@ -55,14 +55,14 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import static org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
 import static org.apache.tajo.ResourceProtos.*;
+import static org.apache.tajo.catalog.proto.CatalogProtos.FragmentProto;
 
 public class Task implements EventHandler<TaskEvent> {
   /** Class Logger */
   private static final Log LOG = LogFactory.getLog(Task.class);
 
-  private final Configuration systemConf;
+  private final TajoConf systemConf;
 	private TaskId taskId;
   private EventHandler eventHandler;
 	private StoreTableNode store = null;
@@ -185,7 +185,7 @@ public class Task implements EventHandler<TaskEvent> {
   private final Lock writeLock;
   private TaskAttemptScheduleContext scheduleContext;
 
-	public Task(Configuration conf, TaskAttemptScheduleContext scheduleContext,
+	public Task(TajoConf conf, TaskAttemptScheduleContext scheduleContext,
               TaskId id, boolean isLeafTask, EventHandler eventHandler) {
     this.systemConf = conf;
 		this.taskId = id;
@@ -208,6 +208,10 @@ public class Task implements EventHandler<TaskEvent> {
     stateMachine = stateMachineFactory.make(this);
     totalFragmentNum = 0;
 	}
+
+  public TajoConf getConf() {
+    return systemConf;
+  }
 
   public boolean isLeafTask() {
     return this.isLeafTask;

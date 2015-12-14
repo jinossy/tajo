@@ -18,18 +18,19 @@
 
 package org.apache.tajo.querymaster;
 
+import io.netty.util.internal.PlatformDependent;
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.state.*;
+import org.apache.tajo.ResourceProtos.ShuffleFileOutput;
+import org.apache.tajo.ResourceProtos.TaskCompletionReport;
 import org.apache.tajo.TajoProtos.TaskAttemptState;
 import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.catalog.proto.CatalogProtos;
 import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
 import org.apache.tajo.catalog.statistics.TableStats;
-import org.apache.tajo.ResourceProtos.TaskCompletionReport;
-import org.apache.tajo.ResourceProtos.ShuffleFileOutput;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext;
@@ -38,35 +39,38 @@ import org.apache.tajo.querymaster.Task.IntermediateEntry;
 import org.apache.tajo.querymaster.Task.PullHost;
 
 import java.util.*;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
 
   private static final Log LOG = LogFactory.getLog(TaskAttempt.class);
 
-  private final static int EXPIRE_TIME = 15000;
+  private volatile long lastContactTime;
 
   private final TaskAttemptId id;
   private final Task task;
   final EventHandler eventHandler;
 
   private WorkerConnectionInfo workerConnectionInfo;
-  private int expire;
-
-  private final Lock readLock;
-  private final Lock writeLock;
 
   private final List<String> diagnostics = new ArrayList<>();
 
   private final TaskAttemptScheduleContext scheduleContext;
 
-  private float progress;
+  private volatile float progress;
   private CatalogProtos.TableStatsProto inputStats;
   private CatalogProtos.TableStatsProto resultStats;
 
   private Set<PartitionDescProto> partitions;
+
+  private static AtomicLongFieldUpdater<TaskAttempt> EXPIRE_TIME_UPDATER;
+
+  static {
+    EXPIRE_TIME_UPDATER = PlatformDependent.newAtomicLongFieldUpdater(TaskAttempt.class, "lastContactTime");
+    if (EXPIRE_TIME_UPDATER == null) {
+      EXPIRE_TIME_UPDATER = AtomicLongFieldUpdater.newUpdater(TaskAttempt.class, "lastContactTime");
+    }
+  }
 
   protected static final StateMachineFactory
       <TaskAttempt, TaskAttemptState, TaskAttemptEventType, TaskAttemptEvent>
@@ -182,25 +186,16 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
                      final EventHandler eventHandler) {
     this.scheduleContext = scheduleContext;
     this.id = id;
-    this.expire = TaskAttempt.EXPIRE_TIME;
     this.task = task;
     this.eventHandler = eventHandler;
 
-    ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
-    this.readLock = readWriteLock.readLock();
-    this.writeLock = readWriteLock.writeLock();
-
-    stateMachine = stateMachineFactory.make(this);
+    this.stateMachine = stateMachineFactory.make(this);
     this.partitions = new HashSet<>();
+    this.updateLastContact();
   }
 
   public TaskAttemptState getState() {
-    readLock.lock();
-    try {
-      return stateMachine.getCurrentState();
-    } finally {
-      readLock.unlock();
-    }
+    return stateMachine.getCurrentState();
   }
 
   public TaskAttemptId getId() {
@@ -219,20 +214,12 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     return this.workerConnectionInfo;
   }
 
-  public synchronized void setExpireTime(int expire) {
-    this.expire = expire;
+  public final void updateLastContact() {
+    EXPIRE_TIME_UPDATER.lazySet(this, System.currentTimeMillis());
   }
 
-  public synchronized void updateExpireTime(int period) {
-    this.setExpireTime(this.expire - period);
-  }
-
-  public synchronized void resetExpireTime() {
-    this.setExpireTime(TaskAttempt.EXPIRE_TIME);
-  }
-
-  public int getLeftTime() {
-    return this.expire;
+  public final long getLastContactTime() {
+    return lastContactTime;
   }
 
   public float getProgress() {
@@ -444,36 +431,32 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
     if (LOG.isDebugEnabled()) {
       LOG.debug("Processing " + event.getTaskAttemptId() + " of type " + event.getType());
     }
-    try {
-      writeLock.lock();
-      TaskAttemptState oldState = getState();
-      try {
-        stateMachine.doTransition(event.getType(), event);
-      } catch (InvalidStateTransitonException e) {
-        LOG.error("Can't handle this event at current state of " + event.getTaskAttemptId() + ")"
-            + ", eventType:" + event.getType().name()
-            + ", oldState:" + oldState.name()
-            + ", nextState:" + getState().name()
-            , e);
-        eventHandler.handle(
-            new StageDiagnosticsUpdateEvent(event.getTaskAttemptId().getTaskId().getExecutionBlockId(),
-                "Can't handle this event at current state of " + event.getTaskAttemptId() + ")"));
-        eventHandler.handle(
-            new StageEvent(event.getTaskAttemptId().getTaskId().getExecutionBlockId(),
-                StageEventType.SQ_INTERNAL_ERROR));
-      }
 
-      //notify the eventhandler of state change
-      if (LOG.isDebugEnabled()) {
-       if (oldState != getState()) {
-          LOG.debug(id + " TaskAttempt Transitioned from " + oldState + " to "
-              + getState());
-        }
-      }
+    TaskAttemptState oldState = getState();
+
+    try {
+      updateLastContact();
+      stateMachine.doTransition(event.getType(), event);
+    } catch (InvalidStateTransitonException e) {
+      LOG.error("Can't handle this event at current state of " + event.getTaskAttemptId() + ")"
+          + ", eventType:" + event.getType().name()
+          + ", oldState:" + oldState.name()
+          + ", nextState:" + getState().name()
+          , e);
+      eventHandler.handle(
+          new StageDiagnosticsUpdateEvent(event.getTaskAttemptId().getTaskId().getExecutionBlockId(),
+              "Can't handle this event at current state of " + event.getTaskAttemptId() + ")"));
+      eventHandler.handle(
+          new StageEvent(event.getTaskAttemptId().getTaskId().getExecutionBlockId(),
+              StageEventType.SQ_INTERNAL_ERROR));
     }
 
-    finally {
-      writeLock.unlock();
+    //notify the eventhandler of state change
+    if (LOG.isDebugEnabled()) {
+      if (oldState != getState()) {
+        LOG.debug(id + " TaskAttempt Transitioned from " + oldState + " to "
+            + getState());
+      }
     }
   }
 }

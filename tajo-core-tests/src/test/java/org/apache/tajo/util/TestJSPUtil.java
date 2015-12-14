@@ -18,7 +18,6 @@
 
 package org.apache.tajo.util;
 
-import org.apache.hadoop.conf.Configuration;
 import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.TaskId;
 import org.apache.tajo.conf.TajoConf;
@@ -37,7 +36,7 @@ public class TestJSPUtil {
   public void testSortTask() throws Exception {
     List<Task> tasks = new ArrayList<>();
 
-    Configuration conf = new TajoConf();
+    TajoConf conf = new TajoConf();
 
     TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext scheduleContext =
         new TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext();

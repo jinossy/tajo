@@ -195,6 +195,7 @@ public class TajoConf extends Configuration {
         Validators.groups(Validators.notNull(), Validators.clazz())),
 
     QUERYMASTER_TASK_SCHEDULER_DELAY("tajo.qm.task-scheduler.delay", 50),  // 50 ms
+    QUERYMASTER_TASK_HEARTBEAT_TIMEOUT("tajo.qm.task.heartbeat.timeout-secs", 180, Validators.min("1")), // seconds
 
     // Catalog
     CATALOG_ADDRESS("tajo.catalog.client-rpc.address", "localhost:26005", Validators.networkAddr()),
@@ -254,11 +255,11 @@ public class TajoConf extends Configuration {
 
     //Client service RPC Server
     MASTER_SERVICE_RPC_SERVER_WORKER_THREAD_NUM("tajo.master.service.rpc.server.worker-thread-num",
-        Runtime.getRuntime().availableProcessors() * 1),
+        Runtime.getRuntime().availableProcessors()),
     WORKER_SERVICE_RPC_SERVER_WORKER_THREAD_NUM("tajo.worker.service.rpc.server.worker-thread-num",
-        Runtime.getRuntime().availableProcessors() * 1),
+        Runtime.getRuntime().availableProcessors()),
     REST_SERVICE_RPC_SERVER_WORKER_THREAD_NUM("tajo.rest.service.rpc.server.worker-thread-num",
-        Runtime.getRuntime().availableProcessors() * 1),
+        Runtime.getRuntime().availableProcessors()),
 
     // Task Configuration -----------------------------------------------------
     TASK_DEFAULT_SIZE("tajo.task.size-mb", 128),
