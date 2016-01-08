@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -7,7 +7,7 @@
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,27 +16,18 @@
  * limitations under the License.
  */
 
-package org.apache.tajo.worker;
+package org.apache.tajo.exception;
 
-import org.apache.tajo.ResourceProtos.ExecutionBlockContextResponse;
-import org.apache.tajo.TaskAttemptId;
+import org.apache.tajo.error.Errors;
+import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos.ReturnState;
 
-import java.io.IOException;
+public class FunctionFailedException extends TajoException {
 
-public class MockExecutionBlock extends ExecutionBlockContext {
-
-  public MockExecutionBlock(TajoWorker.WorkerContext workerContext,
-                            ExecutionBlockContextResponse request) throws IOException {
-    super(workerContext, request, null);
+  public FunctionFailedException(ReturnState state) {
+    super(state);
   }
 
-  @Override
-  public void init() throws Throwable {
-    //skip
-  }
-
-  @Override
-  public void fatalError(TaskAttemptId taskAttemptId, Throwable throwable) {
-
+  public FunctionFailedException(String cause) {
+    super(Errors.ResultCode.BUILTIN_FUNCTION_ERROR, cause);
   }
 }

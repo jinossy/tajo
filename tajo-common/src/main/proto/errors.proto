@@ -201,6 +201,7 @@ enum ResultCode {
 
   // 58 - System Error
   IO_ERROR                        = 58030;
+  BUILTIN_FUNCTION_ERROR          = 58031; // A builtin function or procedure has abnormally terminated (abend).
 
 
   // underlying system errors based on errno.h.

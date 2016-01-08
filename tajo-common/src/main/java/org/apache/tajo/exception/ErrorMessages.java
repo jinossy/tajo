@@ -19,6 +19,7 @@
 package org.apache.tajo.exception;
 
 import com.google.common.collect.Maps;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.tajo.error.Errors.ResultCode;
 import org.apache.tajo.util.Pair;
 
@@ -123,6 +124,8 @@ public class ErrorMessages {
     ADD_MESSAGE(CLIENT_CONNECTION_EXCEPTION, "%s", 1);
     ADD_MESSAGE(CLIENT_UNABLE_TO_ESTABLISH_CONNECTION, "Client is unable to establish connection to '%s'", 1);
     ADD_MESSAGE(CLIENT_CONNECTION_DOES_NOT_EXIST, "This connection has been closed.");
+
+    ADD_MESSAGE(BUILTIN_FUNCTION_ERROR, "A %s function or procedure has abnormally terminated (abend)", 1);
   }
 
   private static void ADD_MESSAGE(ResultCode code, String msgFormat) {
@@ -133,17 +136,8 @@ public class ErrorMessages {
     MESSAGES.put(code, new Pair<>(msgFormat, argNum));
   }
 
-  public static String getInternalErrorMessage() {
-    return MESSAGES.get(INTERNAL_ERROR).getFirst();
-  }
-
   public static String getInternalErrorMessage(Throwable t) {
-    if (t.getMessage() != null) {
-      return String.format(MESSAGES.get(INTERNAL_ERROR).getFirst(), t.getMessage());
-    } else {
-      return getInternalErrorMessage();
-    }
-
+    return String.format(MESSAGES.get(INTERNAL_ERROR).getFirst(), ExceptionUtils.getMessage(t));
   }
 
   public static String concat(String[] args) {

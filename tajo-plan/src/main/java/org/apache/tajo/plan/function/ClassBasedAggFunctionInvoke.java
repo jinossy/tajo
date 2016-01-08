@@ -22,6 +22,8 @@ import com.google.gson.annotations.Expose;
 import org.apache.tajo.catalog.FunctionDesc;
 import org.apache.tajo.common.TajoDataTypes;
 import org.apache.tajo.datum.Datum;
+import org.apache.tajo.exception.FunctionFailedException;
+import org.apache.tajo.exception.TajoRuntimeException;
 import org.apache.tajo.storage.Tuple;
 
 import java.io.IOException;
@@ -49,7 +51,11 @@ public class ClassBasedAggFunctionInvoke extends AggFunctionInvoke implements Cl
 
   @Override
   public void eval(FunctionContext context, Tuple params) {
-    function.eval(context, params);
+    try {
+      function.eval(context, params);
+    } catch (Throwable e) {
+      throw new TajoRuntimeException(new FunctionFailedException(e.getMessage()));
+    }
   }
 
   @Override
