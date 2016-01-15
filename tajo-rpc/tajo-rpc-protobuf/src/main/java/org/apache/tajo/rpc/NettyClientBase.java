@@ -19,9 +19,8 @@
 package org.apache.tajo.rpc;
 
 import com.google.common.base.Preconditions;
-import com.google.protobuf.Descriptors;
-import com.google.protobuf.Message;
-import com.google.protobuf.ServiceException;
+import com.google.common.util.concurrent.SettableFuture;
+import com.google.protobuf.*;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
 import io.netty.channel.socket.nio.NioSocketChannel;
@@ -119,9 +118,10 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
     }
   }
 
-  protected static RpcProtos.RpcRequest buildRequest(int seqId,
+  protected static RpcProtos.RpcMessage buildRequest(int seqId,
                                         Descriptors.MethodDescriptor method,
                                         Message param) {
+
     RpcProtos.RpcRequest.Builder requestBuilder = RpcProtos.RpcRequest.newBuilder()
         .setId(seqId)
         .setMethodName(method.getName());
@@ -130,13 +130,16 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
       requestBuilder.setRequestMessage(param.toByteString());
     }
 
-    return requestBuilder.build();
+    RpcProtos.RpcMessage.Builder message = RpcProtos.RpcMessage.newBuilder();
+    message.setType(RpcProtos.MessageType.REQUEST);
+    message.setRequest(requestBuilder.build());
+    return message.build();
   }
 
   /**
    * Repeat invoke rpc request until the connection attempt succeeds or exceeded retries
    */
-  protected void invoke(final RpcProtos.RpcRequest rpcRequest, final T callback, final int retry) {
+  protected void invoke(final RpcProtos.RpcMessage rpcRequest, final T callback, final int retry) {
 
     if(getChannel().eventLoop().isShuttingDown()) {
       LOG.warn("RPC is shutting down");
@@ -151,7 +154,7 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
 
         if (future.isSuccess()) {
 
-          getHandler().registerCallback(rpcRequest.getId(), callback);
+          getHandler().registerCallback(rpcRequest.getRequest().getId(), callback);
         } else {
 
           if (!future.channel().isActive() && retry < maxRetryNum) {
@@ -174,9 +177,9 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
           } else {
 
             /* Max retry count has been exceeded or internal failure */
-            getHandler().registerCallback(rpcRequest.getId(), callback);
+            getHandler().registerCallback(rpcRequest.getRequest().getId(), callback);
             getHandler().exceptionCaught(getChannel().pipeline().lastContext(),
-                new RecoverableException(rpcRequest.getId(), future.cause()));
+                new RecoverableException(rpcRequest.getRequest().getId(), future.cause()));
           }
         }
       }
@@ -300,7 +303,9 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
     }
   }
 
-  protected abstract class NettyChannelInboundHandler extends SimpleChannelInboundHandler<RpcResponse> {
+  public final ConcurrentMap<String, SettableFuture> callbacks = new ConcurrentHashMap<>();
+
+  protected abstract class NettyChannelInboundHandler extends SimpleChannelInboundHandler<RpcProtos.RpcMessage> {
 
     protected void registerCallback(int seqId, T callback) {
       if (requests.putIfAbsent(seqId, callback) != null) {
@@ -344,11 +349,20 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
     }
 
     @Override
-    protected final void channelRead0(ChannelHandlerContext ctx, RpcResponse response) throws Exception {
-      T callback = requests.remove(response.getId());
-      if (callback == null)
-        LOG.warn("Dangling rpc call");
-      else run(response, callback);
+    protected final void channelRead0(ChannelHandlerContext ctx, RpcProtos.RpcMessage message) throws Exception {
+      if(message.getType().equals(RpcProtos.MessageType.RESPONSE)) {
+        T callback = requests.remove(message.getResponse().getId());
+        if (callback == null)
+          LOG.warn("Dangling rpc call");
+        else run(message.getResponse(), callback);
+      } else if(message.getType().equals(RpcProtos.MessageType.CALLBACK)) {
+        LOG.info(message.getCallback());
+
+        SettableFuture listener = callbacks.get(message.getCallback().getQueryId());
+        if(listener != null) {
+          listener.set(message.getCallback());
+        }
+      }
     }
 
     /**
@@ -358,6 +372,7 @@ public abstract class NettyClientBase<T> implements ProtoDeclaration, Closeable 
      * @throws Exception
      */
     protected abstract void run(RpcResponse response, T callback) throws Exception;
+
 
     /**
      * Calls from exceptionCaught

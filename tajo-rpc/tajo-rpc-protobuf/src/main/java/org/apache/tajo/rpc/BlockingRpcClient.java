@@ -67,7 +67,7 @@ public class BlockingRpcClient extends NettyClientBase<BlockingRpcClient.ProtoCa
     final boolean hangDetectionEnabled = Boolean.parseBoolean(
         rpcParams.getProperty(CLIENT_HANG_DETECTION, String.valueOf(CLIENT_HANG_DETECTION_DEFAULT)));
 
-    init(new ProtoClientChannelInitializer(handler, RpcResponse.getDefaultInstance(), socketTimeoutMills,
+    init(new ProtoClientChannelInitializer(handler, RpcProtos.RpcMessage.getDefaultInstance(), socketTimeoutMills,
             hangDetectionEnabled), eventLoopGroup);
   }
 
@@ -93,7 +93,7 @@ public class BlockingRpcClient extends NettyClientBase<BlockingRpcClient.ProtoCa
         throws TajoServiceException {
 
       int nextSeqId = sequence.getAndIncrement();
-      RpcProtos.RpcRequest rpcRequest = buildRequest(nextSeqId, method, param);
+      RpcProtos.RpcMessage rpcRequest = buildRequest(nextSeqId, method, param);
       ProtoCallFuture callFuture = new ProtoCallFuture(controller, responsePrototype);
 
       invoke(rpcRequest, callFuture, 0);

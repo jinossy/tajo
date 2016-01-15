@@ -35,6 +35,7 @@ import org.apache.tajo.plan.logical.LogicalRootNode;
 import org.apache.tajo.rpc.CallFuture;
 import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.RpcClientManager;
+import org.apache.tajo.rpc.RpcProtos;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
 import org.apache.tajo.session.Session;
 import org.apache.tajo.util.NetUtils;
@@ -281,6 +282,10 @@ public class QueryInProgress {
 
         this.queryInfo.setFinishTime(System.currentTimeMillis());
         masterContext.getQueryJobManager().stopQuery(queryInfo.getQueryId());
+        RpcProtos.RpcMessage.Builder builder = RpcProtos.RpcMessage.newBuilder();
+        builder.setType(RpcProtos.MessageType.CALLBACK);
+        builder.setCallback(RpcProtos.RpcCallback.newBuilder().setQueryId(queryId.toString()).build());
+        masterContext.getClientService().write(builder.build());
       }
     } finally {
       writeLock.unlock();

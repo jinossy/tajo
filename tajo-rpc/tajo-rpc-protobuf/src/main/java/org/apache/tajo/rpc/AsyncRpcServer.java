@@ -53,12 +53,12 @@ public class AsyncRpcServer extends NettyServerBase {
     Method method = serviceClass.getMethod("newReflectiveService", interfaceClass);
     this.service = (Service) method.invoke(null, instance);
 
-    this.initializer = new ProtoServerChannelInitializer(new ServerHandler(), RpcRequest.getDefaultInstance());
+    this.initializer = new ProtoServerChannelInitializer(new ServerHandler(), RpcProtos.RpcMessage.getDefaultInstance());
     super.init(this.initializer, threads);
   }
 
   @ChannelHandler.Sharable
-  private class ServerHandler extends SimpleChannelInboundHandler<RpcRequest> {
+  private class ServerHandler extends SimpleChannelInboundHandler<RpcProtos.RpcMessage> {
 
     @Override
     public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
@@ -79,7 +79,8 @@ public class AsyncRpcServer extends NettyServerBase {
     }
 
     @Override
-    protected void channelRead0(final ChannelHandlerContext ctx, final RpcRequest request) throws Exception {
+    protected void channelRead0(final ChannelHandlerContext ctx, final RpcProtos.RpcMessage message) throws Exception {
+      final RpcRequest request = message.getRequest();
 
       String methodName = request.getMethodName();
       final MethodDescriptor methodDescriptor = service.getDescriptorForType().findMethodByName(methodName);
@@ -112,7 +113,9 @@ public class AsyncRpcServer extends NettyServerBase {
               builder.setErrorMessage(controller.errorText());
             }
 
-            ctx.writeAndFlush(builder.build());
+            RpcProtos.RpcMessage.Builder respMessage = RpcProtos.RpcMessage.newBuilder();
+            respMessage.setType(RpcProtos.MessageType.RESPONSE);
+            ctx.writeAndFlush(respMessage.setResponse(builder.build()).build());
           }
         };
 

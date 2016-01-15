@@ -316,20 +316,34 @@ public class QueryMasterTask extends CompositeService {
         return;
       }
       LOG.info(SessionVars.INDEX_ENABLED.keyname() + " : " + queryContext.getBool(SessionVars.INDEX_ENABLED));
+
+      long start = System.currentTimeMillis();
       CatalogService catalog = getQueryTaskContext().getQueryMasterContext().getWorkerContext().getCatalog();
       LogicalPlanner planner = new LogicalPlanner(catalog, TablespaceManager.getInstance());
       LogicalOptimizer optimizer = new LogicalOptimizer(systemConf, catalog, TablespaceManager.getInstance());
+
       Expr expr = JsonHelper.fromJson(jsonExpr, Expr.class);
       jsonExpr = null; // remove the possible OOM
 
+      LOG.info("create expr:" + (System.currentTimeMillis() - start) + " ms");
+      start = System.currentTimeMillis();
+
       plan = planner.createPlan(queryContext, expr);
       optimizer.optimize(queryContext, plan);
+
+      LOG.info("optimize:" + (System.currentTimeMillis() - start) + " ms");
+      start = System.currentTimeMillis();
 
       // when a given uri is null, TablespaceManager.get will return the default tablespace.
       space = TablespaceManager.get(queryContext.get(QueryVars.OUTPUT_TABLE_URI, ""));
       space.rewritePlan(queryContext, plan);
 
+      LOG.info("rewrite:" + (System.currentTimeMillis() - start) + " ms");
+      start = System.currentTimeMillis();
+
       initStagingDir();
+      LOG.info("init staging:" + (System.currentTimeMillis() - start) + " ms");
+
 
       for (LogicalPlan.QueryBlock block : plan.getQueryBlocks()) {
         LogicalNode[] scanNodes = PlannerUtil.findAllNodes(block.getRoot(), NodeType.SCAN);

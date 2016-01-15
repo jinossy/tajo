@@ -518,6 +518,10 @@ public class TajoMaster extends CompositeService {
     public TajoRestService getRestServer() {
       return restServer;
     }
+
+    public TajoMasterClientService getClientService() {
+      return tajoMasterClientService;
+    }
   }
 
   String getThreadTaskName(long id, String name) {

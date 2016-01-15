@@ -22,6 +22,7 @@ import org.apache.tajo.LocalTajoTestingUtility;
 import org.apache.tajo.TajoConstants;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.algebra.Expr;
+import org.apache.tajo.algebra.JsonHelper;
 import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.FunctionType;
 import org.apache.tajo.common.TajoDataTypes.Type;
@@ -154,9 +155,29 @@ public class TestLogicalOptimizer {
   @Test
   public final void testProjectionPushWithInnerJoin() throws TajoException {
     // two relations
-    Expr expr = sqlAnalyzer.parse(QUERIES[5]);
-    LogicalPlan newPlan = planner.createPlan(defaultContext, expr);
-    optimizer.optimize(newPlan);
+    for(int i = 0; i < 10; i++) {
+      System.out.println("-----------------------------------------------------");
+      long start = System.currentTimeMillis();
+      sqlAnalyzer = new SQLAnalyzer();
+      Expr expr = sqlAnalyzer.parse("select count(*) from employee");
+      String json = expr.toJson();
+
+
+
+      System.out.println("create expr:" + (System.currentTimeMillis() - start) + " ms");
+      start = System.currentTimeMillis();
+      LogicalPlanner planner = new LogicalPlanner(catalog, TablespaceManager.getInstance());
+      LogicalOptimizer optimizer = new LogicalOptimizer(util.getConfiguration(), catalog, TablespaceManager.getInstance());
+      Expr e = JsonHelper.fromJson(json, Expr.class);
+      //System.out.println(json);
+
+      System.out.println("parse json:" + (System.currentTimeMillis() - start) + " ms");
+      start = System.currentTimeMillis();
+      LogicalPlan newPlan = planner.createPlan(defaultContext, e);
+      optimizer.optimize(newPlan);
+      System.out.println("optimize plan:" + (System.currentTimeMillis() - start) + " ms");
+    }
+
   }
 
   @Test

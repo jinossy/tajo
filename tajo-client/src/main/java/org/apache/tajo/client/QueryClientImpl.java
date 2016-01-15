@@ -26,13 +26,13 @@ import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryIdFactory;
 import org.apache.tajo.SessionVars;
 import org.apache.tajo.TajoIdProtos.SessionIdProto;
+import org.apache.tajo.TajoProtos.CodecType;
 import org.apache.tajo.TajoProtos.QueryState;
 import org.apache.tajo.auth.UserRoleInfo;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
 import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.client.v2.exception.ClientUnableToConnectException;
-import org.apache.tajo.TajoProtos.CodecType;
 import org.apache.tajo.exception.*;
 import org.apache.tajo.ipc.ClientProtos.*;
 import org.apache.tajo.ipc.QueryMasterClientProtocol;
@@ -50,9 +50,7 @@ import java.sql.ResultSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 
 import static org.apache.tajo.exception.ExceptionUtil.throwIfError;
 import static org.apache.tajo.exception.ExceptionUtil.throwsIfThisError;
@@ -225,6 +223,36 @@ public class QueryClientImpl implements QueryClient {
     }
   }
 
+  public QueryStatus getFinalQueryStatus(QueryId queryId, long sleep) throws QueryNotFoundException {
+
+    QueryStatus status = getQueryStatus(queryId);
+
+    if(TajoClientUtil.isQueryComplete(status.getState())) return status;
+
+    SettableFuture future = null;
+    if(!conn.getTajoMasterConnection().callbacks.containsKey(queryId.toString())) {
+      future = SettableFuture.create();
+      conn.getTajoMasterConnection().callbacks.put(queryId.toString(), future);
+    } else {
+      future = (SettableFuture) conn.getTajoMasterConnection().callbacks.get(queryId.toString());
+    }
+
+    try {
+      long startTime = System.currentTimeMillis();
+      future.get(500, java.util.concurrent.TimeUnit.MILLISECONDS);
+      LOG.warn("callback:" + (System.currentTimeMillis() - startTime) + " ms");
+    } catch (InterruptedException e) {
+      e.printStackTrace();
+    } catch (ExecutionException e) {
+      e.printStackTrace();
+    } catch (TimeoutException e) {
+    }
+    if(future.isDone()) {
+      conn.getTajoMasterConnection().callbacks.remove(queryId.toString());
+    }
+    return status;
+  }
+
   public ResultSet getQueryResultAndWait(QueryId queryId)
       throws QueryNotFoundException, QueryKilledException, QueryFailedException {
 
@@ -232,7 +260,13 @@ public class QueryClientImpl implements QueryClient {
       return createNullResultSet(queryId);
     }
 
-    QueryStatus status = TajoClientUtil.waitCompletion(this, queryId);
+    //QueryStatus status = TajoClientUtil.waitCompletion(this, queryId);
+    QueryStatus status = getFinalQueryStatus(queryId, 500);
+
+
+    while(!TajoClientUtil.isQueryComplete(status.getState())) {
+      status = getFinalQueryStatus(queryId, 500);
+    }
 
     if (status.getState() == QueryState.QUERY_SUCCEEDED) {
       if (status.hasResult()) {

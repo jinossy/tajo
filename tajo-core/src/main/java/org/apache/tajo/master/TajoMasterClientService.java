@@ -118,6 +118,10 @@ public class TajoMasterClientService extends AbstractService {
     return this.bindAddress;
   }
 
+  public void write(Object object) {
+    server.getAccepted().writeAndFlush(object);
+  }
+
   /////////////////////////////////////////////////////////////////////////////
   // TajoMasterClientProtocolService
   /////////////////////////////////////////////////////////////////////////////

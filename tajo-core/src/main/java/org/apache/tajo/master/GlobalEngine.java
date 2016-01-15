@@ -176,6 +176,7 @@ public class GlobalEngine extends AbstractService {
   public SubmitQueryResponse executeQuery(Session session, String query, boolean isJson) {
     LOG.info("Query: " + query);
     QueryContext queryContext = createQueryContext(session);
+    queryContext.set("sql", query);
     Expr planningContext;
     TajoSystemMetrics metrics = context.getMetrics();
     try {

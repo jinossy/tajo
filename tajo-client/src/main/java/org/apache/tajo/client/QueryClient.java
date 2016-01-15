@@ -20,10 +20,10 @@ package org.apache.tajo.client;
 
 import org.apache.tajo.QueryId;
 import org.apache.tajo.auth.UserRoleInfo;
-import org.apache.tajo.exception.UndefinedDatabaseException;
 import org.apache.tajo.exception.NoSuchSessionVariableException;
 import org.apache.tajo.exception.QueryNotFoundException;
 import org.apache.tajo.exception.TajoException;
+import org.apache.tajo.exception.UndefinedDatabaseException;
 import org.apache.tajo.ipc.ClientProtos;
 import org.apache.tajo.ipc.ClientProtos.GetQueryResultResponse;
 import org.apache.tajo.ipc.ClientProtos.QueryHistoryProto;
@@ -100,6 +100,8 @@ public interface QueryClient extends Closeable {
   ResultSet executeJsonQueryAndGetResult(final String json) throws TajoException;
 
   QueryStatus getQueryStatus(QueryId queryId) throws QueryNotFoundException;
+
+  QueryStatus getFinalQueryStatus(QueryId queryId, long sleep) throws QueryNotFoundException;
 
   ResultSet getQueryResult(QueryId queryId) throws TajoException;
 

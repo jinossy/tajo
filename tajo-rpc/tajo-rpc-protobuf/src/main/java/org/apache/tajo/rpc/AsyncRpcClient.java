@@ -65,7 +65,7 @@ public class AsyncRpcClient extends NettyClientBase<AsyncRpcClient.ResponseCallb
     final boolean hangDetectionEnabled = Boolean.parseBoolean(
         rpcParams.getProperty(CLIENT_HANG_DETECTION, String.valueOf(CLIENT_HANG_DETECTION_DEFAULT)));
 
-    init(new ProtoClientChannelInitializer(handler, RpcResponse.getDefaultInstance(), socketTimeoutMills,
+    init(new ProtoClientChannelInitializer(handler, RpcProtos.RpcMessage.getDefaultInstance(), socketTimeoutMills,
             hangDetectionEnabled), eventLoopGroup);
   }
 
@@ -90,7 +90,7 @@ public class AsyncRpcClient extends NettyClientBase<AsyncRpcClient.ResponseCallb
                            final RpcCallback<Message> done) {
 
       int nextSeqId = sequence.getAndIncrement();
-      RpcProtos.RpcRequest rpcRequest = buildRequest(nextSeqId, method, param);
+      RpcProtos.RpcMessage rpcRequest = buildRequest(nextSeqId, method, param);
 
       invoke(rpcRequest, new ResponseCallback(controller, responseType, done), 0);
     }

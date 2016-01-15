@@ -19,6 +19,19 @@
 option java_package = "org.apache.tajo.rpc";
 option java_outer_classname = "RpcProtos";
 
+enum MessageType {
+  REQUEST = 1;
+  RESPONSE = 2;
+  CALLBACK = 3;
+}
+
+message RpcMessage {
+  required MessageType type = 1;
+  optional RpcRequest request = 2;
+  optional RpcResponse response = 3;
+  optional RpcCallback callback = 4;
+}
+
 message RpcRequest {
   required int32 id = 1;
   required string method_name = 2;
@@ -31,4 +44,8 @@ message RpcResponse {
   optional string error_class = 3;
   optional string error_message = 4;
   optional string error_trace = 5;
+}
+
+message RpcCallback {
+  required string queryId = 1;
 }

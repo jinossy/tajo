@@ -126,6 +126,11 @@ public class TajoClientImpl extends SessionConnection implements TajoClient, Que
     return queryClient.getQueryStatus(queryId);
   }
 
+  @Override
+  public QueryStatus getFinalQueryStatus(QueryId queryId, long sleep) throws QueryNotFoundException {
+    return queryClient.getFinalQueryStatus(queryId, sleep);
+  }
+
   public ResultSet getQueryResult(QueryId queryId) throws TajoException {
     return queryClient.getQueryResult(queryId);
   }

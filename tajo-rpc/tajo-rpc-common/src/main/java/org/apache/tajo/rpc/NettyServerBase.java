@@ -133,6 +133,10 @@ public class NettyServerBase {
     return this.channelFuture.channel();
   }
 
+  public ChannelGroup getAccepted() {
+    return accepted;
+  }
+
   public void shutdown() {
     shutdown(false);
   }

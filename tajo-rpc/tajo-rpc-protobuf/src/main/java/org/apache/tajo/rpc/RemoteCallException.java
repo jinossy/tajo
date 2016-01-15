@@ -46,7 +46,7 @@ public class RemoteCallException extends RemoteException {
     }
   }
 
-  public RpcResponse getResponse() {
+  public RpcProtos.RpcMessage getResponse() {
     RpcResponse.Builder builder = RpcResponse.newBuilder();
     builder.setId(seqId);
     if (getCause().getMessage() == null) {
@@ -57,7 +57,9 @@ public class RemoteCallException extends RemoteException {
     builder.setErrorTrace(getStackTraceString(getCause()));
     builder.setErrorClass(originExceptionClass);
 
-    return builder.build();
+    RpcProtos.RpcMessage.Builder respMessage = RpcProtos.RpcMessage.newBuilder();
+    respMessage.setType(RpcProtos.MessageType.RESPONSE);
+    return respMessage.setResponse(builder.build()).build();
   }
 
   private static String getStackTraceString(Throwable aThrowable) {
