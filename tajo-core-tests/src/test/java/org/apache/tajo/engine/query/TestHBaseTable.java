@@ -26,10 +26,13 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.hbase.MiniHBaseCluster;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.InclusiveStopFilter;
+import org.apache.hadoop.hbase.master.HMaster;
+import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.tajo.IntegrationTest;
 import org.apache.tajo.QueryTestCaseBase;
 import org.apache.tajo.TajoTestingCluster;
@@ -50,7 +53,6 @@ import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.storage.hbase.*;
 import org.apache.tajo.util.Bytes;
 import org.apache.tajo.util.KeyValueSet;
-import org.apache.tajo.util.TUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -664,7 +666,7 @@ public class TestHBaseTable extends QueryTestCaseBase {
 
       ResultSet res = executeString("select a.rk, a.col1, a.col2, a.col3, b.l_orderkey, b.l_linestatus " +
           "from hbase_mapped_table a " +
-          "join default.lineitem b on a.col3 = b.l_orderkey");
+          "join default.lineitem b on a.col3 = b.l_orderkey order by a.rk, a.col1, a.col2, a.col3");
       assertResultSet(res);
       res.close();
     } finally {
@@ -1312,7 +1314,7 @@ public class TestHBaseTable extends QueryTestCaseBase {
     } finally {
       executeString("DROP TABLE hbase_mapped_table PURGE").close();
 
-      client.unsetSessionVariables(TUtil.newList(HBaseStorageConstants.INSERT_PUT_MODE));
+      client.unsetSessionVariables(Arrays.asList(HBaseStorageConstants.INSERT_PUT_MODE));
 
       if (scanner != null) {
         scanner.close();
@@ -1374,6 +1376,59 @@ public class TestHBaseTable extends QueryTestCaseBase {
     } finally {
       executeString("DROP TABLE base_table PURGE").close();
       executeString("DROP TABLE hbase_mapped_table PURGE").close();
+    }
+  }
+
+  @Test
+  public void testGetSplitsWhenRestartHBase() throws Exception {
+    executeString("CREATE TABLE hbase_mapped_table1 (rk text, col1 text, col2 text, col3 int) "
+      + "TABLESPACE cluster1 USING hbase WITH ('table'='hbase_table1', 'columns'=':key,col1:a,col2:,col3:#b', "
+      + "'hbase.split.rowkeys'='010,020,030,040,050,060,070,080,090')").close();
+
+    assertTableExists("hbase_mapped_table1");
+    HBaseAdmin hAdmin = new HBaseAdmin(testingCluster.getHBaseUtil().getConf());
+    HTable htable = null;
+    try {
+      hAdmin.tableExists("hbase_table1");
+      htable = new HTable(testingCluster.getHBaseUtil().getConf(), "hbase_table1");
+      org.apache.hadoop.hbase.util.Pair<byte[][], byte[][]> keys = htable.getStartEndKeys();
+      assertEquals(10, keys.getFirst().length);
+
+      DecimalFormat df = new DecimalFormat("000");
+      for (int i = 0; i < 100; i++) {
+        Put put = new Put(String.valueOf(df.format(i)).getBytes());
+        put.add("col1".getBytes(), "a".getBytes(), ("a-" + i).getBytes());
+        put.add("col1".getBytes(), "b".getBytes(), ("b-" + i).getBytes());
+        put.add("col2".getBytes(), "k1".getBytes(), ("k1-" + i).getBytes());
+        put.add("col2".getBytes(), "k2".getBytes(), ("k2-" + i).getBytes());
+        put.add("col3".getBytes(), "".getBytes(), Bytes.toBytes(i));
+        htable.put(put);
+      }
+
+      ResultSet res = executeString("select * from hbase_mapped_table1");
+      assertResultSet(res);
+      res.close();
+
+      MiniHBaseCluster cluster = testingCluster.getHBaseUtil().getMiniHBaseCluster();
+      HMaster master = cluster.getMaster();
+      master.balanceSwitch(true);
+      assertEquals(1, cluster.getLiveRegionServerThreads().size());
+      HRegionServer orgRegionServer = cluster.getLiveRegionServerThreads().get(0).getRegionServer();
+      cluster.startRegionServer().waitForServerOnline();
+      cluster.startRegionServer().waitForServerOnline();
+      cluster.startRegionServer().waitForServerOnline();
+      cluster.stopRegionServer(orgRegionServer.getServerName());
+      cluster.waitForRegionServerToStop(orgRegionServer.getServerName(), 1000);
+
+      res = executeString("select * from hbase_mapped_table1");
+      assertResultSet(res);
+      res.close();
+    } finally {
+      executeString("DROP TABLE hbase_mapped_table1 PURGE").close();
+      hAdmin.close();
+      if (htable == null) {
+        htable.close();
+      }
     }
   }
 
