@@ -84,7 +84,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
     if (plan.hasOptions()) {
       this.meta = CatalogUtil.newTableMeta(plan.getStorageType(), plan.getOptions());
     } else {
-      this.meta = CatalogUtil.newTableMeta(plan.getStorageType());
+      this.meta = CatalogUtil.newTableMeta(plan.getStorageType(), context.getConf());
     }
     // about the shuffle
     this.numShuffleOutputs = this.plan.getNumOutputs();
@@ -170,7 +170,7 @@ public final class HashShuffleFileWriteExec extends UnaryPhysicalExec {
 
       writtenBytes += usedBufferSize;
       usedBufferSize = totalBufferCapacity = 0;
-      TableStats aggregated = (TableStats) child.getInputStats().clone();
+      TableStats aggregated = new TableStats();
       aggregated.setNumBytes(writtenBytes);
       aggregated.setNumRows(numRows);
       context.setResultStats(aggregated);

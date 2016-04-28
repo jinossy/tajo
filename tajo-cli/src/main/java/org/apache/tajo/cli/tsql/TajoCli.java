@@ -18,12 +18,16 @@
 
 package org.apache.tajo.cli.tsql;
 
-import com.google.common.collect.Maps;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Maps;
 import com.google.protobuf.ServiceException;
 import jline.UnsupportedTerminal;
 import jline.console.ConsoleReader;
+import jline.console.completer.AggregateCompleter;
+import jline.console.completer.ArgumentCompleter;
+import jline.console.completer.Completer;
+import jline.console.completer.StringsCompleter;
 import org.apache.commons.cli.*;
 import org.apache.tajo.*;
 import org.apache.tajo.TajoProtos.QueryState;
@@ -39,16 +43,20 @@ import org.apache.tajo.exception.ExceptionUtil;
 import org.apache.tajo.exception.ReturnStateUtil;
 import org.apache.tajo.exception.TajoException;
 import org.apache.tajo.ipc.ClientProtos;
+import org.apache.tajo.parser.sql.SQLLexer;
 import org.apache.tajo.service.ServiceTrackerFactory;
 import org.apache.tajo.util.FileUtil;
 import org.apache.tajo.util.KeyValueSet;
 import org.apache.tajo.util.ShutdownHookManager;
+import org.apache.tajo.util.VersionInfo;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class TajoCli implements Closeable {
   public static final int SHUTDOWN_HOOK_PRIORITY = 50;
@@ -63,6 +71,7 @@ public class TajoCli implements Closeable {
   private final ConsoleReader reader;
   private final InputStream sin;
   private final PrintWriter sout;
+  private final PrintWriter serr;
   private TajoFileHistory history;
 
   private final boolean reconnect;  // reconnect on invalid session
@@ -91,6 +100,10 @@ public class TajoCli implements Closeable {
       TajoGetConfCommand.class,
       TajoHAAdminCommand.class
   };
+
+  private AggregateCompleter cliCompleter;
+  private ArgumentCompleter sqlCompleter;
+
   private final Map<String, TajoShellCommand> commands = new TreeMap<>();
 
   protected static final Options options;
@@ -129,6 +142,10 @@ public class TajoCli implements Closeable {
 
     public PrintWriter getOutput() {
       return sout;
+    }
+
+    public PrintWriter getError() {
+      return serr;
     }
 
     public TajoConf getConf() {
@@ -176,7 +193,7 @@ public class TajoCli implements Closeable {
     }
   }
 
-  public TajoCli(TajoConf c, String [] args, @Nullable Properties clientParams, InputStream in, OutputStream out)
+  public TajoCli(TajoConf c, String [] args, @Nullable Properties clientParams, InputStream in, OutputStream out, OutputStream err)
       throws Exception {
 
     CommandLineParser parser = new PosixParser();
@@ -193,6 +210,7 @@ public class TajoCli implements Closeable {
 
     this.reader.setExpandEvents(false);
     this.sout = new PrintWriter(reader.getOutput());
+    this.serr = new PrintWriter(new OutputStreamWriter(err, "UTF-8"));
     initFormatter();
 
     if (cmd.hasOption("help")) {
@@ -255,6 +273,9 @@ public class TajoCli implements Closeable {
       initHistory();
       initCommands();
 
+      reader.addCompleter(cliCompleter);
+      reader.addCompleter(sqlCompleter);
+
       if (cmd.getOptionValues("conf") != null) {
         processSessionVarCommand(cmd.getOptionValues("conf"));
       }
@@ -263,6 +284,7 @@ public class TajoCli implements Closeable {
         displayFormatter.setScriptMode();
         int exitCode = executeScript(cmd.getOptionValue("c"));
         sout.flush();
+        serr.flush();
         System.exit(exitCode);
       }
       if (cmd.hasOption("f")) {
@@ -274,6 +296,7 @@ public class TajoCli implements Closeable {
           script = replaceParam(script, cmd.getOptionValues("param"));
           int exitCode = executeScript(script);
           sout.flush();
+          serr.flush();
           System.exit(exitCode);
         } else {
           System.err.println(ERROR_PREFIX + "No such a file \"" + cmd.getOptionValue("f") + "\"");
@@ -364,8 +387,10 @@ public class TajoCli implements Closeable {
   }
 
   private void initCommands() {
+    List<Completer> compList = new ArrayList<>();
     for (Class clazz : registeredCommands) {
       TajoShellCommand cmd = null;
+
       try {
          Constructor cons = clazz.getConstructor(new Class[] {TajoCliContext.class});
          cmd = (TajoShellCommand) cons.newInstance(context);
@@ -373,11 +398,51 @@ public class TajoCli implements Closeable {
         System.err.println(e.getMessage());
         throw new RuntimeException(e.getMessage());
       }
+
+      // make completers for console auto-completion
+      compList.add(cmd.getArgumentCompleter());
+
       commands.put(cmd.getCommand(), cmd);
       for (String alias : cmd.getAliases()) {
         commands.put(alias, cmd);
       }
     }
+
+    cliCompleter = new AggregateCompleter(compList);
+
+    sqlCompleter = new ArgumentCompleter(
+        new ArgumentCompleter.AbstractArgumentDelimiter() {
+          @Override
+          public boolean isDelimiterChar(CharSequence buf, int pos) {
+            char c = buf.charAt(pos);
+            return Character.isWhitespace(c) || !(Character.isLetterOrDigit(c)) && c != '_';
+          }
+        },
+        new StringsCompleter(getKeywords())
+    );
+  }
+
+  private Collection<String> getKeywords() {
+    // SQL reserved keywords
+    Stream<String> tokens = Arrays.stream(SQLLexer.tokenNames);
+    Stream<String> rules = Arrays.stream(SQLLexer.ruleNames);
+
+    List<String> keywords = Stream.concat(tokens, rules)
+        .filter((str) -> str.matches("[A-Z_]+") && str.length() > 1)
+        .distinct()
+        .map(String::toLowerCase)
+        .collect(Collectors.toList());
+
+    // DB and table names
+    for (String db: client.getAllDatabaseNames()) {
+      keywords.add(db);
+      keywords.addAll(client.getTableList(db));
+    }
+
+    tokens.close();
+    rules.close();
+
+    return keywords;
   }
 
   private void addShutdownHook() {
@@ -409,6 +474,11 @@ public class TajoCli implements Closeable {
     int exitCode;
     ParsingState latestState = SimpleParser.START_STATE;
 
+    sout.write("welcome to \n" +
+      "   _____ ___  _____ ___\n" +
+      "  /_  _/ _  |/_  _/   /\n" +
+      "   / // /_| |_/ // / /\n" +
+      "  /_//_/ /_/___/ \\__/  " + VersionInfo.getVersion() + "\n\n");
     sout.write("Try \\? for help.\n");
 
     SimpleParser parser = new SimpleParser();
@@ -487,6 +557,7 @@ public class TajoCli implements Closeable {
         onError(t);
         return -1;
       } finally {
+        context.getError().flush();
         context.getOutput().flush();
       }
 
@@ -607,11 +678,12 @@ public class TajoCli implements Closeable {
           continue;
         }
 
-        if (TajoClientUtil.isQueryRunning(status.getState()) || status.getState() == QueryState.QUERY_SUCCEEDED) {
-          displayFormatter.printProgress(sout, status);
+        if (TajoClientUtil.isQueryRunning(status.getState())) {
+          displayFormatter.printProgress(serr, status);
         }
 
         if (TajoClientUtil.isQueryComplete(status.getState()) && status.getState() != QueryState.QUERY_KILL_WAIT) {
+          displayFormatter.printProgress(serr, status);
           break;
         } else {
           Thread.sleep(Math.min(200 * progressRetries, 1000));
@@ -620,10 +692,10 @@ public class TajoCli implements Closeable {
       }
 
       if (status.getState() == QueryState.QUERY_ERROR || status.getState() == QueryState.QUERY_FAILED) {
-        displayFormatter.printErrorMessage(sout, status);
+        displayFormatter.printErrorMessage(serr, status);
         wasError = true;
       } else if (status.getState() == QueryState.QUERY_KILLED) {
-        displayFormatter.printKilledMessage(sout, queryId);
+        displayFormatter.printKilledMessage(serr, queryId);
         wasError = true;
       } else {
         if (status.getState() == QueryState.QUERY_SUCCEEDED) {
@@ -664,18 +736,18 @@ public class TajoCli implements Closeable {
 
   private void printUsage() {
     HelpFormatter formatter = new HelpFormatter();
-    formatter.printHelp("tsql [options] [database]", options);
+    formatter.printUsage(this.serr, 80, "tsql [options] [database]", options);
   }
 
   private void printInvalidCommand(String command) {
-    sout.println("Invalid command " + command + ". Try \\? for help.");
+    serr.println("Invalid command " + command + ". Try \\? for help.");
   }
 
   private void onError(Throwable t) {
     Preconditions.checkNotNull(t);
 
     wasError = true;
-    displayFormatter.printErrorMessage(sout, t.getMessage());
+    displayFormatter.printErrorMessage(serr, t.getMessage());
 
     if (reconnect && (t instanceof InvalidClientSessionException)) {
       try {
@@ -700,7 +772,7 @@ public class TajoCli implements Closeable {
 
   public static void main(String [] args) throws Exception {
     TajoConf conf = new TajoConf();
-    TajoCli shell = new TajoCli(conf, args, new Properties(), System.in, System.out);
+    TajoCli shell = new TajoCli(conf, args, new Properties(), System.in, System.out, System.err);
     System.out.println();
     System.exit(shell.runShell());
   }

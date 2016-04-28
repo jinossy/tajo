@@ -21,6 +21,7 @@ package org.apache.tajo.querymaster;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -32,6 +33,7 @@ import org.apache.tajo.engine.planner.global.ExecutionBlock;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.query.TaskRequest;
 import org.apache.tajo.engine.query.TaskRequestImpl;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.ipc.QueryCoordinatorProtocol;
 import org.apache.tajo.ipc.QueryCoordinatorProtocol.QueryCoordinatorProtocolService;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
@@ -40,6 +42,7 @@ import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext;
 import org.apache.tajo.master.event.TaskSchedulerEvent.EventType;
 import org.apache.tajo.plan.serder.LogicalNodeSerializer;
+import org.apache.tajo.resource.NodeResource;
 import org.apache.tajo.resource.NodeResources;
 import org.apache.tajo.rpc.AsyncRpcClient;
 import org.apache.tajo.rpc.CallFuture;
@@ -47,15 +50,16 @@ import org.apache.tajo.rpc.NettyClientBase;
 import org.apache.tajo.rpc.RpcClientManager;
 import org.apache.tajo.service.ServiceTracker;
 import org.apache.tajo.storage.DataLocation;
-import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.util.NetUtils;
 import org.apache.tajo.util.RpcParameterFactory;
 import org.apache.tajo.util.TUtil;
 
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -64,8 +68,6 @@ import static org.apache.tajo.ResourceProtos.*;
 
 public class DefaultTaskScheduler extends AbstractTaskScheduler {
   private static final Log LOG = LogFactory.getLog(DefaultTaskScheduler.class);
-
-  private static final String REQUEST_MAX_NUM = "tajo.qm.task-scheduler.request.max-num";
 
   private final TaskSchedulerContext context;
   private Stage stage;
@@ -97,7 +99,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
   @Override
   public void init(Configuration conf) {
     tajoConf = TUtil.checkTypeAndGet(conf, TajoConf.class);
-    rpcParams = RpcParameterFactory.get(new TajoConf());
+    rpcParams = RpcParameterFactory.get(tajoConf);
 
     scheduledRequests = new ScheduledRequests();
     minTaskMemory = tajoConf.getIntVar(TajoConf.ConfVars.TASK_RESOURCE_MINIMUM_MEMORY);
@@ -116,15 +118,15 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
               break;
             } else {
               LOG.fatal(e.getMessage(), e);
-              stage.abort(StageState.ERROR);
+              stage.abort(StageState.ERROR, e);
             }
           } catch (Throwable e) {
             LOG.fatal(e.getMessage(), e);
-            stage.abort(StageState.ERROR);
+            stage.abort(StageState.ERROR, e);
             break;
           }
         }
-        LOG.info("TaskScheduler schedulingThread stopped");
+        info(LOG, "TaskScheduler schedulingThread stopped");
       }
     };
     super.init(conf);
@@ -132,8 +134,9 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
 
   @Override
   public void start() {
-    LOG.info("Start TaskScheduler");
-    maximumRequestContainer = tajoConf.getInt(REQUEST_MAX_NUM, stage.getContext().getWorkerMap().size());
+    info(LOG, "Start TaskScheduler");
+    maximumRequestContainer = Math.min(tajoConf.getIntVar(TajoConf.ConfVars.QUERYMASTER_TASK_SCHEDULER_REQUEST_MAX_NUM)
+        , stage.getContext().getWorkerMap().size());
 
     if (isLeaf) {
       candidateWorkers.addAll(getWorkerIds(getLeafTaskHosts()));
@@ -161,8 +164,16 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     }
     candidateWorkers.clear();
     scheduledRequests.clear();
-    LOG.info("Task Scheduler stopped");
+    info(LOG, "Task Scheduler stopped");
     super.stop();
+  }
+
+  protected void info(Log log, String message) {
+    log.info(String.format("[%s] %s", stage.getId(), message));
+  }
+
+  protected void warn(Log log, String message) {
+    log.warn(String.format("[%s] %s", stage.getId(), message));
   }
 
   private Fragment[] fragmentsForNonLeafTask;
@@ -216,14 +227,14 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           }
           stage.getEventHandler().handle(new TaskEvent(task.getId(), TaskEventType.T_SCHEDULE));
         } else {
-          fragmentsForNonLeafTask = new FileFragment[2];
+          fragmentsForNonLeafTask = new Fragment[2];
           fragmentsForNonLeafTask[0] = castEvent.getLeftFragment();
           if (castEvent.hasRightFragments()) {
             Collection<Fragment> var = castEvent.getRightFragments();
-            FileFragment[] rightFragments = var.toArray(new FileFragment[var.size()]);
+            Fragment[] rightFragments = var.toArray(new Fragment[var.size()]);
             fragmentsForNonLeafTask[1] = rightFragments[0];
             if (rightFragments.length > 1) {
-              broadcastFragmentsForNonLeafTask = new FileFragment[rightFragments.length - 1];
+              broadcastFragmentsForNonLeafTask = new Fragment[rightFragments.length - 1];
               System.arraycopy(rightFragments, 1, broadcastFragmentsForNonLeafTask, 0, broadcastFragmentsForNonLeafTask.length);
             } else {
               broadcastFragmentsForNonLeafTask = null;
@@ -304,7 +315,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
 
     CallFuture<NodeResourceResponse> callBack = new CallFuture<>();
     NodeResourceRequest.Builder request = NodeResourceRequest.newBuilder();
-    request.setCapacity(NodeResources.createResource(minTaskMemory, isLeaf ? 1 : 0).getProto())
+    request.setCapacity(NodeResources.createResource(minTaskMemory).getProto())
         .setNumContainers(requestContainerNum)
         .setPriority(stage.getPriority())
         .setQueryId(context.getMasterContext().getQueryId().getProto())
@@ -384,8 +395,6 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     private SortedMap<Integer, Integer> diskVolumeLoads = new TreeMap<>();
     /** The total number of remain tasks in this host */
     private AtomicInteger remainTasksNum = new AtomicInteger(0);
-    public static final int REMOTE = -2;
-
 
     public HostVolumeMapping(String host, String rack){
       this.host = host;
@@ -418,7 +427,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       TaskAttemptId taskAttemptId = null;
 
       if (unassignedTaskForEachVolume.size() >  0) {
-        int retry = unassignedTaskForEachVolume.size();
+        int retry = diskVolumeLoads.size();
         do {
           //clean and get a remaining local task
           taskAttemptId = getAndRemove(volumeId);
@@ -461,7 +470,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     private synchronized TaskAttemptId getAndRemove(int volumeId){
       TaskAttemptId taskAttemptId = null;
       if(!unassignedTaskForEachVolume.containsKey(volumeId)) {
-        if (volumeId > REMOTE) {
+        if (volumeId > DataLocation.REMOTE_VOLUME_ID) {
           diskVolumeLoads.remove(volumeId);
         }
         return taskAttemptId;
@@ -474,6 +483,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           Iterator<TaskAttempt> iterator = list.iterator();
           taskAttempt = iterator.next();
           iterator.remove();
+          remainTasksNum.decrementAndGet();
         }
 
         taskAttemptId = taskAttempt.getId();
@@ -485,6 +495,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         }
 
         increaseConcurrency(volumeId);
+      } else {
+        unassignedTaskForEachVolume.remove(volumeId);
       }
 
       return taskAttemptId;
@@ -500,7 +512,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
 
       if(tasks.isEmpty()){
         unassignedTaskForEachVolume.remove(volumeId);
-        if (volumeId > REMOTE) {
+        if (volumeId > DataLocation.REMOTE_VOLUME_ID) {
           diskVolumeLoads.remove(volumeId);
         }
       }
@@ -519,15 +531,15 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         concurrency = diskVolumeLoads.get(volumeId) + 1;
       }
 
-      if (volumeId > -1) {
-        LOG.info("Assigned host : " + host + ", Volume : " + volumeId + ", Concurrency : " + concurrency);
-      } else if (volumeId == -1) {
+      if (volumeId > DataLocation.UNKNOWN_VOLUME_ID) {
+        info(LOG, "Assigned host : " + host + ", Volume : " + volumeId + ", Concurrency : " + concurrency);
+      } else if (volumeId == DataLocation.UNKNOWN_VOLUME_ID) {
         // this case is disabled namenode block meta or compressed text file or amazon s3
-        LOG.info("Assigned host : " + host + ", Unknown Volume : " + volumeId + ", Concurrency : " + concurrency);
-      } else if (volumeId == REMOTE) {
+        info(LOG, "Assigned host : " + host + ", Unknown Volume : " + volumeId + ", Concurrency : " + concurrency);
+      } else if (volumeId == DataLocation.REMOTE_VOLUME_ID) {
         // this case has processed all block on host and it will be assigned to remote
-        LOG.info("Assigned host : " + host + ", Remaining local tasks : " + getRemainingLocalTaskSize()
-            + ", Remote Concurrency : " + concurrency);
+        info(LOG, "Assigned host : " + host + ", Remaining local tasks : " + getRemainingLocalTaskSize()
+            + ", Remote Concurrency : " + concurrency + ", Unassigned volumes: " + unassignedTaskForEachVolume.size());
       }
       diskVolumeLoads.put(volumeId, concurrency);
       return concurrency;
@@ -538,13 +550,9 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
      */
     private synchronized void decreaseConcurrency(int volumeId){
       if(diskVolumeLoads.containsKey(volumeId)){
-        Integer concurrency = diskVolumeLoads.get(volumeId);
+        int concurrency = diskVolumeLoads.get(volumeId);
         if(concurrency > 0){
           diskVolumeLoads.put(volumeId, concurrency - 1);
-        } else {
-          if (volumeId > REMOTE && !unassignedTaskForEachVolume.containsKey(volumeId)) {
-            diskVolumeLoads.remove(volumeId);
-          }
         }
       }
     }
@@ -560,7 +568,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       for (Map.Entry<Integer, Integer> entry : diskVolumeLoads.entrySet()) {
         if(volumeEntry == null) volumeEntry = entry;
 
-        if (volumeEntry.getValue() >= entry.getValue()) {
+        if (entry.getKey() != DataLocation.REMOTE_VOLUME_ID && volumeEntry.getValue() >= entry.getValue()) {
           volumeEntry = entry;
         }
       }
@@ -568,12 +576,12 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
       if(volumeEntry != null){
         return volumeEntry.getKey();
       } else {
-        return REMOTE;
+        return DataLocation.REMOTE_VOLUME_ID;
       }
     }
 
     public int getRemoteConcurrency(){
-      return getVolumeConcurrency(REMOTE);
+      return getVolumeConcurrency(DataLocation.REMOTE_VOLUME_ID);
     }
 
     public int getVolumeConcurrency(int volumeId){
@@ -595,25 +603,32 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
     }
   }
 
-  public void cancel(TaskAttempt taskAttempt) {
+  protected void cancel(TaskAttempt taskAttempt) {
+
+    TaskAttemptToSchedulerEvent schedulerEvent = new TaskAttemptToSchedulerEvent(
+        EventType.T_SCHEDULE, taskAttempt.getTask().getId().getExecutionBlockId(),
+        null, taskAttempt);
 
     if(taskAttempt.isLeafTask()) {
       releaseTaskAttempt(taskAttempt);
 
-      List<DataLocation> locations = taskAttempt.getTask().getDataLocations();
-
-      for (DataLocation location : locations) {
-        HostVolumeMapping volumeMapping = scheduledRequests.leafTaskHostMapping.get(location.getHost());
-        volumeMapping.addTaskAttempt(location.getVolumeId(), taskAttempt);
-      }
-
-      scheduledRequests.leafTasks.add(taskAttempt.getId());
+      scheduledRequests.addLeafTask(schedulerEvent);
     } else {
-      scheduledRequests.nonLeafTasks.add(taskAttempt.getId());
+      scheduledRequests.addNonLeafTask(schedulerEvent);
     }
 
     context.getMasterContext().getEventHandler().handle(
         new TaskAttemptEvent(taskAttempt.getId(), TaskAttemptEventType.TA_ASSIGN_CANCEL));
+  }
+
+  protected int cancel(List<TaskAllocationProto> tasks) {
+    int canceled = 0;
+    for (TaskAllocationProto proto : tasks) {
+      TaskAttemptId attemptId = new TaskAttemptId(proto.getTaskRequest().getId());
+      cancel(stage.getTask(attemptId.getTaskId()).getAttempt(attemptId));
+      canceled++;
+    }
+    return canceled;
   }
 
   private class ScheduledRequests {
@@ -809,9 +824,10 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
         // disk or host-local allocation
         //////////////////////////////////////////////////////////////////////
         TaskAttemptId attemptId = allocateLocalTask(host);
+        int assignedVolume = DataLocation.REMOTE_VOLUME_ID;
+        HostVolumeMapping hostVolumeMapping = leafTaskHostMapping.get(host);
 
         if (attemptId == null) { // if a local task cannot be found
-          HostVolumeMapping hostVolumeMapping = leafTaskHostMapping.get(host);
 
           if(!taskRequests.isEmpty()) { //if other requests remains, move to remote list for better locality
             remoteTaskRequests.add(taskRequest);
@@ -827,11 +843,12 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
                 tailLimit = Math.max(remainingScheduledObjectNum() / nodes, 1);
               }
 
-              if (hostVolumeMapping.getRemoteConcurrency() >= tailLimit) { //remote task throttling per node
+              //remote task throttling per node
+              if (nodes > 1 && hostVolumeMapping.getRemoteConcurrency() >= tailLimit) {
                 continue;
               } else {
                 // assign to remote volume
-                hostVolumeMapping.increaseConcurrency(HostVolumeMapping.REMOTE);
+                hostVolumeMapping.increaseConcurrency(assignedVolume);
               }
             }
           }
@@ -852,10 +869,15 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           }
 
           if (attemptId != null && hostVolumeMapping != null) {
-            hostVolumeMapping.lastAssignedVolumeId.put(attemptId, HostVolumeMapping.REMOTE);
+            hostVolumeMapping.lastAssignedVolumeId.put(attemptId, assignedVolume);
           }
           rackAssign++;
         } else {
+          if(hostVolumeMapping != null){
+            //Set to real volume id
+            assignedVolume = hostVolumeMapping.lastAssignedVolumeId.get(attemptId);
+          }
+
           localAssign++;
         }
 
@@ -871,6 +893,8 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
               stage.getDataChannel(), stage.getBlock().getEnforcer(),
               queryMasterHostAndPort);
 
+          NodeResource resource = new NodeResource(taskRequest.getResponseProto().getResource());
+
           if (checkIfInterQuery(stage.getMasterPlan(), stage.getBlock())) {
             taskAssign.setInterQuery();
           }
@@ -878,7 +902,7 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           //TODO send batch request
           BatchAllocationRequest.Builder requestProto = BatchAllocationRequest.newBuilder();
           requestProto.addTaskRequest(TaskAllocationProto.newBuilder()
-              .setResource(taskRequest.getResponseProto().getResource())
+              .setResource(resource.getProto()).setVolumeId(assignedVolume)
               .setTaskRequest(taskAssign.getProto()).build());
 
           requestProto.setExecutionBlockId(attemptId.getTaskId().getExecutionBlockId().getProto());
@@ -900,26 +924,27 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
             BatchAllocationResponse responseProto = callFuture.get();
 
             if (responseProto.getCancellationTaskCount() > 0) {
-              for (TaskAllocationProto proto : responseProto.getCancellationTaskList()) {
-                cancel(task.getAttempt(new TaskAttemptId(proto.getTaskRequest().getId())));
-                cancellation++;
-              }
-
-              if(LOG.isDebugEnabled()) {
-                LOG.debug("Canceled requests: " + responseProto.getCancellationTaskCount() + " from " +  addr);
-              }
+              cancellation += cancel(responseProto.getCancellationTaskList());
+              info(LOG, "Canceled requests: " + responseProto.getCancellationTaskCount() + " from " +  addr);
               continue;
             }
+          } catch (ExecutionException | ConnectException e) {
+            cancellation += cancel(requestProto.getTaskRequestList());
+
+            warn(LOG, "Canceled requests: " + requestProto.getTaskRequestCount()
+                + " by " + ExceptionUtils.getFullStackTrace(e));
+            continue;
           } catch (Exception e) {
-            LOG.error(e);
+            throw new TajoInternalError(e);
           }
+
           scheduledObjectNum--;
           totalAssigned++;
           hostLocalAssigned += localAssign;
           rackLocalAssigned += rackAssign;
 
           if (rackAssign > 0) {
-            LOG.info(String.format("Assigned Local/Rack/Total: (%d/%d/%d), " +
+            info(LOG, String.format("Assigned Local/Rack/Total: (%d/%d/%d), " +
                     "Attempted Cancel/Assign/Total: (%d/%d/%d), " +
                     "Locality: %.2f%%, Rack host: %s",
                 hostLocalAssigned, rackLocalAssigned, totalAssigned,
@@ -1012,28 +1037,29 @@ public class DefaultTaskScheduler extends AbstractTaskScheduler {
           try {
             tajoWorkerRpc = RpcClientManager.getInstance().getClient(addr, TajoWorkerProtocol.class, true,
                 rpcParams);
+
             TajoWorkerProtocol.TajoWorkerProtocolService tajoWorkerRpcClient = tajoWorkerRpc.getStub();
             tajoWorkerRpcClient.allocateTasks(callFuture.getController(), requestProto.build(), callFuture);
 
             BatchAllocationResponse responseProto = callFuture.get();
 
             if(responseProto.getCancellationTaskCount() > 0) {
-              for (TaskAllocationProto proto : responseProto.getCancellationTaskList()) {
-                cancel(task.getAttempt(new TaskAttemptId(proto.getTaskRequest().getId())));
-                cancellation++;
-              }
-
-              if(LOG.isDebugEnabled()) {
-                LOG.debug("Canceled requests: " + responseProto.getCancellationTaskCount() + " from " +  addr);
-              }
+              cancellation += cancel(responseProto.getCancellationTaskList());
+              info(LOG, "Canceled requests: " + responseProto.getCancellationTaskCount() + " from " +  addr);
               continue;
             }
 
-            totalAssigned++;
-            scheduledObjectNum--;
+          } catch (ExecutionException | ConnectException e) {
+            cancellation += cancel(requestProto.getTaskRequestList());
+            warn(LOG, "Canceled requests: " + requestProto.getTaskRequestCount()
+                + " by " + ExceptionUtils.getFullStackTrace(e));
+            continue;
           } catch (Exception e) {
-            LOG.error(e);
+            throw new TajoInternalError(e);
           }
+
+          totalAssigned++;
+          scheduledObjectNum--;
         }
       }
     }

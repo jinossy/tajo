@@ -19,6 +19,7 @@
 package org.apache.tajo.engine.function;
 
 
+import org.apache.tajo.datum.NullDatum;
 import org.apache.tajo.engine.eval.ExprTestBase;
 import org.apache.tajo.exception.TajoException;
 import org.junit.Test;
@@ -41,16 +42,16 @@ public class TestJsonFunctions extends ExprTestBase {
     testSimpleEval("select json_array_get('" + JSON_ARRAY + "', 2)", new String[]{"300"});
     testSimpleEval("select json_array_get('" + JSON_ARRAY + "', -1)", new String[]{"500"});
     testSimpleEval("select json_array_get('" + JSON_ARRAY + "', -2)", new String[]{"400"});
-    testSimpleEval("select json_array_get('" + JSON_ARRAY + "', 10)", new String[]{""});
-    testSimpleEval("select json_array_get('" + JSON_ARRAY + "', -10)", new String[]{""});
-    testSimpleEval("select json_array_get('" + JSON_EMPTY_ARRAY + "', 0)", new String[]{""});
+    testSimpleEval("select json_array_get('" + JSON_ARRAY + "', 10)", new String[]{NullDatum.get().toString()});
+    testSimpleEval("select json_array_get('" + JSON_ARRAY + "', -10)", new String[]{NullDatum.get().toString()});
+    testSimpleEval("select json_array_get('" + JSON_EMPTY_ARRAY + "', 0)", new String[]{NullDatum.get().toString()});
   }
 
   @Test
   public void testJsonArrayContains() throws TajoException {
     testSimpleEval("select json_array_contains('" + JSON_COMPLEX_ARRAY + "', 100)", new String[]{"t"});
     testSimpleEval("select json_array_contains('" + JSON_COMPLEX_ARRAY + "', 'test')", new String[]{"t"});
-    testSimpleEval("select json_array_contains('" + JSON_COMPLEX_ARRAY + "', '2015-08-13 11:58:59'::timestamp)",
+    testSimpleEval("select json_array_contains('" + JSON_COMPLEX_ARRAY + "', '2015-08-13 11:58:59'::timestamp::text)",
         new String[]{"t"});
     testSimpleEval("select json_array_contains('" + JSON_COMPLEX_ARRAY + "', '2015-08-13 11:58:59'::date)",
         new String[]{"f"});

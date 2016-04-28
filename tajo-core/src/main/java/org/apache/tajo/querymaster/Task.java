@@ -45,6 +45,7 @@ import org.apache.tajo.storage.fragment.FileFragment;
 import org.apache.tajo.storage.fragment.Fragment;
 import org.apache.tajo.storage.fragment.FragmentConvertor;
 import org.apache.tajo.util.Pair;
+import org.apache.tajo.util.TUtil;
 import org.apache.tajo.util.TajoIdUtils;
 import org.apache.tajo.util.history.TaskHistory;
 
@@ -339,7 +340,7 @@ public class Task implements EventHandler<TaskEvent> {
       diskIds = ((FileFragment)fragment).getDiskIds();
     }
     for (int i = 0; i < hosts.length; i++) {
-      dataLocations.add(new DataLocation(hosts[i], diskIds == null ? -1 : diskIds[i]));
+      dataLocations.add(new DataLocation(hosts[i], diskIds == null ? DataLocation.UNKNOWN_VOLUME_ID : diskIds[i]));
     }
   }
 
@@ -628,10 +629,8 @@ public class Task implements EventHandler<TaskEvent> {
   private static class AttemptFailedTransition implements SingleArcTransition<Task, TaskEvent> {
     @Override
     public void transition(Task task, TaskEvent event) {
-      if (!(event instanceof TaskTAttemptEvent)) {
-        throw new IllegalArgumentException("event should be a TaskTAttemptEvent type.");
-      }
-      TaskTAttemptEvent attemptEvent = (TaskTAttemptEvent) event;
+      TaskTAttemptFailedEvent attemptEvent = TUtil.checkTypeAndGet(event, TaskTAttemptFailedEvent.class);
+
       LOG.info("=============================================================");
       LOG.info(">>> Task Failed: " + attemptEvent.getTaskAttemptId() + " <<<");
       LOG.info("=============================================================");
@@ -639,7 +638,7 @@ public class Task implements EventHandler<TaskEvent> {
       task.finishedAttempts++;
 
       task.finishTask();
-      task.eventHandler.handle(new StageTaskEvent(task.getId(), TaskState.FAILED));
+      task.eventHandler.handle(new StageTaskFailedEvent(task.getId(), attemptEvent.getException()));
     }
   }
 
@@ -648,10 +647,8 @@ public class Task implements EventHandler<TaskEvent> {
 
     @Override
     public TaskState transition(Task task, TaskEvent taskEvent) {
-      if (!(taskEvent instanceof TaskTAttemptEvent)) {
-        throw new IllegalArgumentException("taskEvent should be a TaskTAttemptEvent type.");
-      }
-      TaskTAttemptEvent attemptEvent = (TaskTAttemptEvent) taskEvent;
+      TaskTAttemptFailedEvent attemptEvent = TUtil.checkTypeAndGet(taskEvent, TaskTAttemptFailedEvent.class);
+
       task.failedAttempts++;
       task.finishedAttempts++;
       boolean retry = task.failedAttempts < task.maxAttempts;
@@ -667,7 +664,7 @@ public class Task implements EventHandler<TaskEvent> {
         }
       } else {
         task.finishTask();
-        task.eventHandler.handle(new StageTaskEvent(task.getId(), TaskState.FAILED));
+        task.eventHandler.handle(new StageTaskFailedEvent(task.getId(), attemptEvent.getException()));
         return TaskState.FAILED;
       }
 

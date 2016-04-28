@@ -26,6 +26,8 @@ import "TajoIdProtos.proto";
 import "CatalogProtos.proto";
 import "PrimitiveProtos.proto";
 import "Plan.proto";
+import "errors.proto";
+import "stacktrace.proto";
 
 enum ResponseCommand {
   NORMAL = 1;  // ping
@@ -56,6 +58,7 @@ message ExecutionBlockListProto {
 message TaskAllocationProto {
   required TaskRequestProto task_request = 1;
   required NodeResourceProto resource = 2;
+  optional int32 volumeId = 3;
 }
 
 message TaskRequestProto {
@@ -114,8 +117,7 @@ message TaskCompletionReport {
 
 message TaskFatalErrorReport {
   required TaskAttemptIdProto id = 1;
-  optional string error_message = 2;
-  optional string error_trace = 3;
+  required tajo.error.SerializedException error = 2;
 }
 
 message FailureIntermediateProto {
@@ -215,7 +217,7 @@ message TajoHeartbeatRequest {
   optional QueryIdProto query_id = 2;
   optional QueryState state = 3;
   optional TableDescProto result_desc = 4;
-  optional string status_message = 5;
+  optional tajo.error.SerializedException error = 5;
   optional float query_progress = 6;
 }
 

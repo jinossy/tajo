@@ -27,6 +27,7 @@ import org.apache.hadoop.hdfs.*;
 import org.apache.tajo.BuiltinStorages;
 import org.apache.tajo.catalog.CatalogUtil;
 import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.catalog.SchemaBuilder;
 import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
@@ -81,12 +82,13 @@ public class TestFileTablespace {
 
   @Test
 	public final void testGetScannerAndAppender() throws IOException {
-		Schema schema = new Schema();
-		schema.addColumn("id", Type.INT4);
-		schema.addColumn("age",Type.INT4);
-		schema.addColumn("name",Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.INT4)
+        .add("age", Type.INT4)
+        .add("name", Type.TEXT)
+        .build();
 
-		TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT);
+		TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT, conf);
 		
 		VTuple[] tuples = new VTuple[4];
 		for(int i=0; i < tuples.length; i++) {
@@ -122,7 +124,7 @@ public class TestFileTablespace {
   public void testGetSplit() throws Exception {
     final Configuration hdfsConf = getTestHdfsConfiguration();
     final MiniDFSCluster cluster = new MiniDFSCluster.Builder(hdfsConf)
-        .numDataNodes(1).storagesPerDatanode(1).format(true).build();
+        .numDataNodes(1).format(true).build();
 
     int testCount = 10;
     Path tablePath = new Path("/testGetSplit");
@@ -144,11 +146,13 @@ public class TestFileTablespace {
       TablespaceManager.addTableSpaceForTest(space);
       assertEquals(fs.getUri(), space.getUri());
 
-      Schema schema = new Schema();
-      schema.addColumn("id", Type.INT4);
-      schema.addColumn("age",Type.INT4);
-      schema.addColumn("name",Type.TEXT);
-      TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT);
+      Schema schema = SchemaBuilder.builder()
+          .add("id", Type.INT4)
+          .add("age", Type.INT4)
+          .add("name", Type.TEXT)
+          .build();
+
+      TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT, conf);
 
       List<Fragment> splits = Lists.newArrayList();
       // Get FileFragments in partition batch
@@ -174,7 +178,7 @@ public class TestFileTablespace {
   public void testZeroLengthSplit() throws Exception {
     final Configuration hdfsConf = getTestHdfsConfiguration();
     final MiniDFSCluster cluster = new MiniDFSCluster.Builder(hdfsConf)
-        .numDataNodes(1).storagesPerDatanode(1).format(true).build();
+        .numDataNodes(1).format(true).build();
 
     int testCount = 10;
     Path tablePath = new Path("/testZeroLengthSplit");
@@ -198,11 +202,13 @@ public class TestFileTablespace {
       TablespaceManager.addTableSpaceForTest(space);
       assertEquals(fs.getUri(), space.getUri());
 
-      Schema schema = new Schema();
-      schema.addColumn("id", Type.INT4);
-      schema.addColumn("age",Type.INT4);
-      schema.addColumn("name",Type.TEXT);
-      TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT);
+      Schema schema = SchemaBuilder.builder()
+          .add("id", Type.INT4)
+          .add("age", Type.INT4)
+          .add("name", Type.TEXT)
+          .build();
+
+      TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT, conf);
 
       List<Fragment> splits = Lists.newArrayList();
       // Get FileFragments in partition batch
@@ -222,7 +228,7 @@ public class TestFileTablespace {
     hdfsConf.setInt(DFSConfigKeys.DFS_REPLICATION_KEY, 2);
     hdfsConf.setBoolean(DFSConfigKeys.DFS_HDFS_BLOCKS_METADATA_ENABLED, true);
     final MiniDFSCluster cluster = new MiniDFSCluster.Builder(hdfsConf)
-        .numDataNodes(2).storagesPerDatanode(1).format(true).build();
+        .numDataNodes(2).format(true).build();
 
     int testCount = 10;
     Path tablePath = new Path("/testGetSplitWithBlockStorageLocationsBatching");
@@ -241,11 +247,13 @@ public class TestFileTablespace {
       TablespaceManager.addTableSpaceForTest(sm);
       assertEquals(fs.getUri(), sm.getUri());
 
-      Schema schema = new Schema();
-      schema.addColumn("id", Type.INT4);
-      schema.addColumn("age", Type.INT4);
-      schema.addColumn("name", Type.TEXT);
-      TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT);
+      Schema schema = SchemaBuilder.builder()
+          .add("id", Type.INT4)
+          .add("age", Type.INT4)
+          .add("name", Type.TEXT)
+          .build();
+
+      TableMeta meta = CatalogUtil.newTableMeta(BuiltinStorages.TEXT, conf);
 
       List<Fragment> splits = Lists.newArrayList();
       splits.addAll(sm.getSplits("data", meta, schema, tablePath));
@@ -266,7 +274,7 @@ public class TestFileTablespace {
     final Configuration hdfsConf = getTestHdfsConfiguration();
 
     final MiniDFSCluster cluster = new MiniDFSCluster.Builder(hdfsConf)
-            .numDataNodes(1).storagesPerDatanode(1).format(true).build();
+            .numDataNodes(1).format(true).build();
     URI uri = URI.create(cluster.getFileSystem().getUri() + "/tajo");
 
     try {

@@ -82,16 +82,14 @@ public class StorageConstants {
   // ORC file properties -------------------------------------------------
   public static final String ORC_MAX_MERGE_DISTANCE = "orc.max.merge.distance";
   public static final String DEFAULT_ORC_MAX_MERGE_DISTANCE = "1048576";  // 1MB
+  public static final String ORC_MAX_READ_BUFFER_SIZE = "orc.max.read.buffer";
+  public static final String DEFAULT_ORC_MAX_READ_BUFFER_SIZE = "8388608";  // 8MB
 
   public static final String ORC_STRIPE_SIZE = "orc.stripe.size";
   public static final String DEFAULT_ORC_STRIPE_SIZE = "67108864"; // 64MB
 
   public static final String ORC_COMPRESSION = "orc.compress";
-  public static final String ORC_COMPRESSION_KIND_NONE = "none";
-  public static final String ORC_COMPRESSION_KIND_SNAPPY = "snappy";
-  public static final String ORC_COMPRESSION_KIND_LZO = "lzo";
-  public static final String ORC_COMPRESSION_KIND_ZIP = "zlip";
-  public static final String DEFAULT_ORC_COMPRESSION_KIND = ORC_COMPRESSION_KIND_NONE;
+  public static final String DEFAULT_ORC_COMPRESSION_KIND = "none";
 
   public static final String ORC_BUFFER_SIZE = "orc.buffer.size";
   public static final String DEFAULT_ORC_BUFFER_SIZE = "262144"; // 256KB

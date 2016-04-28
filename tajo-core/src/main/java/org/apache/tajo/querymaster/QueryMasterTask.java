@@ -37,6 +37,7 @@ import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.global.MasterPlan;
 import org.apache.tajo.engine.query.QueryContext;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.ipc.TajoWorkerProtocol;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.master.event.*;
@@ -57,6 +58,7 @@ import org.apache.tajo.storage.Tablespace;
 import org.apache.tajo.storage.TablespaceManager;
 import org.apache.tajo.util.RpcParameterFactory;
 import org.apache.tajo.util.TUtil;
+import org.apache.tajo.worker.NodeResourceManager.Allocation;
 import org.apache.tajo.worker.event.NodeResourceDeallocateEvent;
 import org.apache.tajo.worker.event.NodeResourceEvent;
 import org.apache.tajo.worker.event.NodeStatusEvent;
@@ -175,7 +177,8 @@ public class QueryMasterTask extends CompositeService {
     EventHandler handler = getQueryTaskContext().getQueryMasterContext().getWorkerContext().
         getNodeResourceManager().getDispatcher().getEventHandler();
 
-    handler.handle(new NodeResourceDeallocateEvent(allocation, NodeResourceEvent.ResourceType.QUERY_MASTER));
+    handler.handle(new NodeResourceDeallocateEvent(new Allocation(allocation),
+        NodeResourceEvent.ResourceType.QUERY_MASTER));
 
     //flush current node resource
     handler.handle(new NodeStatusEvent(NodeStatusEvent.EventType.FLUSH_REPORTS));
@@ -266,12 +269,12 @@ public class QueryMasterTask extends CompositeService {
 
       if(!callFuture.get().getValue()){
         getEventHandler().handle(
-            new TaskFatalErrorEvent(taskAttemptId, "Can't kill task :" + taskAttemptId));
+            new TaskFatalErrorEvent(taskAttemptId, new TajoInternalError("Can't kill task :" + taskAttemptId)));
       }
     } catch (Exception e) {
       /* Node RPC failure */
       LOG.error(e.getMessage(), e);
-      getEventHandler().handle(new TaskFatalErrorEvent(taskAttemptId, e.getMessage()));
+      getEventHandler().handle(new TaskFatalErrorEvent(taskAttemptId, e));
     }
   }
 

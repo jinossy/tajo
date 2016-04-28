@@ -23,11 +23,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hbase.HColumnDescriptor;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.MiniHBaseCluster;
-import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.*;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.InclusiveStopFilter;
@@ -37,6 +33,7 @@ import org.apache.tajo.IntegrationTest;
 import org.apache.tajo.QueryTestCaseBase;
 import org.apache.tajo.TajoTestingCluster;
 import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.catalog.SchemaBuilder;
 import org.apache.tajo.catalog.TableDesc;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.conf.TajoConf;
@@ -210,7 +207,62 @@ public class TestHBaseTable extends QueryTestCaseBase {
     } finally {
       TablespaceManager.addTableSpaceForTest(existing.get());
     }
+  }
 
+  private void putData(HTableInterface htable, int rownum) throws IOException {
+    for (int i = 0; i < rownum; i++) {
+      Put put = new Put(String.valueOf(i).getBytes());
+      put.add("col1".getBytes(), "a".getBytes(), ("a-" + i).getBytes());
+      put.add("col1".getBytes(), "b".getBytes(), ("b-" + i).getBytes());
+      put.add("col2".getBytes(), "k1".getBytes(), ("k1-" + i).getBytes());
+      put.add("col2".getBytes(), "k2".getBytes(), ("k2-" + i).getBytes());
+      put.add("col3".getBytes(), "b".getBytes(), ("b-" + i).getBytes());
+      htable.put(put);
+    }
+  }
+
+  @Test
+  public void testGetTableVolume() throws Exception {
+    final String tableName = "external_hbase_table";
+
+    Optional<Tablespace> existing = TablespaceManager.removeTablespaceForTest("cluster1");
+    assertTrue(existing.isPresent());
+
+    try {
+      HTableDescriptor hTableDesc = new HTableDescriptor(TableName.valueOf(tableName));
+      hTableDesc.addFamily(new HColumnDescriptor("col1"));
+      hTableDesc.addFamily(new HColumnDescriptor("col2"));
+      hTableDesc.addFamily(new HColumnDescriptor("col3"));
+      testingCluster.getHBaseUtil().createTable(hTableDesc);
+
+      String sql = String.format(
+          "CREATE EXTERNAL TABLE external_hbase_mapped_table (rk text, col1 text, col2 text, col3 text) " +
+              "USING hbase WITH ('table'='external_hbase_table', 'columns'=':key,col1:a,col2:,col3:b') " +
+              "LOCATION '%s/external_hbase_table'", tableSpaceUri);
+      executeString(sql).close();
+
+      assertTableExists("external_hbase_mapped_table");
+
+      HBaseTablespace tablespace = (HBaseTablespace)existing.get();
+      HConnection hconn = ((HBaseTablespace)existing.get()).getConnection();
+
+      try (HTableInterface htable = hconn.getTable(tableName)) {
+        htable.setAutoFlushTo(true);
+        putData(htable, 4000);
+      }
+      hconn.close();
+
+      Thread.sleep(3000); // sleep here for up-to-date region server load. It may not be a problem in real cluster.
+
+      TableDesc createdTable = client.getTableDesc("external_hbase_mapped_table");
+      assertNotNull(tablespace);
+      long volume = tablespace.getTableVolume(createdTable, Optional.empty());
+      assertTrue(volume > 0 || volume == -1);
+      executeString("DROP TABLE external_hbase_mapped_table PURGE").close();
+
+    } finally {
+      TablespaceManager.addTableSpaceForTest(existing.get());
+    }
   }
 
   @Test
@@ -236,15 +288,7 @@ public class TestHBaseTable extends QueryTestCaseBase {
       HConnection hconn = ((HBaseTablespace)existing.get()).getConnection();
 
       try (HTableInterface htable = hconn.getTable("external_hbase_table")) {
-        for (int i = 0; i < 100; i++) {
-          Put put = new Put(String.valueOf(i).getBytes());
-          put.add("col1".getBytes(), "a".getBytes(), ("a-" + i).getBytes());
-          put.add("col1".getBytes(), "b".getBytes(), ("b-" + i).getBytes());
-          put.add("col2".getBytes(), "k1".getBytes(), ("k1-" + i).getBytes());
-          put.add("col2".getBytes(), "k2".getBytes(), ("k2-" + i).getBytes());
-          put.add("col3".getBytes(), "b".getBytes(), ("b-" + i).getBytes());
-          htable.put(put);
-        }
+        putData(htable, 100);
 
         ResultSet res = executeString("select * from external_hbase_mapped_table where rk > '20'");
         assertResultSet(res);
@@ -774,9 +818,10 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id", Type.TEXT);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.TEXT)
+        .add("name", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     DecimalFormat df = new DecimalFormat("000");
     for (int i = 99; i >= 0; i--) {
@@ -830,9 +875,10 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id", Type.TEXT);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.TEXT)
+        .add("name", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     for (int i = 99; i >= 0; i--) {
       datas.add(i + "|value" + i);
@@ -888,9 +934,10 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id", Type.TEXT);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.TEXT)
+        .add("name", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     DecimalFormat df = new DecimalFormat("000");
     for (int i = 99; i >= 0; i--) {
@@ -946,10 +993,11 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id1", Type.TEXT);
-    schema.addColumn("id2", Type.TEXT);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id1", Type.TEXT)
+        .add("id2", Type.TEXT)
+        .add("name", Type.TEXT)
+        .build();
     DecimalFormat df = new DecimalFormat("000");
     List<String> datas = new ArrayList<>();
     for (int i = 99; i >= 0; i--) {
@@ -1003,9 +1051,10 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id", Type.INT4);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.INT4)
+        .add("name", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     for (int i = 99; i >= 0; i--) {
       datas.add(i + "|value" + i);
@@ -1059,11 +1108,12 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("rk", Type.TEXT);
-    schema.addColumn("col2_key", Type.TEXT);
-    schema.addColumn("col2_value", Type.TEXT);
-    schema.addColumn("col3", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("rk", Type.TEXT)
+        .add("col2_key", Type.TEXT)
+        .add("col2_value", Type.TEXT)
+        .add("col3", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     for (int i = 20; i >= 0; i--) {
       for (int j = 0; j < 3; j++) {
@@ -1148,9 +1198,10 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id", Type.INT4);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.INT4)
+        .add("name", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     for (int i = 99; i >= 0; i--) {
       datas.add(i + "|value" + i);
@@ -1220,9 +1271,10 @@ public class TestHBaseTable extends QueryTestCaseBase {
     tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
     tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-    Schema schema = new Schema();
-    schema.addColumn("id", Type.TEXT);
-    schema.addColumn("name", Type.TEXT);
+    Schema schema = SchemaBuilder.builder()
+        .add("id", Type.TEXT)
+        .add("name", Type.TEXT)
+        .build();
     List<String> datas = new ArrayList<>();
     DecimalFormat df = new DecimalFormat("000");
     for (int i = 99; i >= 0; i--) {
@@ -1341,10 +1393,11 @@ public class TestHBaseTable extends QueryTestCaseBase {
       tableOptions.set(StorageConstants.TEXT_DELIMITER, StorageConstants.DEFAULT_FIELD_DELIMITER);
       tableOptions.set(StorageConstants.TEXT_NULL, "\\\\N");
 
-      Schema schema = new Schema();
-      schema.addColumn("id", Type.TEXT);
-      schema.addColumn("name", Type.TEXT);
-      schema.addColumn("comment", Type.TEXT);
+      Schema schema = SchemaBuilder.builder()
+          .add("id", Type.TEXT)
+          .add("name", Type.TEXT)
+          .add("comment", Type.TEXT)
+          .build();
       List<String> datas = new ArrayList<>();
       DecimalFormat df = new DecimalFormat("000");
       for (int i = 99; i >= 0; i--) {

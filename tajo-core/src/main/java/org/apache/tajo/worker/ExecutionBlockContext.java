@@ -37,12 +37,15 @@ import org.apache.tajo.ExecutionBlockId;
 import org.apache.tajo.TajoProtos;
 import org.apache.tajo.TaskAttemptId;
 import org.apache.tajo.TaskId;
+import org.apache.tajo.annotation.Nullable;
 import org.apache.tajo.conf.TajoConf;
-import org.apache.tajo.conf.TajoConf.ConfVars;
 import org.apache.tajo.engine.query.QueryContext;
+import org.apache.tajo.exception.ErrorUtil;
+import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.ipc.QueryMasterProtocol;
 import org.apache.tajo.master.cluster.WorkerConnectionInfo;
 import org.apache.tajo.plan.serder.PlanProto;
+import org.apache.tajo.pullserver.PullServerUtil;
 import org.apache.tajo.pullserver.TajoPullServerService;
 import org.apache.tajo.rpc.*;
 import org.apache.tajo.rpc.protocolrecords.PrimitiveProtos;
@@ -102,7 +105,7 @@ public class ExecutionBlockContext {
   private final Map<TaskId, TaskHistory> taskHistories = Maps.newConcurrentMap();
 
   public ExecutionBlockContext(TajoWorker.WorkerContext workerContext, ExecutionBlockContextResponse request,
-                               AsyncRpcClient queryMasterClient)
+                               AsyncRpcClient queryMasterClient, @Nullable TajoPullServerService pullServerService)
       throws IOException {
     this.executionBlockId = new ExecutionBlockId(request.getExecutionBlockId());
     this.connManager = RpcClientManager.getInstance();
@@ -116,7 +119,7 @@ public class ExecutionBlockContext {
     this.queryEngine = new TajoQueryEngine(systemConf);
     this.queryContext = new QueryContext(workerContext.getConf(), request.getQueryContext());
     this.plan = request.getPlanJson();
-    this.resource = new ExecutionBlockSharedResource();
+    this.resource = new ExecutionBlockSharedResource(pullServerService);
     this.workerContext = workerContext;
     this.shuffleType = request.getShuffleType();
     this.queryMasterClient = queryMasterClient;
@@ -280,12 +283,12 @@ public class ExecutionBlockContext {
   }
 
   public static Path getBaseOutputDir(ExecutionBlockId executionBlockId) {
-    return TajoPullServerService.getBaseOutputDir(
+    return PullServerUtil.getBaseOutputDir(
         executionBlockId.getQueryId().toString(), String.valueOf(executionBlockId.getId()));
   }
 
   public static Path getBaseInputDir(ExecutionBlockId executionBlockId) {
-    return TajoPullServerService.getBaseInputDir(executionBlockId.getQueryId().toString(), executionBlockId.toString());
+    return PullServerUtil.getBaseInputDir(executionBlockId.getQueryId().toString(), executionBlockId.toString());
   }
 
   public ExecutionBlockId getExecutionBlockId() {
@@ -308,13 +311,13 @@ public class ExecutionBlockContext {
     return taskHistories;
   }
 
-  public void fatalError(TaskAttemptId taskAttemptId, String message) {
-    if (message == null) {
-      message = "No error message";
+  public void fatalError(TaskAttemptId taskAttemptId, Throwable error) {
+    if (error == null) {
+      error = new TajoInternalError("No error message");
     }
     TaskFatalErrorReport.Builder builder = TaskFatalErrorReport.newBuilder()
         .setId(taskAttemptId.getProto())
-        .setErrorMessage(message);
+        .setError(ErrorUtil.convertException(error));
 
     try {
       //If QueryMaster does not responding, current execution block should be stop

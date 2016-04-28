@@ -4,9 +4,56 @@ Release 0.12.0 - unreleased
 
   NEW FEATURES
 
+    TAJO-2122: PullServer as an Auxiliary service of Yarn. (jihoon)
+
+    TAJO-2109: Implement Radix sort. (jihoon)
+
     TAJO-1955: Add a feature to strip quotes from CSV file. (hyunsik)
 
   IMPROVEMENT
+
+    TAJO-2126: Allow parallel execution of non-leaf sibling ExecutionBlocks.
+    (jihooon)
+
+    TAJO-2127: Use Type instead of DataType for EvalNode. (hyunsik)
+
+    TAJO-2125: Detect JAVA_HOME on OSX, if JAVA_HOME is not set. (jinho)
+
+    TAJO-2108: Refactor Schema to be immutable. (hyunsik)
+
+    TAJO-2112: Improve disk load, when queries run simultaneously. (jinho)
+
+    TAJO-2104: Implement Identifier which supports quotation information. 
+    (hyunsik)
+
+    TAJO-2099: Implement an Adapter for the legacy Schema. (hyunsik)
+
+    TAJO-2091: Error or progress update should use stderr instead of stdout. 
+    (hyunsik)
+
+    TAJO-2064: Supporting auto-completion in Tsql. (Jongyoung Park via jaehwa)
+
+    TAJO-2043: Implement new data type and schema. (hyunsik)
+
+    TAJO-2090: Bump up orc version to 0.141. (hyunsik)
+
+    TAJO-2089: Improve null handling in UDF. (jinho)
+
+    TAJO-2073: Upgrade parquet-mr to 1.8.1. (jinho)
+
+    TAJO-2052: Upgrading ORC reader version. (Jongyoung Park via jaehwa)
+    
+    TAJO-1940: Implement HBaseTablespace::getTableVolume() method. (hyunsik)
+
+    TAJO-2061: Add description for EXPLAIN statement. (jaehwa)
+
+    TAJO-2060: Upgrade geoip-api-java library. (Byunghwa Yun via jinho)
+
+    TAJO-2048: QueryMaster and TajoWorker should support the exception
+    propagation. (jinho)
+
+    TAJO-2050: Adopt TAJO logo in CLI.
+    (Dongkyu Hwangbo via jaehwa)
 
     TAJO-1740: Update Partition Table document. (jaehwa)
     
@@ -90,6 +137,44 @@ Release 0.12.0 - unreleased
 
   BUG FIXES
 
+    TAJO-2110: Fix incorrect DateTime and remove hard coded tests. (jinho)
+
+    TAJO-2119: Invalid sort result when sort key columns contain non-ascii values. 
+    (jihoon)
+
+    TAJO-2100: Add missing cancellation in defaultTaskScheduler when a worker is 
+    no respond. (jinho)
+
+    TAJO-2092: TestStorages.testNullHandlingTypesWithProjection occasionally fail.
+    (jinho)
+
+    TAJO-1793: result row count unmatched for UNION ALL. (jaehwa)
+
+    TAJO-2082: Aggregation on a derived table which includes union can cause 
+    incorrect result. (jihoon)
+
+    TAJO-2081: Incorrect task locality on single node. (jinho)
+
+    TAJO-2080: ArrayIndexOutOfBoundsException when performing aggregation on an 
+    union block. (jihoon)
+
+    TAJO-2078: TestTajoCli.testSelectResultWithNullTrueDeprecated occasionally
+    fails. (Dongkyu Hwangbo via jaehwa)
+
+    TAJO-2077: Join condition causes incorrect result, when a table has an empty 
+    row file. (jinho)
+
+    TAJO-2072: The constructor of RegionSizeCalculator changes for HBase 1.0.0 
+    compatibility. (Byunghwa Yun via jinho)
+
+    TAJO-858: Support for hadoop kerberos authentication in Tajo.
+    (Min Zhou via jinho)
+
+    TAJO-2066: Fix TestJoinOnPartitionedTables.testPartialFilterPushDown failure.
+    (jinho)
+
+    TAJO-2062: Fix TestQueryResult#testTemporalResultOnClose failure. (jinho)
+
     TAJO-1921: Hbase Storage can cause NPE when the hbase cluster is restarted.
     (Byunghwa Yun via hyunsik)
 
@@ -164,6 +249,25 @@ Release 0.12.0 - unreleased
     TAJO-1886: Set compilerSourceVM and compilerTargetVM to web.xml. (hyunsik)
 
   TASKS
+
+    TAJO-2088: Change QueryTestCaseBase.runSimpleTests() to return a set of 
+    TajoResultSetBase. (jihoon)
+
+    TAJO-2033: Printing out query status with progress bar in TSQL.
+    (Dongkyu Hwangbo via jihoon)
+
+    TAJO-2076: Add backward compatibility testing with hadoop on travis. (jinho)
+
+    TAJO-2074: Upgrade hadoop and netty. (jinho)
+
+    TAJO-1939: Implement PgSQLTablespace::getTableVolume() method. (jihoon)
+
+    TAJO-2017: Replace manual array copy with Collection.
+    (Dongkyu Hwangbo via jinho)
+
+    TAJO-2070: Remove unnecessarily version property in maven pom. (jinho)
+
+    TAJO-2065: Increase default heap size. (jinho)
 
     TAJO-2041: Update the Team page. (jaehwa)
 

@@ -23,6 +23,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.tajo.catalog.Column;
 import org.apache.tajo.catalog.Schema;
+import org.apache.tajo.catalog.SchemaBuilder;
+import org.apache.tajo.catalog.SchemaFactory;
 import org.apache.tajo.catalog.proto.CatalogProtos.SortSpecProto;
 import org.apache.tajo.common.TajoDataTypes.Type;
 import org.apache.tajo.engine.planner.global.DataChannel;
@@ -30,6 +32,7 @@ import org.apache.tajo.engine.planner.global.ExecutionBlock;
 import org.apache.tajo.engine.planner.global.GlobalPlanner;
 import org.apache.tajo.engine.planner.global.GlobalPlanner.GlobalPlanContext;
 import org.apache.tajo.engine.planner.global.MasterPlan;
+import org.apache.tajo.exception.TajoException;
 import org.apache.tajo.exception.TajoInternalError;
 import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.DistinctAggregationAlgorithm;
 import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.MultipleAggregationStage;
@@ -643,18 +646,17 @@ public class DistinctGroupbyBuilder {
     //Set SecondStage ColumnId and Input schema
     secondStageDistinctNode.setResultColumnIds(secondStageColumnIds);
 
-    Schema secondStageInSchema = new Schema();
+    SchemaBuilder secondStageInSchema = SchemaBuilder.uniqueNameBuilder();
+
     //TODO merged tuple schema
     int index = 0;
     for(GroupbyNode eachNode: secondStageDistinctNode.getSubPlans()) {
       eachNode.setInSchema(firstStageDistinctNode.getOutSchema());
       for (Column column: eachNode.getOutSchema().getRootColumns()) {
-        if (secondStageInSchema.getColumn(column) == null) {
-          secondStageInSchema.addColumn(column);
-        }
+        secondStageInSchema.add(column);
       }
     }
-    secondStageDistinctNode.setInSchema(secondStageInSchema);
+    secondStageDistinctNode.setInSchema(secondStageInSchema.build());
 
     return new DistinctGroupbyNode[]{firstStageDistinctNode, secondStageDistinctNode};
   }
@@ -711,7 +713,7 @@ public class DistinctGroupbyBuilder {
 
   private ExecutionBlock buildDistinctGroupbyAndUnionPlan(MasterPlan masterPlan, ExecutionBlock lastBlock,
                                                          DistinctGroupbyNode firstPhaseGroupBy,
-                                                         DistinctGroupbyNode secondPhaseGroupBy) {
+                                                         DistinctGroupbyNode secondPhaseGroupBy) throws TajoException {
     DataChannel lastDataChannel = null;
 
     // It pushes down the first phase group-by operator into all child blocks.

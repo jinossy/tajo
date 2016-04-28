@@ -46,7 +46,6 @@ import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
 public class TajoConf extends Configuration {
-  private static TimeZone SYSTEM_TIMEZONE;
   private static int DATE_ORDER = -1;
 
   private static final Map<String, ConfVars> vars = new HashMap<>();
@@ -79,7 +78,6 @@ public class TajoConf extends Configuration {
     addResource(path);
   }
 
-  @SuppressWarnings("unused")
   public TimeZone getSystemTimezone() {
     return TimeZone.getTimeZone(getVar(ConfVars.$TIMEZONE));
   }
@@ -168,7 +166,7 @@ public class TajoConf extends Configuration {
     QUERYMASTER_MINIMUM_MEMORY("tajo.qm.resource.min.memory-mb", 500, Validators.min("64")),
 
     // Worker task resource
-    TASK_RESOURCE_MINIMUM_MEMORY("tajo.task.resource.min.memory-mb", 500, Validators.min("64")),
+    TASK_RESOURCE_MINIMUM_MEMORY("tajo.task.resource.min.memory-mb", 1000, Validators.min("64")),
 
     // Tajo Worker Service Addresses
     WORKER_INFO_ADDRESS("tajo.worker.info-http.address", "0.0.0.0:28080", Validators.networkAddr()),
@@ -184,16 +182,12 @@ public class TajoConf extends Configuration {
     // Tajo Worker Resources
     WORKER_RESOURCE_AVAILABLE_CPU_CORES("tajo.worker.resource.cpu-cores",
         Runtime.getRuntime().availableProcessors(), Validators.min("2")), // 1qm + 1task
-    WORKER_RESOURCE_AVAILABLE_MEMORY_MB("tajo.worker.resource.memory-mb", 1000, Validators.min("64")),
-
-    WORKER_RESOURCE_AVAILABLE_DISKS("tajo.worker.resource.disks", 1, Validators.min("1")),
+    WORKER_RESOURCE_AVAILABLE_MEMORY_MB("tajo.worker.resource.memory-mb", 1500, Validators.min("64")),
 
     WORKER_RESOURCE_AVAILABLE_DISK_PARALLEL_NUM("tajo.worker.resource.disk.parallel-execution.num", 2,
         Validators.min("1")),
 
-    WORKER_RESOURCE_DFS_DIR_AWARE("tajo.worker.resource.dfs-dir-aware", false, Validators.bool()),
-
-    WORKER_HEARTBEAT_QUEUE_THRESHOLD_RATE("tajo.worker.heartbeat.queue.threshold-rate", 0.3f, Validators.min("0")),//30%
+    WORKER_HEARTBEAT_QUEUE_THRESHOLD_RATE("tajo.worker.heartbeat.queue.threshold-rate", 0.1f, Validators.min("0")),//10%
     WORKER_HEARTBEAT_IDLE_INTERVAL("tajo.worker.heartbeat.idle.interval", 10 * 1000),  // 10 sec
     WORKER_HEARTBEAT_ACTIVE_INTERVAL("tajo.worker.heartbeat.active.interval", 1000),  // 1 sec
 
@@ -203,6 +197,8 @@ public class TajoConf extends Configuration {
 
     QUERYMASTER_TASK_SCHEDULER_DELAY("tajo.qm.task-scheduler.delay", 50),  // 50 ms
     QUERYMASTER_TASK_HEARTBEAT_TIMEOUT("tajo.qm.task.heartbeat.timeout-secs", 180, Validators.min("1")), // seconds
+
+    QUERYMASTER_TASK_SCHEDULER_REQUEST_MAX_NUM("tajo.qm.task-scheduler.request.max-num", 50),
 
     // Catalog
     CATALOG_ADDRESS("tajo.catalog.client-rpc.address", "localhost:26005", Validators.networkAddr()),
@@ -217,6 +213,7 @@ public class TajoConf extends Configuration {
     PULLSERVER_CACHE_TIMEOUT("tajo.pullserver.index-cache.timeout-min", 5, Validators.min("1")),
     PULLSERVER_FETCH_URL_MAX_LENGTH("tajo.pullserver.fetch-url.max-length", StorageUnit.KB,
         Validators.min("1")),
+    YARN_SHUFFLE_SERVICE_ENABLED("tajo.shuffle.yarn-service.enabled", false, Validators.bool()),
     SHUFFLE_SSL_ENABLED_KEY("tajo.pullserver.ssl.enabled", false, Validators.bool()),
     SHUFFLE_FILE_FORMAT("tajo.shuffle.file-format", BuiltinStorages.RAW, Validators.javaString()),
     SHUFFLE_FETCHER_PARALLEL_EXECUTION_MAX_NUM("tajo.shuffle.fetcher.parallel-execution.max-num",
@@ -366,6 +363,7 @@ public class TajoConf extends Configuration {
     $AGG_HASH_TABLE_SIZE("tajo.executor.aggregate.hash-table.size", 10000),
     $SORT_LIST_SIZE("tajo.executor.sort.list.size", 100000),
     $JOIN_HASH_TABLE_SIZE("tajo.executor.join.hash-table.size", 100000),
+    $SORT_ALGORITHM("tajo.executor.sort.algorithm", "TIM"),
 
     // for index
     $INDEX_ENABLED("tajo.query.index.enabled", false),
@@ -398,6 +396,7 @@ public class TajoConf extends Configuration {
     $TEST_FILTER_PUSHDOWN_ENABLED("tajo.test.plan.filter-pushdown.enabled", true),
     $TEST_MIN_TASK_NUM("tajo.test.min-task-num", -1),
     $TEST_PLAN_SHAPE_FIX_ENABLED("tajo.test.plan.shape.fix.enabled", false),  // used for explain statement test
+    $TEST_TIM_SORT_THRESHOLD_FOR_RADIX_SORT("tajo.test.executor.radix-sort.tim-sort-threshold", 65536),
 
     // Behavior Control ---------------------------------------------------------
     $BEHAVIOR_ARITHMETIC_ABORT("tajo.behavior.arithmetic-abort", false),
