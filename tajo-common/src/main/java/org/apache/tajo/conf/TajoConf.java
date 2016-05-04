@@ -196,7 +196,7 @@ public class TajoConf extends Configuration {
         Validators.groups(Validators.notNull(), Validators.clazz())),
 
     QUERYMASTER_TASK_SCHEDULER_DELAY("tajo.qm.task-scheduler.delay", 50),  // 50 ms
-    QUERYMASTER_TASK_HEARTBEAT_TIMEOUT("tajo.qm.task.heartbeat.timeout-secs", 180, Validators.min("1")), // seconds
+    QUERYMASTER_TASK_TIMEOUT("tajo.qm.task.timeout-secs", 180, Validators.min("1")), // seconds
 
     QUERYMASTER_TASK_SCHEDULER_REQUEST_MAX_NUM("tajo.qm.task-scheduler.request.max-num", 50),
 

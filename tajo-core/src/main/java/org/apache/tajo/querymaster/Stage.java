@@ -52,7 +52,6 @@ import org.apache.tajo.master.TaskState;
 import org.apache.tajo.master.event.*;
 import org.apache.tajo.master.event.TaskAttemptToSchedulerEvent.TaskAttemptScheduleContext;
 import org.apache.tajo.plan.logical.*;
-import org.apache.tajo.plan.serder.PlanProto;
 import org.apache.tajo.plan.serder.PlanProto.DistinctGroupbyEnforcer.MultipleAggregationStage;
 import org.apache.tajo.plan.serder.PlanProto.EnforceProperty;
 import org.apache.tajo.plan.util.PlannerUtil;
@@ -432,15 +431,7 @@ public class Stage implements EventHandler<StageEvent> {
   }
 
   public StageHistory getStageHistory() {
-    if (finalStageHistory != null) {
-      if (finalStageHistory.getFinishTime() == 0) {
-        finalStageHistory = makeStageHistory();
-        finalStageHistory.setTasks(makeTaskHistories());
-      }
-      return finalStageHistory;
-    } else {
-      return makeStageHistory();
-    }
+    return makeStageHistory();
   }
 
   private List<TaskHistory> makeTaskHistories() {
@@ -506,6 +497,7 @@ public class Stage implements EventHandler<StageEvent> {
     stageHistory.setTotalWriteRows(totalWriteRows);
     stageHistory.setNumShuffles(partitions.size());
     stageHistory.setProgress(getProgress());
+    stageHistory.setTasks(makeTaskHistories());
     return stageHistory;
   }
 
@@ -1324,8 +1316,6 @@ public class Stage implements EventHandler<StageEvent> {
   private void cleanup() {
     stopScheduler();
     stopExecutionBlock();
-    this.finalStageHistory = makeStageHistory();
-    this.finalStageHistory.setTasks(makeTaskHistories());
   }
 
   public List<IntermediateEntry> getHashShuffleIntermediateEntries() {

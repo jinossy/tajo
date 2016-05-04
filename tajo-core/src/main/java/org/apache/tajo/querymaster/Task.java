@@ -99,8 +99,6 @@ public class Task implements EventHandler<TaskEvent> {
 
   private static final AttemptKilledTransition ATTEMPT_KILLED_TRANSITION = new AttemptKilledTransition();
 
-  private TaskHistory finalTaskHistory;
-
   private final int maxUrlLength;
 
   protected static final StateMachineFactory
@@ -210,8 +208,7 @@ public class Task implements EventHandler<TaskEvent> {
 
     stateMachine = stateMachineFactory.make(this);
     totalFragmentNum = 0;
-    maxUrlLength = conf.getInt(ConfVars.PULLSERVER_FETCH_URL_MAX_LENGTH.name(),
-        ConfVars.PULLSERVER_FETCH_URL_MAX_LENGTH.defaultIntVal);
+    maxUrlLength = conf.getIntVar(ConfVars.PULLSERVER_FETCH_URL_MAX_LENGTH);
 	}
 
   public TajoConf getConf() {
@@ -241,14 +238,7 @@ public class Task implements EventHandler<TaskEvent> {
   }
 
   public TaskHistory getTaskHistory() {
-    if (finalTaskHistory != null) {
-      if (finalTaskHistory.getFinishTime() == 0) {
-        finalTaskHistory = makeTaskHistory();
-      }
-      return finalTaskHistory;
-    } else {
-      return makeTaskHistory();
-    }
+    return makeTaskHistory();
   }
 
   private TaskHistory makeTaskHistory() {
@@ -566,7 +556,6 @@ public class Task implements EventHandler<TaskEvent> {
 
   private void finishTask() {
     this.finishTime = System.currentTimeMillis();
-    finalTaskHistory = makeTaskHistory();
   }
 
   private static class KillNewTaskTransition implements SingleArcTransition<Task, TaskEvent> {

@@ -59,6 +59,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 public class QueryMaster extends CompositeService implements EventHandler {
   private static final Log LOG = LogFactory.getLog(QueryMaster.class.getName());
@@ -93,7 +94,7 @@ public class QueryMaster extends CompositeService implements EventHandler {
 
   private Properties rpcClientParams;
 
-  private ExecutorService eventExecutor;
+  private ScheduledExecutorService eventExecutor;
 
   private ExecutorService singleEventExecutor;
 
@@ -134,7 +135,7 @@ public class QueryMaster extends CompositeService implements EventHandler {
     clientSessionTimeoutCheckThread = new ClientSessionTimeoutCheckThread();
     clientSessionTimeoutCheckThread.start();
 
-    eventExecutor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    eventExecutor = Executors.newScheduledThreadPool(Runtime.getRuntime().availableProcessors());
     singleEventExecutor = Executors.newSingleThreadExecutor();
     super.serviceStart();
     LOG.info("QueryMaster started");
@@ -246,7 +247,7 @@ public class QueryMaster extends CompositeService implements EventHandler {
       return conf;
     }
 
-    public ExecutorService getEventExecutor(){
+    public ScheduledExecutorService getEventExecutor(){
       return eventExecutor;
     }
 

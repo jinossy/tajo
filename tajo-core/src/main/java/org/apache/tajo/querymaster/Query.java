@@ -455,9 +455,16 @@ public class Query implements EventHandler<QueryEvent> {
       for (ExecutionBlock executionBlock : executionQueue.first()) {
         Stage stage = new Stage(query.context, query.getPlan(), executionBlock);
         stage.setPriority(query.priority--);
-        query.addStage(stage);
+        QueryMaster.QueryMasterContext context = stage.getContext().getQueryMasterContext();
+        int timeoutSec = context.getConf().getIntVar(TajoConf.ConfVars.QUERYMASTER_TASK_TIMEOUT);
+//        ScheduledFuture<?> future = context.getEventExecutor()
+//            .scheduleAtFixedRate(null, timeoutSec, timeoutSec, TimeUnit.SECONDS);
+//        future.cancel(false);
 
+
+        query.addStage(stage);
         stage.getEventHandler().handle(new StageEvent(stage.getId(), StageEventType.SQ_INIT));
+
         LOG.debug("Schedule unit plan: \n" + stage.getBlock().getPlan());
       }
     }

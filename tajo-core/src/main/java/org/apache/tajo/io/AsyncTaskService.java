@@ -50,11 +50,21 @@ public class AsyncTaskService extends AbstractService {
     this.context = context;
   }
 
+  /**
+   * Construct the service.
+   *
+   * @param context
+   */
+  public AsyncTaskService(TajoMaster.MasterContext context, ExecutorService executor) {
+    super("MasterAsyncTaskExecutor");
+    this.context = context;
+  }
+
   @Override
   protected void serviceInit(Configuration conf) throws Exception {
     TajoConf systemConf = TUtil.checkTypeAndGet(conf, TajoConf.class);
     TERMINATION_WAIT_TIME_SEC = systemConf.getLongVar(ConfVars.MASTER_ASYNC_TASK_TERMINATION_WAIT_TIME);
-    executor = Executors.newFixedThreadPool(systemConf.getIntVar(ConfVars.MASTER_ASYNC_TASK_THREAD_NUM));
+    executor = Executors.newScheduledThreadPool(systemConf.getIntVar(ConfVars.MASTER_ASYNC_TASK_THREAD_NUM));
 
     super.serviceInit(conf);
   }
@@ -70,6 +80,7 @@ public class AsyncTaskService extends AbstractService {
     boolean terminated = false;
     try {
       terminated = executor.awaitTermination(TERMINATION_WAIT_TIME_SEC, TimeUnit.SECONDS);
+
     } catch (InterruptedException e) {
     }
     if (!terminated) {
