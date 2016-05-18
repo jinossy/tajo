@@ -70,8 +70,6 @@ public class DataTypeUtil {
     putAcceptableType(DATE, DATE);
 
     putAcceptableType(TEXT, TEXT);
-
-    putAcceptableType(INET4, INET4);
   }
 
   public static boolean isUpperCastable(TajoDataTypes.Type define, TajoDataTypes.Type given) {
@@ -87,8 +85,8 @@ public class DataTypeUtil {
    */
   public static org.apache.tajo.type.Type determineType(org.apache.tajo.type.Type left,
                                                         org.apache.tajo.type.Type right) {
-    TajoDataTypes.Type rhsBaseType = right.baseType();
-    switch (left.baseType()) {
+    TajoDataTypes.Type rhsBaseType = right.kind();
+    switch (left.kind()) {
 
     case INT1:
     case INT2:

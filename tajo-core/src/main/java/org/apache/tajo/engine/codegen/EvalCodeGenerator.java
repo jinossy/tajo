@@ -170,7 +170,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
       context.emitNullityCheck(ifNull);
 
       SignedEval signed = (SignedEval) unary;
-      switch (signed.getValueType().baseType()) {
+      switch (signed.getValueType().kind()) {
       case BOOLEAN:
       case CHAR:
       case INT1:
@@ -375,7 +375,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
       String methodName = null;
       Class returnType = null;
       Class [] paramTypes = null;
-      switch (field.getValueType().baseType()) {
+      switch (field.getValueType().kind()) {
       case BOOLEAN:
         methodName = "getByte";
         returnType = byte.class;
@@ -391,7 +391,6 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
       case INT2:
       case INT4:
       case DATE:
-      case INET4:
         methodName = "getInt4";
         returnType = int.class;
         paramTypes = new Class [] {int.class};
@@ -479,7 +478,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
   }
 
   public static int store(EvalCodeGenContext context, org.apache.tajo.type.Type type, int idx) {
-    switch (type.baseType()) {
+    switch (type.kind()) {
     case NULL_TYPE:
     case BOOLEAN:
     case CHAR:
@@ -642,7 +641,7 @@ public class EvalCodeGenerator extends SimpleEvalNodeVisitor<EvalCodeGenContext>
 
   @Override
   public EvalNode visitConst(EvalCodeGenContext context, ConstEval constEval, Stack<EvalNode> stack) {
-    switch (constEval.getValueType().baseType()) {
+    switch (constEval.getValueType().kind()) {
     case NULL_TYPE:
 
       if (stack.isEmpty()) {

@@ -185,7 +185,7 @@ public class SchemaUtil {
                                              Column column) {
 
     if (column.getDataType().getType() == Type.RECORD) {
-      for (Column nestedColumn : column.typeDesc.nestedRecordSchema.getRootColumns()) {
+      for (Column nestedColumn : TypeConverter.convert(column.type).nestedRecordSchema.getRootColumns()) {
         List<String> newPath = new ArrayList<>(path);
         newPath.add(column.getQualifiedName());
 
@@ -244,10 +244,6 @@ public class SchemaUtil {
         return 4;
       case FLOAT8:
         return 8;
-      case INET4:
-        return 4;
-      case INET6:
-        return 16;
       case TEXT:
         return 256;
       case BLOB:

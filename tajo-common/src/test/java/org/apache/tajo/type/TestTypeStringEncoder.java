@@ -18,11 +18,12 @@
 
 package org.apache.tajo.type;
 
-import org.apache.tajo.common.TajoDataTypes;
+import static org.apache.tajo.type.TypeStringEncoder.decode;
+import static org.apache.tajo.type.TypeStringEncoder.encode;
+import static org.junit.Assert.assertEquals;
 
-public class Inet4 extends Type {
-  @Override
-  public TajoDataTypes.Type baseType() {
-    return TajoDataTypes.Type.INET4;
+public class TestTypeStringEncoder extends TestTypeEncoder {
+  public void assertSerialize(Type type) {
+    assertEquals(type, decode(encode(type)));
   }
 }

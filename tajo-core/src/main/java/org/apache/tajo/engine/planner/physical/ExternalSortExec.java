@@ -170,7 +170,7 @@ public class ExternalSortExec extends SortExec {
 
     mergedInputFragments = new ArrayList<>();
     for (CatalogProtos.FragmentProto proto : fragments) {
-      FileFragment fragment = FragmentConvertor.convert(FileFragment.class, proto);
+      FileFragment fragment = FragmentConvertor.convert(context.getConf(), proto);
       mergedInputFragments.add(new Chunk(inSchema, fragment, scanNode.getTableDesc().getMeta()));
     }
   }
@@ -464,7 +464,7 @@ public class ExternalSortExec extends SortExec {
             debug(LOG, "Remove intermediate memory tuples: " + chunk.getMemoryTuples().usedMem());
           }
           chunk.getMemoryTuples().release();
-        } else if (chunk.getFragment().getTableName().contains(INTERMEDIATE_FILE_PREFIX)) {
+        } else if (chunk.getFragment().getInputSourceId().contains(INTERMEDIATE_FILE_PREFIX)) {
           localFS.delete(chunk.getFragment().getPath(), true);
           numDeletedFiles++;
 
@@ -1070,9 +1070,6 @@ public class ExternalSortExec extends SortExec {
       case DATE:
       case INT4:
         compare = Ints.compare(tuple1.getInt4(index), tuple2.getInt4(index));
-        break;
-      case INET4:
-        compare = UnsignedInts.compare(tuple1.getInt4(index), tuple2.getInt4(index));
         break;
       case TIME:
       case TIMESTAMP:
