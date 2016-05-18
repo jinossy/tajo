@@ -21,13 +21,9 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.service.AbstractService;
 import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.conf.TajoConf.ConfVars;
-import org.apache.tajo.master.TajoMaster;
 import org.apache.tajo.util.TUtil;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.function.Supplier;
 
 /**
@@ -36,36 +32,23 @@ import java.util.function.Supplier;
  * @See https://issues.apache.org/jira/browse/TAJO-2022
  */
 public class AsyncTaskService extends AbstractService {
-  private final TajoMaster.MasterContext context;
   private long TERMINATION_WAIT_TIME_SEC;
-  private ExecutorService executor;
+  private ScheduledThreadPoolExecutor executor;
 
   /**
    * Construct the service.
    *
-   * @param context
    */
-  public AsyncTaskService(TajoMaster.MasterContext context) {
+  public AsyncTaskService() {
     super("MasterAsyncTaskExecutor");
-    this.context = context;
-  }
-
-  /**
-   * Construct the service.
-   *
-   * @param context
-   */
-  public AsyncTaskService(TajoMaster.MasterContext context, ExecutorService executor) {
-    super("MasterAsyncTaskExecutor");
-    this.context = context;
   }
 
   @Override
   protected void serviceInit(Configuration conf) throws Exception {
     TajoConf systemConf = TUtil.checkTypeAndGet(conf, TajoConf.class);
-    TERMINATION_WAIT_TIME_SEC = systemConf.getLongVar(ConfVars.MASTER_ASYNC_TASK_TERMINATION_WAIT_TIME);
-    executor = Executors.newScheduledThreadPool(systemConf.getIntVar(ConfVars.MASTER_ASYNC_TASK_THREAD_NUM));
-
+    TERMINATION_WAIT_TIME_SEC = systemConf.getLongVar(ConfVars.ASYNC_TASK_TERMINATION_WAIT_TIME);
+    executor = new ScheduledThreadPoolExecutor(systemConf.getIntVar(ConfVars.ASYNC_TASK_THREAD_NUM));
+    executor.setRemoveOnCancelPolicy(true);
     super.serviceInit(conf);
   }
 
@@ -90,9 +73,6 @@ public class AsyncTaskService extends AbstractService {
     super.serviceStop();
   }
 
-  public TajoMaster.MasterContext getMasterContext() {
-    return this.context;
-  }
 
   /**
    * Returns a new CompletableFuture that is asynchronously completed
@@ -116,5 +96,16 @@ public class AsyncTaskService extends AbstractService {
    */
   public CompletableFuture<Void> run(Runnable task) {
     return CompletableFuture.runAsync(task, executor);
+  }
+
+  /**
+   * Returns a new ScheduledFuture and it is asynchronously completed after the given delay
+   * action.
+   *
+   * @param task Task
+   * @return ScheduledFuture
+   */
+  public ScheduledFuture<?> schedule(Runnable task, long delay, TimeUnit timeUnit) {
+    return executor.schedule(task, delay, timeUnit);
   }
 }

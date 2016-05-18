@@ -160,9 +160,9 @@ public class TajoConf extends Configuration {
 
     // Async IO Task Service
     /** The number of threads for async tasks */
-    MASTER_ASYNC_TASK_THREAD_NUM("tajo.master.async-task.thread-num", 4),
+    ASYNC_TASK_THREAD_NUM("tajo.io.async-task.thread-num", 4),
     /** How long it will wait for termination */
-    MASTER_ASYNC_TASK_TERMINATION_WAIT_TIME("tajo.master.async-task.wait-time-sec", 60), // 1 min
+    ASYNC_TASK_TERMINATION_WAIT_TIME("tajo.io.async-task.wait-time-sec", 60), // 1 min
 
     // QueryMaster resource
     QUERYMASTER_MINIMUM_MEMORY("tajo.qm.resource.min.memory-mb", 500, Validators.min("64")),
@@ -373,7 +373,7 @@ public class TajoConf extends Configuration {
 
     // Command line interface and its behavior --------------------------------
     $CLI_MAX_COLUMN("tajo.cli.max_columns", 120),
-    $CLI_NULL_CHAR("tajo.cli.nullchar", ""),
+    $CLI_NULL_CHAR("tajo.cli.nullchar", "NULL"),
     $CLI_PRINT_PAUSE_NUM_RECORDS("tajo.cli.print.pause.num.records", 100),
     $CLI_PRINT_PAUSE("tajo.cli.print.pause", true),
     $CLI_PRINT_ERROR_TRACE("tajo.cli.print.error.trace", true),

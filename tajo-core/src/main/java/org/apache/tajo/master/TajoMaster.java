@@ -193,7 +193,7 @@ public class TajoMaster extends CompositeService {
     tajoMasterClientService = new TajoMasterClientService(context);
     addIfService(tajoMasterClientService);
 
-    asyncTaskService = new AsyncTaskService(context);
+    asyncTaskService = new AsyncTaskService();
     addIfService(asyncTaskService);
 
     tajoMasterService = new QueryCoordinatorService(context);
