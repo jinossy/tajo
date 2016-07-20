@@ -34,10 +34,7 @@ import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryVars;
 import org.apache.tajo.SessionVars;
 import org.apache.tajo.TajoProtos.QueryState;
-import org.apache.tajo.catalog.CatalogService;
-import org.apache.tajo.catalog.IndexDesc;
-import org.apache.tajo.catalog.TableDesc;
-import org.apache.tajo.catalog.TableMeta;
+import org.apache.tajo.catalog.*;
 import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
 import org.apache.tajo.catalog.proto.CatalogProtos.UpdateTableStatsProto;
 import org.apache.tajo.catalog.statistics.StatisticsUtil;
@@ -459,11 +456,9 @@ public class Query implements EventHandler<QueryEvent> {
       for (ExecutionBlock executionBlock : executionQueue.first()) {
         Stage stage = new Stage(query.context, query.getPlan(), executionBlock);
         stage.setPriority(query.priority--);
-        QueryMaster.QueryMasterContext context = stage.getContext().getQueryMasterContext();
-
         query.addStage(stage);
-        stage.getEventHandler().handle(new StageEvent(stage.getId(), StageEventType.SQ_INIT));
 
+        stage.getEventHandler().handle(new StageEvent(stage.getId(), StageEventType.SQ_INIT));
         LOG.debug("Schedule unit plan: \n" + stage.getBlock().getPlan());
       }
     }
