@@ -38,6 +38,7 @@ import org.apache.tajo.conf.TajoConf;
 import org.apache.tajo.engine.planner.global.GlobalPlanner;
 import org.apache.tajo.engine.query.QueryContext;
 import org.apache.tajo.exception.ErrorUtil;
+import org.apache.tajo.io.AsyncTaskService;
 import org.apache.tajo.ipc.QueryCoordinatorProtocol;
 import org.apache.tajo.ipc.QueryCoordinatorProtocol.QueryCoordinatorProtocolService;
 import org.apache.tajo.master.event.QueryStartEvent;
@@ -59,7 +60,6 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 
 public class QueryMaster extends CompositeService implements EventHandler {
   private static final Log LOG = LogFactory.getLog(QueryMaster.class.getName());
@@ -94,7 +94,7 @@ public class QueryMaster extends CompositeService implements EventHandler {
 
   private Properties rpcClientParams;
 
-  private ScheduledExecutorService eventExecutor;
+  private AsyncTaskService asyncTaskService;
 
   private ExecutorService singleEventExecutor;
 
@@ -123,6 +123,10 @@ public class QueryMaster extends CompositeService implements EventHandler {
 
     dispatcher.register(QueryStartEvent.EventType.class, new QueryStartEventHandler());
     dispatcher.register(QueryStopEvent.EventType.class, new QueryStopEventHandler());
+
+    asyncTaskService = new AsyncTaskService();
+    addIfService(asyncTaskService);
+
     super.serviceInit(conf);
     LOG.info("QueryMaster inited");
   }
@@ -135,7 +139,6 @@ public class QueryMaster extends CompositeService implements EventHandler {
     clientSessionTimeoutCheckThread = new ClientSessionTimeoutCheckThread();
     clientSessionTimeoutCheckThread.start();
 
-    eventExecutor = Executors.newScheduledThreadPool(Runtime.getRuntime().availableProcessors());
     singleEventExecutor = Executors.newSingleThreadExecutor();
     super.serviceStart();
     LOG.info("QueryMaster started");
@@ -151,10 +154,6 @@ public class QueryMaster extends CompositeService implements EventHandler {
 
     if(clientSessionTimeoutCheckThread != null) {
       clientSessionTimeoutCheckThread.interrupt();
-    }
-
-    if(eventExecutor != null){
-      eventExecutor.shutdown();
     }
 
     if(singleEventExecutor != null){
@@ -247,8 +246,8 @@ public class QueryMaster extends CompositeService implements EventHandler {
       return conf;
     }
 
-    public ScheduledExecutorService getEventExecutor(){
-      return eventExecutor;
+    public AsyncTaskService getAsyncTaskService(){
+      return asyncTaskService;
     }
 
     public ExecutorService getSingleEventExecutor(){

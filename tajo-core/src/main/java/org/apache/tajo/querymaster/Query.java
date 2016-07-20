@@ -34,7 +34,10 @@ import org.apache.tajo.QueryId;
 import org.apache.tajo.QueryVars;
 import org.apache.tajo.SessionVars;
 import org.apache.tajo.TajoProtos.QueryState;
-import org.apache.tajo.catalog.*;
+import org.apache.tajo.catalog.CatalogService;
+import org.apache.tajo.catalog.IndexDesc;
+import org.apache.tajo.catalog.TableDesc;
+import org.apache.tajo.catalog.TableMeta;
 import org.apache.tajo.catalog.proto.CatalogProtos.PartitionDescProto;
 import org.apache.tajo.catalog.proto.CatalogProtos.UpdateTableStatsProto;
 import org.apache.tajo.catalog.statistics.StatisticsUtil;
@@ -457,11 +460,6 @@ public class Query implements EventHandler<QueryEvent> {
         Stage stage = new Stage(query.context, query.getPlan(), executionBlock);
         stage.setPriority(query.priority--);
         QueryMaster.QueryMasterContext context = stage.getContext().getQueryMasterContext();
-        int timeoutSec = context.getConf().getIntVar(TajoConf.ConfVars.QUERYMASTER_TASK_TIMEOUT);
-//        ScheduledFuture<?> future = context.getEventExecutor()
-//            .scheduleAtFixedRate(null, timeoutSec, timeoutSec, TimeUnit.SECONDS);
-//        future.cancel(false);
-
 
         query.addStage(stage);
         stage.getEventHandler().handle(new StageEvent(stage.getId(), StageEventType.SQ_INIT));

@@ -323,6 +323,8 @@ public class TaskAttempt implements EventHandler<TaskAttemptEvent> {
                            TaskAttemptEvent event) {
 
       taskAttempt.workerConnectionInfo = null;
+      taskAttempt.updateLastContact();
+      taskAttempt.getTask().setLaunchTime(0);
     }
   }
 

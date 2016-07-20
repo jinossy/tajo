@@ -63,7 +63,6 @@ public class AsyncTaskService extends AbstractService {
     boolean terminated = false;
     try {
       terminated = executor.awaitTermination(TERMINATION_WAIT_TIME_SEC, TimeUnit.SECONDS);
-
     } catch (InterruptedException e) {
     }
     if (!terminated) {

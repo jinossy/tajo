@@ -110,6 +110,7 @@ public class Stage implements EventHandler<StageEvent> {
   private long finishTime;
   private volatile long lastContactTime;
   private Thread timeoutChecker;
+  private TaskTimeoutChecker taskTimeoutChecker;
 
   private final Map<TaskId, Task> tasks = Maps.newConcurrentMap();
   private final Map<Integer, InetSocketAddress> workerMap = Maps.newConcurrentMap();
@@ -568,7 +569,6 @@ public class Stage implements EventHandler<StageEvent> {
     this.priority = priority;
   }
 
-
   public int getPriority() {
     return this.priority;
   }
@@ -717,6 +717,12 @@ public class Stage implements EventHandler<StageEvent> {
     }
   }
 
+  private void stopTimeoutChecker() {
+    if(taskTimeoutChecker != null) {
+      taskTimeoutChecker.stop();
+    }
+  }
+
   /**
    * Get the launched worker address
    */
@@ -727,18 +733,16 @@ public class Stage implements EventHandler<StageEvent> {
   private void sendStopExecutionBlockEvent(final StopExecutionBlockRequest requestProto) {
 
     for (final InetSocketAddress worker : getAssignedWorkerMap().values()) {
-      getContext().getQueryMasterContext().getEventExecutor().submit(new Runnable() {
-        @Override
-        public void run() {
-          try {
-            AsyncRpcClient tajoWorkerRpc =
-                RpcClientManager.getInstance().getClient(worker, TajoWorkerProtocol.class, true, rpcParams);
-            TajoWorkerProtocol.TajoWorkerProtocolService tajoWorkerRpcClient = tajoWorkerRpc.getStub();
-            tajoWorkerRpcClient.stopExecutionBlock(null,
-                requestProto, NullCallback.get(PrimitiveProtos.BoolProto.class));
-          } catch (Throwable e) {
-            LOG.error(e.getMessage(), e);
-          }
+      getContext().getQueryMasterContext().getAsyncTaskService().run(() -> {
+
+        try {
+          AsyncRpcClient tajoWorkerRpc =
+              RpcClientManager.getInstance().getClient(worker, TajoWorkerProtocol.class, true, rpcParams);
+          TajoWorkerProtocol.TajoWorkerProtocolService tajoWorkerRpcClient = tajoWorkerRpc.getStub();
+          tajoWorkerRpcClient.stopExecutionBlock(null,
+              requestProto, NullCallback.get(PrimitiveProtos.BoolProto.class));
+        } catch (Throwable e) {
+          LOG.error(e.getMessage(), e);
         }
       });
     }
@@ -868,6 +872,11 @@ public class Stage implements EventHandler<StageEvent> {
                               if(stage.getSynchronizedState() == StageState.INITED) {
                                 stage.eventHandler.handle(new StageEvent(stage.getId(), StageEventType.SQ_START));
                                 stage.taskScheduler.start();
+
+                                stage.taskTimeoutChecker =
+                                    new TaskTimeoutChecker(stage.getContext().getQueryMasterContext(), stage);
+
+                                stage.taskTimeoutChecker.start();
                               } else {
                                 /* all tasks are killed before stage are inited */
                                 if (stage.getTotalScheduledObjectsCount() == stage.getCompletedTaskCount()) {
@@ -1292,6 +1301,7 @@ public class Stage implements EventHandler<StageEvent> {
   }
 
   private void cleanup() {
+    stopTimeoutChecker();
     stopScheduler();
     stopExecutionBlock();
   }
